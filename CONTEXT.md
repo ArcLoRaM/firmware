@@ -20,7 +20,7 @@ orthogonal — either can fire at any time regardless of the other.
 | Source | Trigger | CM4 action |
 |---|---|---|
 | RTC Alarm B | Sensor acquisition schedule (programmed by CM0+ on CM4's behalf — see `AlarmBRequest`) | Run sensor acquisition cycle, write result to appropriate TX queue, write next `AlarmBRequest` to shared memory |
-| IPCC interrupt (MbMux) | CM0+ fires Application Signal Channel notification | Process signal (`RX_READY`, `TX_NO_ACK`, `SYNC_LOCKED`, or `ACK_RECEIVED`), send ACK |
+| IPCC interrupt (MbMux) | CM0+ fires Application Signal Channel notification | Process signal (`RX_READY`, `TX_NO_ACK`, `SYNC_LOCKED`, `ACK_RECEIVED`, `RX_TIMEOUT`, or `SYNC_LOST`), send ACK |
 
 On receiving `SYNC_LOCKED`: CM4 writes an `AlarmBRequest` to shared memory if
 not already pending, then returns to Stop2. CM0+ programs Alarm B on its next
@@ -122,6 +122,7 @@ it does not encode hop-count rules, contention logic, or sleep decisions.
 
 ```c
 typedef enum { SLOT_SCHEDULED, SLOT_CONTENTION } SlotKind;
+typedef enum { DIRECTION_STATIC, DIRECTION_DYNAMIC } DirectionMode;
 
 struct AnchorSlot {
     uint32_t duration_ms;    // 0 = absent
@@ -130,18 +131,30 @@ struct AnchorSlot {
 };
 
 struct Phase {
-    PhaseType  type;
-    uint8_t    participant_mask;     // bit0=C1, bit1=C2, bit2=C3
+    PhaseType     type;
+    uint8_t       participant_mask;  // bit0=C1, bit1=C2, bit2=C3
                                      // non-participants skip Phase entirely
-    uint32_t   slot_active_ms;       // worst-case duration of one Slot exchange
-    uint32_t   gap_after_ms[16];     // network-wide sleep gap after slot i
-    AnchorSlot header;
-    AnchorSlot footer;
-    uint32_t   cell_bitmap[3];       // [C1, C2, C3]: 1-bit per slot, 1=Tx 0=Rx
-    uint8_t    slot_count;           // Slots per Cell (1–32)
-    uint16_t   cell_count;           // Cell repetitions in this Phase
+    DirectionMode direction_mode;    // STATIC: cell_bitmap valid
+                                     // DYNAMIC: cell_bitmap ignored;
+                                     //   MAC writes eligibility to shared memory
+    uint32_t      slot_active_ms;    // worst-case duration of one Slot exchange
+    uint32_t      gap_after_ms[16];  // network-wide sleep gap after slot i
+    AnchorSlot    header;
+    AnchorSlot    footer;
+    uint32_t      cell_bitmap[3];    // [C1, C2, C3]: 1-bit per slot, 1=Tx 0=Rx
+                                     // valid only when direction_mode == DIRECTION_STATIC
+    uint8_t       slot_count;        // Slots per Cell (1–32)
+    uint16_t      cell_count;        // Cell repetitions in this Phase
 };
 ```
+
+`DIRECTION_STATIC` applies to `Mesh_Beacon`, `Mesh_Downlink`, and `Sync` — direction
+is fixed per Node Class and fully encoded in `cell_bitmap[3]`.
+
+`DIRECTION_DYNAMIC` applies to `Mesh_Uplink` and `Cluster_Exchange` — per-cell
+direction and eligibility depend on runtime state (hop count, Cell Permit). The
+TDMA Machine reads a MAC-written eligibility mask from shared memory at each cell
+boundary instead of consulting `cell_bitmap`.
 
 ### Participant Mask
 A per-Phase 3-bit field (`participant_mask`) indicating which Node Classes
@@ -407,6 +420,8 @@ Three signal types are multiplexed on this one channel via `MsgId`:
 | `TX_NO_ACK` | A TX slot completed without receiving an ACK. | Destination peer ID + phase context. CM4 updates Routing State; CM0+ uses internally for contention strategy. |
 | `SYNC_LOCKED` | Third Sync packet received with preamble offset error below `SYNC_LOCK_THRESHOLD_MS`. `ClockState` → `CLOCK_WARM`. | None — signal alone is sufficient. |
 | `ACK_RECEIVED` | A TX slot completed with a successful ACK. CM4 must dequeue the delivered payload. | Queue entry identifier (e.g. sequence number assigned by CM4 at enqueue time). CM4 locates and removes the entry. |
+| `RX_TIMEOUT` | A scheduled RX slot expired with no packet received. CM4 uses this to track RX-side Packet Error Rate. | Phase type identifying which link (mesh vs cluster) the missed slot belongs to. |
+| `SYNC_LOST` | `ClockState` degraded from `CLOCK_WARM` to `CLOCK_ACQUIRING` or `CLOCK_COLD`. CM4 records the event for the Frame Cursor drift metric. | None — signal alone is sufficient. |
 
 ### Application Signal Channel — Timing Invariant
 The IPCC channel latch stays set until CM4 ACKs. A second `MBMUX_NotificationSnd`
@@ -487,12 +502,25 @@ to derive their own hop count) and up to 4 routes each with a `node_id` and
 `route_cost`. Exact wire structure to be determined. C2/C3 only.
 
 ### Hop-Count Cell Eligibility
-Within `Mesh_Uplink`, a C2 node only transmits in the Cell whose index satisfies
+Within `Mesh_Uplink`, a node's **uplink-transmit** cell satisfies
 `cell_index % 3 == hop_count % 3`. This staggers relay traffic: nodes one hop
-from C3 use Cell 0, two hops Cell 1, three hops Cell 2, four hops back to Cell 0.
+from C3 use Cell 1, two hops Cell 2, three hops Cell 0, four hops back to Cell 1.
 Prevents all relay nodes competing for the same Cell. The node's `hop_count` is
-read from the last received `BeaconPayload`. C3 (hop 0) transmits in every third
-Cell starting from Cell 0.
+read from the last received `BeaconPayload`.
+
+C3 uses an **effective `hop_count` of 3** for this formula (`3 % 3 = 0`), placing
+its uplink-transmit residue at 0 and its relay-receive residue at 1. This avoids
+a special case: C3 participates in `Mesh_Uplink` identically to a C2 (it is
+wall-powered and never truly sleeps, but will not ACK outside its window).
+
+Each node has two active cell groups per mod-3 cycle:
+- `cell_index % 3 == hop_count % 3`: **uplink-transmit** — Tx DATA to upstream, Rx ACK
+- `cell_index % 3 == (hop_count + 1) % 3`: **relay-receive** — Rx DATA from downstream, Tx ACK
+- `cell_index % 3 == (hop_count + 2) % 3`: **sleep** — node skips this cell entirely
+
+C3 (effective hop 3) has no upstream, so its uplink-transmit role (residue 0) is
+vacant. C3 is active only in relay-receive cells (residue 1: cells 1, 4, 7, …) —
+the same cells where hop=1 C2 nodes uplink-transmit — and skips all others.
 
 ---
 
@@ -694,6 +722,231 @@ MbMux window. Verbose level and region filtering available via
 
 ---
 
+## Self-Diagnostics
+
+DiagnosticPayloads serve a dual purpose: **node health monitoring** and
+**live network topology visibility**. Every payload carries `source_node_id`,
+`upstream_node_id`, and `hop_count` — sufficient for the gateway to reconstruct
+the full mesh tree edge by edge as payloads arrive. The periodic `DIAG_HEARTBEAT`
+cadence keeps the topology view fresh without dedicated topology-discovery traffic.
+`DIAG_COHORT` provides the cluster membership layer: which C1s are attached to
+each C2/C3 master and their link quality.
+
+### Diagnostic Aggregator
+CM4 is the sole aggregator of all health metrics. This follows directly from the
+existing ownership model: CM4 already owns sensors, external flash, and receives
+all RF events (RSSI, SNR, TX_NO_ACK) through the existing MbMux channels. No new
+inter-core communication is required — RF metrics flow to CM4 via the same
+`RxDone` Notif/Ack and Application Signal Channel paths that already exist. CM0+
+accumulates no diagnostic state and is unaware of the diagnostic layer.
+
+### DiagnosticPayload
+The health snapshot CM4 packages and enqueues into `MeshUplinkQueue`. Follows
+the **Late-Binding Packet Assembly** model exactly as sensor payloads do: CM4
+produces content only; CM0+ wraps it with MAC variables (routing headers, hop
+count, destination) at TX time. No special assembly path. Priority: `HIGH` tier
+(diagnostic data must not be displaced by sensor backlog, and must reach the
+gateway to trigger operator action).
+
+Metrics captured in a snapshot (not all fields finalized):
+
+| Metric | Source | Notes |
+|---|---|---|
+| `source_node_id` | CM4 (provisioned node identity) | Identifies originating node regardless of relay hops. Mandatory on all DiagnosticPayload variants. |
+| `upstream_node_id` | CM4 (selected Route Entry from Routing State) | ID of the node's current upstream peer (lowest `route_cost` entry). Combined with `source_node_id`, lets the gateway reconstruct the mesh tree edge by edge. |
+| `hop_count` | CM4 (from last received BeaconPayload) | Node's current depth in the mesh. Together with `upstream_node_id`, fully positions the node in the topology. |
+| Battery voltage | CM4 ADC ch14 (VBAT, internal ÷3 bridge) | 12-bit native; 16-bit via hardware oversampling (256 samples). Converted value × 3 = VBAT. VREFINT (ch13, factory-calibrated, stored in engineering bytes) used as reference for accuracy. ADC auto-shutdown between conversions. |
+| Internal temperature | CM4 ADC ch12 (TSENSE) | Factory-calibrated per part; calibration data in device engineering bytes (read-only). Suitable for absolute measurement after calibration. Not for inter-node comparison without individual calibration offsets applied. |
+| Link RSSI (rolling) | CM4 (accumulated from RxDone notifications) | Per-link-instance window average (mesh and cluster tracked separately) |
+| Link SNR (rolling) | CM4 (accumulated from RxDone notifications) | Per-link-instance window average |
+| TX PER | CM4 (`tx_nack / tx_total` per link instance) | Separate per mesh link and cluster link |
+| RX PER | CM4 (`rx_timeout / rx_total` per link instance) | Separate per mesh link and cluster link |
+| Sensor liveness | CM4 (DMA completion flags + staleness timestamps) | `sensor_liveness` bitmask: two bits per sensor — `interface_ok` \| `data_fresh`. `interface_ok=0` = hard failure. `interface_ok=1, data_fresh=0` = wired but stuck. Sensor count and bitmask width deferred. |
+| MeshUplinkQueue depth | CM4 (read at snapshot time) | Sustained depth signals congestion or schedule misconfiguration |
+| ClusterQueue depth | CM4 (read at snapshot time) | Same |
+| Route cost | CM4 (current `route_cost` from Routing State) | Rising trend indicates battery depletion or congestion along the upstream path |
+| ClockState | CM4 (from `SYNC_LOST` / `SYNC_LOCKED` signals) | `sync_miss_count` incremented on each `SYNC_LOST`; reset on `SYNC_LOCKED` |
+| CM4 liveness | CM0+ (heartbeat counter monitoring) | Reported via CM0+-generated `DIAG_ALERT` — see CM0+ Emergency Alert |
+| Tamper flag | CM4 GPIO (deferred) | Not yet wired |
+
+### DiagType
+A single-byte enum field embedded in every `DiagnosticPayload`. Allows the
+receiving gateway and server to distinguish report category without inspecting
+metric values.
+
+| Value | Name | Trigger | Airtime cost |
+|---|---|---|---|
+| `0x01` | `DIAG_HEARTBEAT` | Periodic — every N frames (N configurable) | Predictable, budgeted |
+| `0x02` | `DIAG_ALARM` | Threshold crossing — any metric breaches its configured limit | Immediate, aperiodic |
+
+### DiagnosticHeartbeat
+A `DiagnosticPayload` with `DiagType = DIAG_HEARTBEAT`. Queued by CM4 on a
+slow periodic cadence (every N frames). Confirms to the operator that a silent
+node is alive and within normal bounds. Resets on its own cadence regardless of
+whether a `DiagnosticAlarm` fired in the same window.
+
+### DiagnosticAlarm
+A `DiagnosticPayload` with `DiagType = DIAG_ALARM`. Queued by CM4 immediately
+when any monitored metric crosses a configured threshold (e.g., battery below
+critical level, RSSI window average worse than floor, sensor liveness failure).
+Independent of the heartbeat cadence — queued alongside it, not instead of it.
+The server reacts to a received `DiagnosticAlarm` by issuing a `Mesh_Downlink`
+command (parameter adjustment, alert escalation, or operator notification).
+
+### C1 Diagnostic Path
+C1 cannot reach `MeshUplinkQueue` directly (`Mesh_Uplink` participant_mask
+excludes C1). C1 enqueues its `DiagnosticPayload` into `ClusterQueue`
+(`HIGH` tier) like any other C1 uplink data. C2 receives it via `ClusterBuffer`,
+recognises the `DiagType` field, and re-enqueues it verbatim into its own
+`MeshUplinkQueue` (`HIGH` tier). C2 acts as a transparent relay — no diagnostic
+interpretation is applied. The `DiagnosticPayload` wire format is identical
+whether it originates from C1 or C2, ensuring per-node identity is preserved
+end-to-end at the gateway.
+
+### C2 Diagnostic Roles
+C2 produces two categories of `DiagnosticPayload`, both enqueued into
+`MeshUplinkQueue`:
+
+1. **Self-report** — C2's own health metrics (battery, temperature, RF link to
+   upstream C3/C2, TX_NO_ACK rate on mesh backbone). Same structure as any node's
+   self-report.
+
+2. **CohortReport** — an aggregate health summary of C2's C1 children. Contains
+   per-C1 link quality metrics (RSSI/SNR observed during Cluster_Exchange
+   receptions), liveness flags (which C1s responded in the last N frames), and
+   any other cluster-level signal relevant to an Arctic operator. This is a
+   separate payload from C2's self-report, not folded into it. `DiagType`
+   carries a distinct value for cohort reports (see DiagType table).
+
+### CohortReport
+A `DiagnosticPayload` variant produced exclusively by C2 (and C3 when acting
+as cluster master). Carries aggregate health data about the cluster's C1 nodes.
+Wire format: `source_node_id` (C2/C3) + `upstream_node_id` + `hop_count` +
+a flat list of `CohortEntry` tuples, one per known C1 child:
+
+```c
+struct CohortEntry {
+    uint8_t  node_id;         // C1 node identity
+    int16_t  rssi;            // last observed RSSI on cluster link (dBm)
+    int8_t   snr;             // last observed SNR on cluster link (dB)
+    uint8_t  liveness_bits;   // bit0 = responded in last frame, bit1–7 reserved
+};
+```
+
+Gateway correlates CohortReport entries with individual C1 self-reports relayed
+through the same C2 to build a complete cluster health picture. CohortReport is
+included in the DiagType enum:
+
+| Value | Name | Trigger | Producer |
+|---|---|---|---|
+| `0x01` | `DIAG_HEARTBEAT` | Periodic — every N frames | C1, C2, C3 (self) |
+| `0x02` | `DIAG_ALARM` | Threshold crossing | C1, C2, C3 (self) |
+| `0x03` | `DIAG_COHORT` | Same cadence as C2 heartbeat, or on C1 alarm relay | C2 only |
+| `0x04` | `DIAG_ALERT` | CM0+ detects CM4 heartbeat failure; CM4 cannot produce its own payload | CM0+ only — exception to Late-Binding rule |
+
+### Diagnostic Flash Recording Policy
+Only `DIAG_ALARM` payloads are written to external flash. `DIAG_HEARTBEAT` and
+`DIAG_COHORT` are ephemeral — their value is real-time over-the-air reception;
+they are not persisted. Alarms are written to flash **before** being enqueued
+into `MeshUplinkQueue`. This ordering guarantees that if the node fails before
+transmitting (dead battery, crash), the alarm record survives for field retrieval.
+No transmit-success flag is stored — the flash record is a write-only audit log.
+
+### DiagnosticState
+CM4 RAM structure tracking live health metrics. Never shared with CM0+. Survives
+Stop2 (RAM retention); resets on CM4 reset. One instance per active link type,
+indexed by phase context (`Mesh_Uplink` / `Cluster_Exchange`). The `phase_type`
+field already carried in `RX_TIMEOUT` and `RX_READY` signals identifies which
+instance to update — no signal protocol change needed.
+
+```c
+struct DiagnosticState {
+    uint16_t tx_total;
+    uint16_t tx_nack;
+    uint16_t rx_total;
+    uint16_t rx_timeout;
+    int16_t  rssi_window[DIAG_WINDOW_SIZE];   // circular, N = provisioned constant
+    int8_t   snr_window[DIAG_WINDOW_SIZE];
+    uint8_t  window_head;
+    uint16_t last_vbat_mv;                    // updated on Alarm B; shared across instances
+    int8_t   last_temp_c;                     // same
+    uint16_t frames_since_heartbeat;          // same
+    uint8_t  sync_miss_count;                 // incremented on SYNC_LOST, reset on SYNC_LOCKED; shared
+    uint8_t  mesh_queue_depth;                // snapshot of MeshUplinkQueue occupancy; shared
+    uint8_t  cluster_queue_depth;             // snapshot of ClusterQueue occupancy; shared
+    uint16_t current_route_cost;              // from Routing State at snapshot time; shared
+};
+```
+
+Instances per node class:
+
+| Class | Instances | Links tracked |
+|---|---|---|
+| C1 | 1 | Cluster link to master (C2 or C3) |
+| C2 | 2 | Mesh uplink to upstream C3/C2 · Cluster link to C1 children |
+| C3 | 2 | Mesh reception link from upstream C2s · Cluster link to C1 children |
+
+C3 may act as cluster master and therefore maintains a cluster-link instance
+alongside its mesh-reception instance. `last_vbat_mv`, `last_temp_c`, and
+`frames_since_heartbeat` are logically shared — one snapshot per Alarm B wake
+regardless of instance count.
+
+`DIAG_ALARM` packets for mesh-link and cluster-link failures are emitted as
+separate payloads, preserving link identity at the gateway. C2's cluster-link
+RX PER and `DIAG_COHORT` are complementary: the former is C2's own receive
+reliability on the cluster link; the latter is the per-C1-child health picture.
+
+### CM0+ Emergency Alert
+The sole exception to the rule that CM4 produces all `DiagnosticPayload` content.
+When CM0+ detects CM4 heartbeat failure (N consecutive MbMux notifications
+unanswered — see Watchdog and Core Liveness), it writes a minimal
+`DiagnosticPayload` with `DiagType = DIAG_ALERT` directly into a dedicated
+single-entry **EmergencyAlertSlot** in shared memory (not `MeshUplinkQueue`,
+which CM4 owns). At the next `Mesh_Uplink` TX opportunity, CM0+ checks the
+`EmergencyAlertSlot` before `MeshUplinkQueue` and, if populated, assembles and
+transmits it at `HIGH` priority. The payload carries only: node ID, `DIAG_ALERT`
+type, and the RTC timestamp of failure detection. CM4 reset follows via RCC
+(existing mechanism) after the alert is queued. The `EmergencyAlertSlot` is
+cleared on CM4 restart.
+
+### Diagnostic Trigger Model
+Three trigger paths coexist:
+
+1. **Heartbeat timer (CM4)** — CM4 counts elapsed frames on each Alarm B wake.
+   When the counter reaches N, it snapshots all metrics and enqueues a
+   `DIAG_HEARTBEAT`. Counter resets to zero.
+
+2. **Threshold evaluator (CM4)** — CM4 evaluates each metric on every Alarm B
+   wake and on each IPCC signal (`RX_TIMEOUT`, `TX_NO_ACK`, `SYNC_LOST`).
+   If any metric crosses its provisioned threshold, it immediately writes the
+   alarm to external flash, then enqueues a `DIAG_ALARM`. Heartbeat counter
+   is unaffected.
+
+3. **CM0+ heartbeat watchdog** — CM0+ monitors the CM4 Heartbeat counter. On
+   N consecutive failures, it writes a `DIAG_ALERT` to the `EmergencyAlertSlot`
+   and triggers CM4 reset. Does not involve CM4 at all.
+
+Thresholds are provisioned constants (internal flash, boot-time only, not
+field-adjustable — see Non-Volatile Memory). Field-adjustable thresholds via
+`Mesh_Downlink` are a future path not yet specified.
+
+### DownlinkDiagCmd
+The command type field carried in a diagnostic-reactive `Mesh_Downlink` packet.
+Wire format reserves a `DownlinkDiagCmd` byte to accommodate future command
+categories. A pure acknowledgement / informational response is not a valid
+command — diagnostic downlinks must be actionable. Two command categories are
+enabled in the wire format but deferred pending operator confirmation:
+
+| Value | Name | Action | Status |
+|---|---|---|---|
+| `0x01` | `DIAG_CMD_PARAM_UPDATE` | Adjust runtime parameters (sampling rate, heartbeat period, TX power) to extend node lifetime until servicing. Requires CM4 parameter-write path without reboot. | Deferred — operator preference not yet confirmed |
+| `0x02` | `DIAG_CMD_SELFTEST` | Trigger an immediate out-of-schedule diagnostic snapshot. CM4 samples all metrics and enqueues a fresh `DIAG_ALARM`. Useful before dispatching a technician. | Deferred — operator preference not yet confirmed |
+
+Exact command set is an Arctic operator decision. Wire format is stable; command
+semantics are not yet finalised.
+
+---
+
 **Deferred [NEXT PRIORITY] — TDMA Table class refactoring:** the current table structure encodes per-class slot patterns via `cell_bitmap[3]` and `participant_mask`, but C3's distinct slot pattern and the MAC State Machine's class-specific mechanisms (contention eligibility, hop-count mod-3, Cell Permit) likely require deeper structural changes. Full redesign needed before implementation.
 
 **Deferred [NEXT PRIORITY] — Sensor scheduling machine:** how CM4 tracks multiple sensor descriptors with independent periods, computes the minimum-next-alarm across all due sensors on each Alarm B wake, and handles coincident sensors in one acquisition cycle. `AlarmBRequest.pending` flag is settled (Option B); scheduling logic is not yet specified.
@@ -701,6 +954,16 @@ MbMux window. Verbose level and region filtering available via
 **Deferred [NEXT PRIORITY] — Sensor power management:** whether sensor interfaces require a switched power rail before acquisition, and the worst-case sensor startup time to accommodate in the TDMA header gap. Initial assumption: switched power rail controlled by a hardware GPIO (always-on not affordable). Awaiting hardware confirmation from colleague.
 
 **Deferred — All `Cluster_Exchange` internals:** header content and wire format, Cell Permit encoding, per-node cell assignment model (`Cluster_Join` phase, join request packet, acceptance policy, cluster capacity limits, MAC State Machine integration). None of this is a current priority.
+
+**Deferred — CT empirical validation (see `ArcLoRaM_CT_Sync_Design.md`):**
+(1) Confirm 8-symbol preamble length for CT-LoRa.
+(2) Measure worst-case inter-C2 drift under Arctic temperatures; size Sync Phase
+cadence to stay below 16 ms.
+(3) Select variable TX power scheme (randomised / hop-count-based / per-node).
+(4) Tune C2 audit cycle ratio from starting value of 0.5.
+(5) Determine if offset-CT timing jitter is needed beyond TX power + multi-slot.
+(6) Clarify regulatory duty cycle interpretation (per-device vs per-region, EU868
+or Greenland framework).
 
 **Deferred — Factory provisioning:** how boot constants are written to internal flash at manufacturing (SWD programmer, UART bootloader, or other) is not yet decided.
 
