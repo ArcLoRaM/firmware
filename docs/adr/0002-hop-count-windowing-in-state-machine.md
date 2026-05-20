@@ -1,4 +1,4 @@
-# ADR-0002: Hop-Count Windowing Is a Protocol State Machine Concern
+# ADR-0002: Hop-Count Windowing Is a MAC State Machine Concern
 
 ## Status
 Accepted
@@ -20,4 +20,4 @@ The windowing rule can change (different modulo, different grouping strategy)
 without modifying the TDMA Table format or redefining any term in CONTEXT.md.
 The table remains node-agnostic and readable without knowing network topology.
 The rule is invisible to any tool that reads only the table — it is documented
-here and implemented exclusively in the Protocol State Machine.
+here and implemented exclusively in the MAC State Machine.

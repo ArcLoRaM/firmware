@@ -74,6 +74,8 @@ Cell blueprint is stored. A Phase is a sequence of `cell_count` identical Cells.
 The compact Rx/Tx pattern for one Cell, stored as a `uint32_t` bitmap (1 bit per
 Slot: 1=Tx, 0=Rx). Stored once per Phase. Up to 32 Slots per Cell.
 Each Phase carries three Cell blueprints — one per Node Class (C1, C2, C3).
+Valid only for `DIRECTION_STATIC` phases (`Mesh_Beacon`, `Mesh_Downlink`, `Sync`).
+Ignored when `direction_mode == DIRECTION_DYNAMIC`.
 
 ### Slot
 The atomic radio access opportunity within a Cell. Each Slot corresponds to one
@@ -136,15 +138,18 @@ struct Phase {
                                      // non-participants skip Phase entirely
     DirectionMode direction_mode;    // STATIC: cell_bitmap valid
                                      // DYNAMIC: cell_bitmap ignored;
-                                     //   MAC writes eligibility to shared memory
+                                     // MAC writes eligibility to shared memory
+
+    uint8_t      cell_count;        // Cell repetitions in this Phase
+    uint8_t       slot_count;        // Slots per Cell (1–16)
     uint32_t      slot_active_ms;    // worst-case duration of one Slot exchange
-    uint32_t      gap_after_ms[16];  // network-wide sleep gap after slot i
+
+    uint16_t      gap_slots_ms[16];  // network-wide sleep gap after slot i
     AnchorSlot    header;
     AnchorSlot    footer;
-    uint32_t      cell_bitmap[3];    // [C1, C2, C3]: 1-bit per slot, 1=Tx 0=Rx
+    uint32_t      static_cell_bitmap[3];    // [C1, C2, C3]: 1-bit per slot, 1=Tx 0=Rx
                                      // valid only when direction_mode == DIRECTION_STATIC
-    uint8_t       slot_count;        // Slots per Cell (1–32)
-    uint16_t      cell_count;        // Cell repetitions in this Phase
+
 };
 ```
 
@@ -172,7 +177,8 @@ Never modifies it. Responsible purely for timing mechanics — when to wake and 
 **TDMA Table responsibilities** (what the table owns):
 - Which Phase Types appear and in what order
 - Which Node Classes participate in each Phase (`participant_mask`)
-- The Rx/Tx pattern per Node Class per Slot (`cell_bitmap`)
+- Whether per-cell direction is static or dynamic (`direction_mode`)
+- The Rx/Tx pattern per Node Class per Slot for static phases (`cell_bitmap`)
 - Slot active duration and inter-slot gaps (`slot_active_ms`, `gap_after_ms`)
 - Phase Header and Footer Slot definitions
 - Cell repetition count (`cell_count`)
@@ -181,6 +187,9 @@ Never modifies it. Responsible purely for timing mechanics — when to wake and 
 - Advancing the Frame Cursor and computing absolute slot times
 - Checking `participant_mask` at Phase entry — if local class is excluded, skip
   Phase entirely and program alarm for next Phase start
+- For `DIRECTION_STATIC` phases: reading `cell_bitmap` to determine Rx/Tx direction
+- For `DIRECTION_DYNAMIC` phases: reading `CellEligibilityMask` from shared memory
+  at each cell boundary; skipping cells where eligibility bit is clear
 - Programming RTC alarms for each wake-up (alarm-chain sleep model)
 - Applying Guard Time on Rx Slots
 - Correcting Frame Epoch on Mesh_Beacon or Sync reception
@@ -207,11 +216,12 @@ State Machine determines *whether* that opportunity is taken and *how*.
 
 **MAC State Machine responsibilities:**
 - Maintaining the node's operational state (see states below)
-- At each opportunity: deciding whether to TX, RX, or skip
-- Applying hop-count mod-3 eligibility within `Mesh_Uplink` (see Hop-Count Cell Eligibility)
+- At each opportunity in `DIRECTION_DYNAMIC` phases: determining Tx vs Rx direction
+  from `cell_index % 3` vs `hop_count % 3` (see Hop-Count Cell Eligibility)
+- After each beacon update: computing and writing `CellEligibilityMask` for `Mesh_Uplink`
 - Executing contention logic in CONTENTION footer Slots (CSMA + backoff)
 - Selecting packet type (data vs join request) in `Cluster_Exchange` footer
-- Reading the Cell Permit to decide per-cell TX eligibility in `Cluster_Exchange`
+- Decoding the `Cluster_Exchange` header and writing the Cell Permit
 - Accepting state transition commands from CM4
 
 CM4 can influence the MAC State Machine by writing state transition commands
@@ -522,6 +532,32 @@ C3 (effective hop 3) has no upstream, so its uplink-transmit role (residue 0) is
 vacant. C3 is active only in relay-receive cells (residue 1: cells 1, 4, 7, …) —
 the same cells where hop=1 C2 nodes uplink-transmit — and skips all others.
 
+### CellEligibilityMask
+Shared memory value written by the MAC State Machine after each beacon update.
+Used exclusively in `DIRECTION_DYNAMIC` phases (`Mesh_Uplink`). A 3-bit mask:
+bit N = 1 means the node wakes for cells where `cell_index % 3 == N`.
+
+The MAC computes it from `hop_count`:
+```c
+uint8_t uplink_residue  = hop_count % 3;
+uint8_t relay_residue   = (hop_count + 1) % 3;
+cell_eligibility_mask   = (1 << uplink_residue) | (1 << relay_residue);
+```
+
+The TDMA Machine reads it at each cell boundary:
+```c
+if ((cell_eligibility_mask >> (cell_index % 3)) & 1)
+    // wake — pass to MAC State Machine for direction decision
+else
+    // skip cell, advance cursor to next eligible cell
+```
+
+Default value before first beacon: `0x00` (skip all cells). This is safe: a node
+without a beacon has no valid `hop_count` and must not transmit in `Mesh_Uplink`.
+
+For `Cluster_Exchange`, the Cell Permit serves the equivalent role — it is decoded
+from the phase header slot rather than derived from `hop_count`.
+
 ---
 
 ## Mesh Routing
@@ -579,11 +615,6 @@ CM4's decoded conclusion after reading the Cluster_Exchange header payload. Stat
 which cell(s) this node is permitted to use for uplink in the current
 `Cluster_Exchange` Phase. Written by CM4 to shared memory; read by CM0+ at each
 cell opportunity to decide whether to transmit or sleep. Cluster topology only.
-
-If CM4 has not yet written the Cell Permit by the time the first cell opportunity
-fires (e.g., CM4 was busy with sensor acquisition), CM0+ sees no grant and skips
-that cell. CM0+ re-checks at every subsequent opportunity — missing early cells is
-acceptable by design.
 
 The Cluster_Exchange header slot must therefore include a mandatory gap before the
 first C1 uplink cell, sized to accommodate: CM0+ flagging CM4, CM4 finishing any
@@ -947,7 +978,7 @@ semantics are not yet finalised.
 
 ---
 
-**Deferred [NEXT PRIORITY] — TDMA Table class refactoring:** the current table structure encodes per-class slot patterns via `cell_bitmap[3]` and `participant_mask`, but C3's distinct slot pattern and the MAC State Machine's class-specific mechanisms (contention eligibility, hop-count mod-3, Cell Permit) likely require deeper structural changes. Full redesign needed before implementation.
+**Resolved — TDMA Table direction split:** `DirectionMode` field added to Phase struct. `DIRECTION_STATIC` phases (`Mesh_Beacon`, `Mesh_Downlink`, `Sync`) use `cell_bitmap[3]` as before. `DIRECTION_DYNAMIC` phases (`Mesh_Uplink`, `Cluster_Exchange`) use MAC-written `CellEligibilityMask` / Cell Permit for per-cell eligibility; direction determined at wake from `cell_index % 3` vs `hop_count % 3`. See ADR-0010.
 
 **Deferred [NEXT PRIORITY] — Sensor scheduling machine:** how CM4 tracks multiple sensor descriptors with independent periods, computes the minimum-next-alarm across all due sensors on each Alarm B wake, and handles coincident sensors in one acquisition cycle. `AlarmBRequest.pending` flag is settled (Option B); scheduling logic is not yet specified.
 
