@@ -48,7 +48,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define FLASH_IF_BUFFER_SIZE 30
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/

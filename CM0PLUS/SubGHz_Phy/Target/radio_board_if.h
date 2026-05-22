@@ -89,7 +89,17 @@ extern "C" {
 
 #else
 /* USER CODE BEGIN Exported PinMapping */
-#warning user to provide its board definitions pins
+#define RF_SW_CTRL1_PIN                GPIO_PIN_4
+#define RF_SW_CTRL1_GPIO_PORT          GPIOC
+#define RF_SW_CTRL1_CLK_ENABLE()       __HAL_RCC_GPIOC_CLK_ENABLE()
+
+#define RF_SW_CTRL2_PIN                GPIO_PIN_5
+#define RF_SW_CTRL2_GPIO_PORT          GPIOC
+#define RF_SW_CTRL2_CLK_ENABLE()       __HAL_RCC_GPIOC_CLK_ENABLE()
+
+#define RF_SW_CTRL3_PIN                GPIO_PIN_3
+#define RF_SW_CTRL3_GPIO_PORT          GPIOC
+#define RF_SW_CTRL3_CLK_ENABLE()       __HAL_RCC_GPIOC_CLK_ENABLE()
 /* USER CODE END Exported PinMapping */
 #endif  /* USE_BSP_DRIVER  */
 

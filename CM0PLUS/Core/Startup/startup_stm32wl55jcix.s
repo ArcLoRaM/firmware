@@ -43,6 +43,10 @@ defined in linker script */
 .word _sbss
 /* end address for the .bss section. defined in linker script */
 .word _ebss
+/* MB_MEM2 init symbols defined in linker script */
+.word _siMB_MEM2
+.word _sMB_MEM2
+.word _eMB_MEM2
 
 /**
  * @brief  This is the code that gets called when the processor first
@@ -79,6 +83,23 @@ LoopCopyDataInit:
   adds r4, r0, r3
   cmp r4, r1
   bcc CopyDataInit
+
+/* Copy MB_MEM2 segment initializers from flash to RAM_SHARED */
+  ldr r0, =_sMB_MEM2
+  ldr r1, =_eMB_MEM2
+  ldr r2, =_siMB_MEM2
+  movs r3, #0
+  b LoopCopyMB_MEM2Init
+
+CopyMB_MEM2Init:
+  ldr r4, [r2, r3]
+  str r4, [r0, r3]
+  adds r3, r3, #4
+
+LoopCopyMB_MEM2Init:
+  adds r4, r0, r3
+  cmp r4, r1
+  bcc CopyMB_MEM2Init
 
 /* Zero fill the bss segment. */
   ldr r2, =_sbss
