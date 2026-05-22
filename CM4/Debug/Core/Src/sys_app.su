@@ -1,0 +1,6 @@
+../Core/Src/sys_app.c:78:6:SystemApp_Init	8	static
+../Core/Src/sys_app.c:92:6:Process_Sys_Notif	24	static
+../Core/Src/sys_app.c:132:6:UTIL_SEQ_EvtIdle	16	static
+../Core/Src/sys_app.c:153:13:MBMUXIF_Init	16	static
+../Core/Src/sys_app.c:214:10:HAL_GetTick	16	static
+../Core/Src/sys_app.c:245:6:HAL_Delay	16	static

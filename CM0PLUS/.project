@@ -3,6 +3,7 @@
 	<name>ArcLoRaM_Base_CM0PLUS</name>
 	<comment></comment>
 	<projects>
+		<project>ArcLoRaM_Base_CM4</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>

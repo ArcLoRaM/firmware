@@ -1,0 +1,13 @@
+../MbMux/mbmux.c:110:6:MBMUX_Init	2
+../MbMux/mbmux.c:135:8:MBMUX_RegisterFeatureCallback	4
+../MbMux/mbmux.c:171:6:MBMUX_UnregisterFeature	3
+../MbMux/mbmux.c:199:19:MBMUX_GetFeatureComPtr	3
+../MbMux/mbmux.c:225:9:MBMUX_NotificationSnd	2
+../MbMux/mbmux.c:243:10:MBMUX_ResponseSnd	1
+../MbMux/mbmux.c:257:11:MBMUX_SEC_VerifySramBufferPtr	1
+../MbMux/mbmux.c:278:18:MBMUX_SEC_VerifySramBuffer	8
+../MbMux/mbmux.c:333:13:MBMUX_RetrieveSecureSramConfig	3
+../MbMux/mbmux.c:369:13:MBMUX_IsrCommandRcvCb	1
+../MbMux/mbmux.c:384:13:MBMUX_IsrAcknowledgeRcvCb	1
+../MbMux/mbmux.c:399:16:MBMUX_GetFeatureChIdx	1
+../MbMux/mbmux.c:410:13:MBMUX_IsrNotRegistered	1

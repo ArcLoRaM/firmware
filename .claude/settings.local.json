@@ -12,7 +12,9 @@
       "Bash(xargs grep -l \"SENSOR_ACQ_Id\\\\|Stop2\\\\|tx_queue\\\\|rx_buffer\\\\|node_state\\\\|sensor_schedule\")",
       "Bash(xargs grep -l \"implementation\\\\|struct\\\\|code\\\\|Phase\\\\|TDMA\")",
       "Bash(xargs grep -l \"health\\\\|diagnostic\\\\|status\\\\|monitor\")",
-      "Bash(xargs grep -l \"int16_t.*Rssi\\\\|int8_t.*snr\\\\|int8_t.*Snr\")"
+      "Bash(xargs grep -l \"int16_t.*Rssi\\\\|int8_t.*snr\\\\|int8_t.*Snr\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\srcla\\\\Desktop\\\\ArcLoRaM\\\\Hardware\\\\STM32\\\\ArcLoRaM_Base\" -Directory)",
+      "Bash(Select-Object -ExpandProperty Name)"
     ]
   }
 }
