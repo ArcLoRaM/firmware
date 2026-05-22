@@ -63,7 +63,12 @@ void Error_Handler(void);
 #define LED_CM4_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
+#define USING_NUCLEO        /* comment out to disable board-specific LED/timer code */
 
+#ifdef USING_NUCLEO
+#define LED_BLINK_CM4_Pin   GPIO_PIN_9
+#define LED_BLINK_CM4_Port  GPIOB
+#endif
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

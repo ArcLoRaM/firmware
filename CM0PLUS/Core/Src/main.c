@@ -86,7 +86,7 @@ int main(void)
   MX_DMA_Init();
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
-
+  MX_SubGHz_Phy_Init();   /* calls SystemApp_Init() → UTIL_TIMER_Init(); safe — CM4 MbMux is ready */
   /* USER CODE END 2 */
 
   /* Infinite loop */

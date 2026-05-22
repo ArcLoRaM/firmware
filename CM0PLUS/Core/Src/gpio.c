@@ -55,5 +55,16 @@ void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 2 */
-
+#ifdef USING_NUCLEO
+void BSP_LED_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  GPIO_InitStruct.Pin   = LED_BLINK_CM0_Pin;
+  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull  = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(LED_BLINK_CM0_Port, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(LED_BLINK_CM0_Port, LED_BLINK_CM0_Pin, GPIO_PIN_RESET);
+}
+#endif
 /* USER CODE END 2 */

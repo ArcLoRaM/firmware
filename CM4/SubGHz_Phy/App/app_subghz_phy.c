@@ -24,7 +24,10 @@
 #include "sys_app.h"
 
 /* USER CODE BEGIN Includes */
-
+#ifdef USING_NUCLEO
+#include "gpio.h"
+#include "stm32_timer.h"
+#endif
 /* USER CODE END Includes */
 
 /* External variables ---------------------------------------------------------*/
@@ -39,7 +42,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#ifdef USING_NUCLEO
+#define LED_CM4_BLINK_PERIOD_MS  5000U
+#endif
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,12 +54,16 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
-
+#ifdef USING_NUCLEO
+static UTIL_TIMER_Object_t LedTimer;
+#endif
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
-
+#ifdef USING_NUCLEO
+static void LedToggle_Cb(void *arg);
+#endif
 /* USER CODE END PFP */
 
 /* Exported functions --------------------------------------------------------*/
@@ -70,7 +79,11 @@ void MX_SubGHz_Phy_Init(void)
   /* USER CODE END MX_SubGHz_Phy_Init_1_1 */
   SubghzApp_Init();
   /* USER CODE BEGIN MX_SubGHz_Phy_Init_2 */
-
+#ifdef USING_NUCLEO
+  BSP_LED_GPIO_Init();
+  UTIL_TIMER_Create(&LedTimer, LED_CM4_BLINK_PERIOD_MS, UTIL_TIMER_PERIODIC, LedToggle_Cb, NULL);
+  UTIL_TIMER_Start(&LedTimer);
+#endif
   /* USER CODE END MX_SubGHz_Phy_Init_2 */
 }
 
@@ -85,7 +98,12 @@ void MX_SubGHz_Phy_Process(void)
 }
 
 /* USER CODE BEGIN EF */
-
+#ifdef USING_NUCLEO
+static void LedToggle_Cb(void *arg)
+{
+  HAL_GPIO_TogglePin(LED_BLINK_CM4_Port, LED_BLINK_CM4_Pin);
+}
+#endif
 /* USER CODE END EF */
 
 /* Private Functions Definition -----------------------------------------------*/

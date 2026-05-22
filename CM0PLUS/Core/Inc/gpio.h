@@ -39,7 +39,9 @@ extern "C" {
 void MX_GPIO_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-
+#ifdef USING_NUCLEO
+void BSP_LED_GPIO_Init(void);
+#endif
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
