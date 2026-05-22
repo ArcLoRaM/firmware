@@ -23,7 +23,8 @@
 #include "timer_if.h"
 
 /* USER CODE BEGIN Includes */
-
+#include "rtc.h"    /* hrtc handle */
+#include "main.h"   /* RTC_PREDIV_S, Error_Handler */
 /* USER CODE END Includes */
 
 /* External variables ---------------------------------------------------------*/
@@ -73,12 +74,18 @@ const UTIL_SYSTIM_Driver_s UTIL_SYSTIMDriver =
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define MIN_ALARM_DELAY  3u        /* minimum WUT ticks before firing (~1.5 ms at 2048 Hz) */
+#define WUT_CLOCK_HZ     2048u     /* WUT rate: RTCCLK/16 = 32768/16 Hz */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+#ifndef UTIL_TIMER_IRQ_MAP_INIT
+#define UTIL_TIMER_IRQ_MAP_INIT()
+#endif
+#ifndef UTIL_TIMER_IRQ_MAP_PROCESS
+#define UTIL_TIMER_IRQ_MAP_PROCESS()  UTIL_TIMER_IRQ_Handler()
+#endif
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -88,12 +95,12 @@ const UTIL_SYSTIM_Driver_s UTIL_SYSTIMDriver =
 static uint32_t RtcTimerContext = 0;
 
 /* USER CODE BEGIN PV */
-
+static uint8_t RTC_Initialized = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
-
+static inline uint32_t GetTimerTicks(void);
 /* USER CODE END PFP */
 
 /* Exported functions ---------------------------------------------------------*/
@@ -101,7 +108,16 @@ UTIL_TIMER_Status_t TIMER_IF_Init(void)
 {
   UTIL_TIMER_Status_t ret = UTIL_TIMER_OK;
   /* USER CODE BEGIN TIMER_IF_Init */
-
+  if (RTC_Initialized == 0)
+  {
+    hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+    MX_RTC_Init();
+    TIMER_IF_StopTimer();
+    HAL_RTCEx_EnableBypassShadow(&hrtc);
+    hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+    RtcTimerContext = GetTimerTicks();
+    RTC_Initialized = 1;
+  }
   /* USER CODE END TIMER_IF_Init */
   return ret;
 }
@@ -110,7 +126,21 @@ UTIL_TIMER_Status_t TIMER_IF_StartTimer(uint32_t timeout)
 {
   UTIL_TIMER_Status_t ret = UTIL_TIMER_OK;
   /* USER CODE BEGIN TIMER_IF_StartTimer */
+  TIMER_IF_StopTimer();
+  timeout += RtcTimerContext;
 
+  uint32_t now          = GetTimerTicks();
+  uint32_t remaining_ms = (timeout > now) ? (timeout - now) : 1u;
+
+  /* Convert ms to WUT 2048 Hz counts; clamp to 16-bit hardware max (~32 s) */
+  uint32_t count = (uint32_t)(((uint64_t)remaining_ms * WUT_CLOCK_HZ) / 1000u);
+  if (count == 0u) { count = 1u; }
+  if (count > 0xFFFFu) { count = 0xFFFFu; }
+
+  if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, count, RTC_WAKEUPCLOCK_RTCCLK_DIV16, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE END TIMER_IF_StartTimer */
   return ret;
 }
@@ -119,7 +149,9 @@ UTIL_TIMER_Status_t TIMER_IF_StopTimer(void)
 {
   UTIL_TIMER_Status_t ret = UTIL_TIMER_OK;
   /* USER CODE BEGIN TIMER_IF_StopTimer */
-
+  hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+  HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
+  hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
   /* USER CODE END TIMER_IF_StopTimer */
   return ret;
 }
@@ -127,7 +159,7 @@ UTIL_TIMER_Status_t TIMER_IF_StopTimer(void)
 uint32_t TIMER_IF_SetTimerContext(void)
 {
   /* USER CODE BEGIN TIMER_IF_SetTimerContext */
-
+  RtcTimerContext = GetTimerTicks();
   /* USER CODE END TIMER_IF_SetTimerContext */
 
   /*return time context*/
@@ -148,7 +180,7 @@ uint32_t TIMER_IF_GetTimerElapsedTime(void)
 {
   uint32_t ret = 0;
   /* USER CODE BEGIN TIMER_IF_GetTimerElapsedTime */
-
+  ret = (uint32_t)(GetTimerTicks() - RtcTimerContext);
   /* USER CODE END TIMER_IF_GetTimerElapsedTime */
   return ret;
 }
@@ -157,7 +189,7 @@ uint32_t TIMER_IF_GetTimerValue(void)
 {
   uint32_t ret = 0;
   /* USER CODE BEGIN TIMER_IF_GetTimerValue */
-
+  ret = GetTimerTicks();
   /* USER CODE END TIMER_IF_GetTimerValue */
   return ret;
 }
@@ -166,7 +198,7 @@ uint32_t TIMER_IF_GetMinimumTimeout(void)
 {
   uint32_t ret = 0;
   /* USER CODE BEGIN TIMER_IF_GetMinimumTimeout */
-
+  ret = MIN_ALARM_DELAY;
   /* USER CODE END TIMER_IF_GetMinimumTimeout */
   return ret;
 }
@@ -175,7 +207,7 @@ uint32_t TIMER_IF_Convert_ms2Tick(uint32_t timeMilliSec)
 {
   uint32_t ret = 0;
   /* USER CODE BEGIN TIMER_IF_Convert_ms2Tick */
-
+  ret = timeMilliSec;   /* tick unit = 1 ms (SysTick rate); identity conversion */
   /* USER CODE END TIMER_IF_Convert_ms2Tick */
   return ret;
 }
@@ -184,7 +216,7 @@ uint32_t TIMER_IF_Convert_Tick2ms(uint32_t tick)
 {
   uint32_t ret = 0;
   /* USER CODE BEGIN TIMER_IF_Convert_Tick2ms */
-
+  ret = tick;           /* tick unit = 1 ms; identity conversion */
   /* USER CODE END TIMER_IF_Convert_Tick2ms */
   return ret;
 }
@@ -238,10 +270,17 @@ uint32_t TIMER_IF_BkUp_Read_SubSeconds(void)
 }
 
 /* USER CODE BEGIN EF */
-
+void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
+{
+  UTIL_TIMER_IRQ_MAP_PROCESS();
+}
 /* USER CODE END EF */
 
 /* Private functions ---------------------------------------------------------*/
 /* USER CODE BEGIN PrFD */
-
+static inline uint32_t GetTimerTicks(void)
+{
+  /* uwTick: HAL SysTick ms counter, 1 kHz, wraps at 2^32 ms (~49.7 days). */
+  return uwTick;
+}
 /* USER CODE END PrFD */

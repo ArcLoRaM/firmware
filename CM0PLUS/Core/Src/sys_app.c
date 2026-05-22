@@ -33,7 +33,7 @@
 #include "features_info.h"
 
 /* USER CODE BEGIN Includes */
-
+#include "stm32_lpm_if.h"
 /* USER CODE END Includes */
 
 /* External variables ---------------------------------------------------------*/
@@ -95,6 +95,18 @@ void SystemApp_Init(void)
   System_Init();
 
   /* USER CODE BEGIN SystemApp_Init_2 */
+
+  /* Ensure MSI is wake-up system clock */
+  __HAL_RCC_WAKEUPSTOP_CLK_CONFIG(RCC_STOP_WAKEUPCLOCK_MSI);
+
+  /* Initialize timer and RTC */
+  UTIL_TIMER_Init();
+  SYS_TimerInitialisedFlag = 1;
+
+  /* Init low power manager */
+  UTIL_LPM_Init();
+  /* Disable Stand-by mode */
+  UTIL_LPM_SetOffMode((1 << CFG_LPM_DUMMY_Id), UTIL_LPM_DISABLE);
 
   /* USER CODE END SystemApp_Init_2 */
 }
