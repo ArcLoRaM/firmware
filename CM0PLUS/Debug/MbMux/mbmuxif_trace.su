@@ -1,7 +1,0 @@
-../MbMux/mbmuxif_trace.c:108:8:MBMUXIF_TraceInit	32	static
-../MbMux/mbmuxif_trace.c:136:19:MBMUXIF_GetTraceFeatureNotifComPtr	16	static
-../MbMux/mbmuxif_trace.c:152:6:MBMUXIF_TraceSendNotif_NoWait	8	static
-../MbMux/mbmuxif_trace.c:171:32:MBMUXIF_TraceBufferInit	16	static
-../MbMux/mbmuxif_trace.c:183:32:MBMUXIF_TraceBufferSend	24	static
-../MbMux/mbmuxif_trace.c:210:13:MBMUXIF_IsrTraceAckRcvCb	16	static
-../MbMux/mbmuxif_trace.c:222:13:MBMUXIF_TaskTraceAckRcv	8	static
