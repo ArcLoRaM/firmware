@@ -19,13 +19,14 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "dma.h"
+#include "lptim.h"
 #include "app_subghz_phy.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "sys_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -85,6 +86,7 @@ int main(void)
 
   /* USER CODE BEGIN SysInit */
 
+#if 0
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -92,7 +94,15 @@ int main(void)
   MX_DMA_Init();
   MX_USART2_UART_Init();
   MX_SubGHz_Phy_Init();
+  MX_LPTIM1_Init();
   /* USER CODE BEGIN 2 */
+#endif
+
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_USART2_UART_Init();
+  MX_LPTIM1_Init();
+  MX_SubGHz_Phy_Init();
 
   /* USER CODE END 2 */
 
@@ -101,12 +111,15 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  APP_PRINTF("Hello Celium\r\n");
   while (1)
   {
+
     /* USER CODE END WHILE */
     MX_SubGHz_Phy_Process();
 
     /* USER CODE BEGIN 3 */
+
   }
   /* USER CODE END 3 */
 }

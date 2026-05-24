@@ -28,6 +28,8 @@
 #include "gpio.h"
 #include "stm32_timer.h"
 #endif
+#include "stm32_seq.h"
+
 /* USER CODE END Includes */
 
 /* External variables ---------------------------------------------------------*/
@@ -43,7 +45,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #ifdef USING_NUCLEO
-#define LED_CM4_BLINK_PERIOD_MS  5000U
+#define LED_CM4_BLINK_PERIOD_MS  120000U
 #endif
 /* USER CODE END PD */
 
@@ -75,10 +77,12 @@ void MX_SubGHz_Phy_Init(void)
   /* USER CODE END MX_SubGHz_Phy_Init_1 */
   SystemApp_Init();
   /* USER CODE BEGIN MX_SubGHz_Phy_Init_1_1 */
-
+#ifdef CM0_OWNS_RADIO
   /* USER CODE END MX_SubGHz_Phy_Init_1_1 */
   SubghzApp_Init();
   /* USER CODE BEGIN MX_SubGHz_Phy_Init_2 */
+#endif
+
 #ifdef USING_NUCLEO
   BSP_LED_GPIO_Init();
   UTIL_TIMER_Create(&LedTimer, LED_CM4_BLINK_PERIOD_MS, UTIL_TIMER_PERIODIC, LedToggle_Cb, NULL);
@@ -93,7 +97,7 @@ void MX_SubGHz_Phy_Process(void)
 
   /* USER CODE END MX_SubGHz_Phy_Process_1 */
   /* USER CODE BEGIN MX_SubGHz_Phy_Process_OS */
-
+UTIL_SEQ_Run(UTIL_SEQ_DEFAULT);
   /* USER CODE END MX_SubGHz_Phy_Process_OS */
 }
 

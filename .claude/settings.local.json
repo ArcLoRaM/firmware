@@ -14,7 +14,8 @@
       "Bash(xargs grep -l \"health\\\\|diagnostic\\\\|status\\\\|monitor\")",
       "Bash(xargs grep -l \"int16_t.*Rssi\\\\|int8_t.*snr\\\\|int8_t.*Snr\")",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\srcla\\\\Desktop\\\\ArcLoRaM\\\\Hardware\\\\STM32\\\\ArcLoRaM_Base\" -Directory)",
-      "Bash(Select-Object -ExpandProperty Name)"
+      "Bash(Select-Object -ExpandProperty Name)",
+      "WebFetch(domain:)"
     ]
   }
 }

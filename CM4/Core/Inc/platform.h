@@ -46,6 +46,7 @@ extern "C" {
 #endif /* defined(USE_BSP_DRIVER) */
 
 /* USER CODE BEGIN include */
+#include "stm32_adv_trace.h"
 
 /* USER CODE END include */
 

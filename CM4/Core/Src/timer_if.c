@@ -23,8 +23,8 @@
 #include "timer_if.h"
 
 /* USER CODE BEGIN Includes */
-#include "rtc.h"    /* hrtc handle */
-#include "main.h"   /* RTC_PREDIV_S, Error_Handler */
+#include "lptim.h"  /* hlptim1 handle */
+#include "main.h"   /* Error_Handler */
 /* USER CODE END Includes */
 
 /* External variables ---------------------------------------------------------*/
@@ -74,8 +74,8 @@ const UTIL_SYSTIM_Driver_s UTIL_SYSTIMDriver =
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define MIN_ALARM_DELAY  3u        /* minimum WUT ticks before firing (~1.5 ms at 2048 Hz) */
-#define WUT_CLOCK_HZ     2048u     /* WUT rate: RTCCLK/16 = 32768/16 Hz */
+#define MIN_ALARM_DELAY  3u        /* minimum LPTIM ticks before firing */
+#define LPTIM_CLOCK_HZ   1024u     /* LSE 32768 Hz / DIV32 */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -96,6 +96,7 @@ static uint32_t RtcTimerContext = 0;
 
 /* USER CODE BEGIN PV */
 static uint8_t RTC_Initialized = 0;
+static volatile uint8_t lptim1_running = 0u;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -110,11 +111,28 @@ UTIL_TIMER_Status_t TIMER_IF_Init(void)
   /* USER CODE BEGIN TIMER_IF_Init */
   if (RTC_Initialized == 0)
   {
-    hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
-    MX_RTC_Init();
-    TIMER_IF_StopTimer();
-    HAL_RTCEx_EnableBypassShadow(&hrtc);
-    hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+    /* IER must be written while LPTIM is disabled (MX_LPTIM1_Init leaves it disabled).
+     * CMPM is permanently enabled; actual dispatch is gated by lptim1_running. */
+    hlptim1.Instance->IER = LPTIM_IT_CMPM;
+
+    /* Enable LPTIM to write shadow registers */
+    hlptim1.Instance->CR |= LPTIM_CR_ENABLE;
+
+    /* ARR = 0xFFFF — free-running ~64 s period at 1024 Hz */
+    __HAL_LPTIM_CLEAR_FLAG(&hlptim1, LPTIM_FLAG_ARROK);
+    __HAL_LPTIM_AUTORELOAD_SET(&hlptim1, 0xFFFFu);
+    while (!__HAL_LPTIM_GET_FLAG(&hlptim1, LPTIM_FLAG_ARROK)) {}
+    __HAL_LPTIM_CLEAR_FLAG(&hlptim1, LPTIM_FLAG_ARROK);
+
+    /* CMP = 0xFFFF — harmless until first StartTimer */
+    __HAL_LPTIM_CLEAR_FLAG(&hlptim1, LPTIM_FLAG_CMPOK);
+    __HAL_LPTIM_COMPARE_SET(&hlptim1, 0xFFFFu);
+    while (!__HAL_LPTIM_GET_FLAG(&hlptim1, LPTIM_FLAG_CMPOK)) {}
+    __HAL_LPTIM_CLEAR_FLAG(&hlptim1, LPTIM_FLAG_CMPOK);
+
+    hlptim1.Instance->CR |= LPTIM_CR_CNTSTRT;
+    hlptim1.State = HAL_LPTIM_STATE_READY;
+
     RtcTimerContext = GetTimerTicks();
     RTC_Initialized = 1;
   }
@@ -132,15 +150,30 @@ UTIL_TIMER_Status_t TIMER_IF_StartTimer(uint32_t timeout)
   uint32_t now          = GetTimerTicks();
   uint32_t remaining_ms = (timeout > now) ? (timeout - now) : 1u;
 
-  /* Convert ms to WUT 2048 Hz counts; clamp to 16-bit hardware max (~32 s) */
-  uint32_t count = (uint32_t)(((uint64_t)remaining_ms * WUT_CLOCK_HZ) / 1000u);
+  /* Convert ms to LPTIM 1024 Hz counts; clamp to 16-bit max (~64 s) */
+  uint32_t count = (uint32_t)(((uint64_t)remaining_ms * LPTIM_CLOCK_HZ) / 1000u);
   if (count == 0u) { count = 1u; }
   if (count > 0xFFFFu) { count = 0xFFFFu; }
 
-  if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, count, RTC_WAKEUPCLOCK_RTCCLK_DIV16, 0) != HAL_OK)
+  /* Double-read CNT for stability across APB / LSE clock domains */
+  uint32_t cnt;
+  do { cnt = hlptim1.Instance->CNT; } while (cnt != hlptim1.Instance->CNT);
+
+  /* Write CMP = target counter value; LPTIM running with stable LSE, no LPTIM_Disable */
+  uint32_t cmp = (cnt + count) & 0xFFFFu;
+  __HAL_LPTIM_CLEAR_FLAG(&hlptim1, LPTIM_FLAG_CMPOK);
+  __HAL_LPTIM_COMPARE_SET(&hlptim1, cmp);
+  uint32_t ts = GetTimerTicks();
+  while (!__HAL_LPTIM_GET_FLAG(&hlptim1, LPTIM_FLAG_CMPOK))
   {
-    Error_Handler();
+    if (GetTimerTicks() - ts > 10u) { Error_Handler(); break; }
   }
+  __HAL_LPTIM_CLEAR_FLAG(&hlptim1, LPTIM_FLAG_CMPOK);
+
+  /* Discard any match that fired during the CMPOK window; next match will fire at the correct future count. */
+  NVIC_ClearPendingIRQ(LPTIM1_IRQn);
+  __HAL_LPTIM_CLEAR_FLAG(&hlptim1, LPTIM_FLAG_CMPM);
+  lptim1_running = 1u;
   /* USER CODE END TIMER_IF_StartTimer */
   return ret;
 }
@@ -149,9 +182,7 @@ UTIL_TIMER_Status_t TIMER_IF_StopTimer(void)
 {
   UTIL_TIMER_Status_t ret = UTIL_TIMER_OK;
   /* USER CODE BEGIN TIMER_IF_StopTimer */
-  hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
-  HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
-  hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+  lptim1_running = 0u;  /* LPTIM keeps running; stale CMPM fires are ignored in callback */
   /* USER CODE END TIMER_IF_StopTimer */
   return ret;
 }
@@ -270,9 +301,13 @@ uint32_t TIMER_IF_BkUp_Read_SubSeconds(void)
 }
 
 /* USER CODE BEGIN EF */
-void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
+void HAL_LPTIM_CompareMatchCallback(LPTIM_HandleTypeDef *hlptim)
 {
-  UTIL_TIMER_IRQ_MAP_PROCESS();
+  if (lptim1_running)
+  {
+    lptim1_running = 0u;
+    UTIL_TIMER_IRQ_MAP_PROCESS();
+  }
 }
 /* USER CODE END EF */
 

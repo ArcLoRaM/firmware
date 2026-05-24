@@ -58,6 +58,7 @@ void SysTick_Handler(void);
 void RTC_WKUP_IRQHandler(void);
 void DMA1_Channel5_IRQHandler(void);
 void USART2_IRQHandler(void);
+void LPTIM1_IRQHandler(void);
 void RTC_Alarm_IRQHandler(void);
 void IPCC_C1_RX_IRQHandler(void);
 void IPCC_C1_TX_IRQHandler(void);
