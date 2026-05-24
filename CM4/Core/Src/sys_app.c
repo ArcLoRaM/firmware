@@ -79,7 +79,6 @@ void SystemApp_Init(void)
 {
   /* USER CODE BEGIN SystemApp_Init_1 */
 UTIL_ADV_TRACE_Init();
-// UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H);
   /* USER CODE END SystemApp_Init_1 */
 
   /*Initialize MBMux (to be done after LPM because MBMux uses the sequencer) */
@@ -192,6 +191,7 @@ static void MBMUXIF_Init(void)
 
   /* USER CODE BEGIN MBMUXIF_Init_Last */
 MBMUXIF_TraceInit();
+UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H); //has to be set after MBMUXIF_TraceInit().
 UTIL_TIMER_Init();
 SYS_TimerInitialisedFlag = 1;
   /* USER CODE END MBMUXIF_Init_Last */
