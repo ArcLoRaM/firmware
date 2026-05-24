@@ -379,7 +379,7 @@ static int8_t MBMUXIF_FeatureCm0plusRegistrationCmd(uint32_t *pBuf)
 
     case FEAT_INFO_TRACE_ID:
       /* USER CODE BEGIN FEAT_INFO_TRACE_ID */
-
+      ret = MBMUXIF_TraceInit(VLEVEL_H);
       /* USER CODE END FEAT_INFO_TRACE_ID */
       break;
 
