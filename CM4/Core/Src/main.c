@@ -99,18 +99,20 @@ int main(void)
 #endif
 
   MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_USART2_UART_Init();
+  // MX_DMA_Init();
+  // MX_USART2_UART_Init();
   MX_LPTIM1_Init();
   MX_SubGHz_Phy_Init();
 
+  #if 0
   /* USER CODE END 2 */
 
   /* Boot CPU2 */
-  HAL_PWREx_ReleaseCore(PWR_CORE_CPU2);
+   HAL_PWREx_ReleaseCore(PWR_CORE_CPU2);
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+#endif
   APP_PRINTF("Hello Celium\r\n");
   while (1)
   {
