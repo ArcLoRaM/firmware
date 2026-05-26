@@ -153,6 +153,7 @@ void UTIL_SEQ_EvtIdle(uint32_t TaskId_bm, uint32_t EvtWaited_bm)
 static void MBMUXIF_Init(void)
 {
   /* USER CODE BEGIN MBMUXIF_Init_1 */
+UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H); //has to be set after MBMUXIF_TraceInit().
 
   /* USER CODE END MBMUXIF_Init_1 */
   FEAT_INFO_List_t *p_cm0plus_supported_features_list;
@@ -186,12 +187,14 @@ static void MBMUXIF_Init(void)
 
   APP_LOG(TS_ON, VLEVEL_H, "System Initialization CM4-CM0PLUS completed \r\n");
 
-  MBMUXIF_SetCpusSynchroFlag(CPUS_BOOT_SYNC_RTC_REGISTERED);
-  APP_LOG(TS_ON, VLEVEL_H, "System_Priority_A Registration for RTC Alarm handling completed \r\n");
+  // MBMUXIF_SetCpusSynchroFlag(CPUS_BOOT_SYNC_RTC_REGISTERED);
+  // APP_LOG(TS_ON, VLEVEL_H, "System_Priority_A Registration for RTC Alarm handling completed \r\n");
 
   /* USER CODE BEGIN MBMUXIF_Init_Last */
 MBMUXIF_TraceInit();
-UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H); //has to be set after MBMUXIF_TraceInit().
+  MBMUXIF_SetCpusSynchroFlag(CPUS_BOOT_SYNC_RTC_REGISTERED);
+  APP_LOG(TS_ON, VLEVEL_H, "System_Priority_A Registration for RTC Alarm handling completed \r\n");
+
 UTIL_TIMER_Init();
 SYS_TimerInitialisedFlag = 1;
   /* USER CODE END MBMUXIF_Init_Last */

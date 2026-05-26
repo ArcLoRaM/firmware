@@ -157,7 +157,14 @@ int8_t MBMUXIF_SystemInit(void)
   }
 
   /* USER CODE BEGIN MBMUXIF_SystemInit_Last */
-
+/* Wait for CM4 to complete all feature registrations (TRACE, etc.)
+ * Run the sequencer to process incoming registration commands from CM4.
+ * CM4 sets RTC_REGISTERED only AFTER TraceInit completes (sends cmd + gets response).
+ * This loop ensures TRACE ACK callback is registered before returning. */
+while (pMb_RefTable->SynchronizeCpusAtBoot != CPUS_BOOT_SYNC_RTC_REGISTERED)
+{
+  UTIL_SEQ_Run(UTIL_SEQ_DEFAULT);
+}
   /* USER CODE END MBMUXIF_SystemInit_Last */
   return ret;
 }
