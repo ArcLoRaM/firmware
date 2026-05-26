@@ -83,11 +83,7 @@ void MX_SubGHz_Phy_Init(void)
   /* USER CODE BEGIN MX_SubGHz_Phy_Init_2 */
 #endif
 
-#ifdef USING_NUCLEO
-  BSP_LED_GPIO_Init();
-  UTIL_TIMER_Create(&LedTimer, LED_CM4_BLINK_PERIOD_MS, UTIL_TIMER_PERIODIC, LedToggle_Cb, NULL);
-  UTIL_TIMER_Start(&LedTimer);
-#endif
+
   /* USER CODE END MX_SubGHz_Phy_Init_2 */
 }
 
@@ -106,11 +102,20 @@ UTIL_SEQ_Run(UTIL_SEQ_DEFAULT);
 static void LedToggle_Cb(void *arg)
 {
   HAL_GPIO_TogglePin(LED_BLINK_CM4_Port, LED_BLINK_CM4_Pin);
+    APP_PRINTF("Hello Celium from CM4\r\n");
+
 }
 #endif
 /* USER CODE END EF */
 
 /* Private Functions Definition -----------------------------------------------*/
 /* USER CODE BEGIN PrFD */
+void setLedCM4(void){
+#ifdef USING_NUCLEO
+  BSP_LED_GPIO_Init();
+  UTIL_TIMER_Create(&LedTimer, LED_CM4_BLINK_PERIOD_MS, UTIL_TIMER_PERIODIC, LedToggle_Cb, NULL);
+  UTIL_TIMER_Start(&LedTimer);
+#endif
+}
 
 /* USER CODE END PrFD */

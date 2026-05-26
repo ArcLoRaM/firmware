@@ -91,7 +91,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  APP_PRINTF("Hello Celium from CM0PLUS\r\n");
+  // APP_PRINTF("Hello Celium from CM0PLUS\r\n");
   while (1)
   {
     /* USER CODE END WHILE */

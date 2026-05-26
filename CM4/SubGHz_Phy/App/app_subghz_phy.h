@@ -63,7 +63,7 @@ void MX_SubGHz_Phy_Init(void);
 void MX_SubGHz_Phy_Process(void);
 
 /* USER CODE BEGIN EFP */
-
+void setLedCM4(void);
 /* USER CODE END EFP */
 
 #ifdef __cplusplus

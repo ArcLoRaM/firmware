@@ -101,6 +101,7 @@ int main(void)
   MX_GPIO_Init();
   // MX_DMA_Init();
   // MX_USART2_UART_Init();
+
   MX_LPTIM1_Init();
   MX_SubGHz_Phy_Init();
 
@@ -113,7 +114,9 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 #endif
-  APP_PRINTF("Hello Celium\r\n");
+
+   setLedCM4();
+   APP_PRINTF("Hello Celium\r\n");
   while (1)
   {
 

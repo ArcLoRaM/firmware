@@ -102,6 +102,8 @@ void MX_SubGHz_Phy_Process(void)
 static void LedToggle_Cb(void *arg)
 {
   HAL_GPIO_TogglePin(LED_BLINK_CM0_Port, LED_BLINK_CM0_Pin);
+    APP_PRINTF("Hello Celium from CM0PLUS\r\n");
+
 }
 #endif
 /* USER CODE END EF */
