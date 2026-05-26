@@ -155,6 +155,40 @@ static void MBMUXIF_Init(void)
   /* USER CODE BEGIN MBMUXIF_Init_1 */
 UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H); //has to be set after MBMUXIF_TraceInit().
 
+  FEAT_INFO_List_t *p_cm0plus_supported_features_list;
+  int8_t init_status;
+
+  APP_LOG(TS_ON, VLEVEL_H, "\r\nCM4: System Initialization started \r\n");
+
+  init_status = MBMUXIF_SystemInit();
+  if (init_status < 0)
+  {
+    Error_Handler();
+  }
+
+  /* start CM0PLUS */
+  /* Note: when debugging in order to connect with the debugger CPU2 shall be start using workspace CM4 starts CM0PLUS */
+  /* On the other hand is up to the developer make sure the CM0PLUS debugger is run after CM4 debugger */
+  HAL_PWREx_ReleaseCore(PWR_CORE_CPU2);
+
+  /* CM4 has started and it has reset the mailbox and initialized the MbMux; */
+  /* once CM0PLUS is also initialized it send a SYS notification */
+  MBMUXIF_SetCpusSynchroFlag(CPUS_BOOT_SYNC_ALLOW_CPU2_TO_START);
+
+  APP_LOG(TS_ON, VLEVEL_H, "CM4: System Initialization done: Wait for CM0PLUS \r\n");
+
+  MBMUXIF_WaitCm0MbmuxIsInitialized();
+
+  APP_LOG(TS_ON, VLEVEL_H, "CM0PLUS: System Initialization started \r\n");
+
+  p_cm0plus_supported_features_list = MBMUXIF_SystemSendCm0plusInfoListReq();
+  MBMUX_SetCm0plusFeatureListPtr(p_cm0plus_supported_features_list);
+
+  APP_LOG(TS_ON, VLEVEL_H, "System Initialization CM4-CM0PLUS completed \r\n");
+
+
+
+ #if 0 //I Do this because I want Trace to be init before setting RTC_REGISTERED flag. In this way I can be sure that Trace ACK callback is registered before returning from MBMUXIF_Init() and eventually receiving Trace notifications from CM0PLUS.
   /* USER CODE END MBMUXIF_Init_1 */
   FEAT_INFO_List_t *p_cm0plus_supported_features_list;
   int8_t init_status;
@@ -191,6 +225,8 @@ UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H); //has to be set after MBMUXIF_TraceIni
   // APP_LOG(TS_ON, VLEVEL_H, "System_Priority_A Registration for RTC Alarm handling completed \r\n");
 
   /* USER CODE BEGIN MBMUXIF_Init_Last */
+
+  #endif
 MBMUXIF_TraceInit();
   MBMUXIF_SetCpusSynchroFlag(CPUS_BOOT_SYNC_RTC_REGISTERED);
   APP_LOG(TS_ON, VLEVEL_H, "System_Priority_A Registration for RTC Alarm handling completed \r\n");
