@@ -43,7 +43,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #ifdef USING_NUCLEO
-#define LED_CM0_BLINK_PERIOD_MS  300U
+#define LED_CM0_BLINK_PERIOD_MS  2000U
 #endif
 /* USER CODE END PD */
 

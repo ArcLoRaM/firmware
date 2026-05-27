@@ -45,7 +45,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #ifdef USING_NUCLEO
-#define LED_CM4_BLINK_PERIOD_MS  1000U
+#define LED_CM4_BLINK_PERIOD_MS  4000U
 #endif
 /* USER CODE END PD */
 
