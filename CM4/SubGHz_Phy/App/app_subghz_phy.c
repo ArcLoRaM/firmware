@@ -102,7 +102,7 @@ UTIL_SEQ_Run(UTIL_SEQ_DEFAULT);
 static void LedToggle_Cb(void *arg)
 {
   HAL_GPIO_TogglePin(LED_BLINK_CM4_Port, LED_BLINK_CM4_Pin);
-    APP_PRINTF("Hello Celium from CM4\r\n");
+    APP_LOG(TS_ON, VLEVEL_H, "Hello Celium from CM4\r\n");
 
 }
 #endif

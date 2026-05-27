@@ -32,12 +32,12 @@
 #include "mbmuxif_radio.h"
 
 /* USER CODE BEGIN Includes */
-
+#include <string.h>
 /* USER CODE END Includes */
 
 /* External variables ---------------------------------------------------------*/
 /* USER CODE BEGIN EV */
-
+extern RTC_HandleTypeDef hrtc;
 /* USER CODE END EV */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -79,6 +79,7 @@ void SystemApp_Init(void)
 {
   /* USER CODE BEGIN SystemApp_Init_1 */
 UTIL_ADV_TRACE_Init();
+UTIL_ADV_TRACE_RegisterTimeStampFunction(TimestampNow);
   /* USER CODE END SystemApp_Init_1 */
 
   /*Initialize MBMux (to be done after LPM because MBMux uses the sequencer) */
@@ -146,7 +147,18 @@ void UTIL_SEQ_EvtIdle(uint32_t TaskId_bm, uint32_t EvtWaited_bm)
 }
 
 /* USER CODE BEGIN EF */
-
+void TimestampNow(uint8_t *buff, uint16_t *size)
+{
+  RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
+  HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+  HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN); /* mandatory: unlocks shadow registers */
+  uint32_t ms = ((uint32_t)(4095U - sTime.SubSeconds) * 1000U) / 4096U;
+  char tmp[16];
+  snprintf(tmp, sizeof(tmp), "%02u:%02u:%02u:%03u 4>", sTime.Hours, sTime.Minutes, sTime.Seconds, ms);
+  memcpy(buff, tmp, 15);
+  *size = 15;
+}
 /* USER CODE END EF */
 
 /* Private functions ---------------------------------------------------------*/
@@ -221,8 +233,8 @@ UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H); //has to be set after MBMUXIF_TraceIni
 
   APP_LOG(TS_ON, VLEVEL_H, "System Initialization CM4-CM0PLUS completed \r\n");
 
-  // MBMUXIF_SetCpusSynchroFlag(CPUS_BOOT_SYNC_RTC_REGISTERED);
-  // APP_LOG(TS_ON, VLEVEL_H, "System_Priority_A Registration for RTC Alarm handling completed \r\n");
+  MBMUXIF_SetCpusSynchroFlag(CPUS_BOOT_SYNC_RTC_REGISTERED);
+  APP_LOG(TS_ON, VLEVEL_H, "System_Priority_A Registration for RTC Alarm handling completed \r\n");
 
   /* USER CODE BEGIN MBMUXIF_Init_Last */
 

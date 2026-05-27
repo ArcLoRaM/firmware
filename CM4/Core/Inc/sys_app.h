@@ -77,7 +77,7 @@ void SystemApp_Init(void);
 void Process_Sys_Notif(MBMUX_ComParam_t *com_buf);
 
 /* USER CODE BEGIN EFP */
-
+void TimestampNow(uint8_t *buff, uint16_t *size);
 /* USER CODE END EFP */
 
 #ifdef __cplusplus

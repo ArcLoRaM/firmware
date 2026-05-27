@@ -34,11 +34,12 @@
 
 /* USER CODE BEGIN Includes */
 #include "stm32_lpm_if.h"
+#include <string.h>
 /* USER CODE END Includes */
 
 /* External variables ---------------------------------------------------------*/
 /* USER CODE BEGIN EV */
-
+extern RTC_HandleTypeDef hrtc;
 /* USER CODE END EV */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -115,6 +116,18 @@ void TimestampNow(uint8_t *buff, uint16_t *size)
 {
   /* USER CODE BEGIN TimestampNow_1 */
 
+
+   RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
+  HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+  HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN); /* mandatory: unlocks shadow registers */
+  uint32_t ms = ((uint32_t)(4095U - sTime.SubSeconds) * 1000U) / 4096U;
+  char tmp[16];
+  snprintf(tmp, sizeof(tmp), "%02u:%02u:%02u:%03u 0>", sTime.Hours, sTime.Minutes, sTime.Seconds, ms);
+  memcpy(buff, tmp, 15);
+  *size = 15;
+  
+  
   /* USER CODE END TimestampNow_1 */
 }
 
