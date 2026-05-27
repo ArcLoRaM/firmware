@@ -24,6 +24,7 @@
 #include "sys_app.h"
 #include "stm32_seq.h"
 #include "stm32_systime.h"
+#include "stm32_lpm.h"
 #include "timer_if.h"
 #include "utilities_def.h"
 #include "msg_id.h"
@@ -80,6 +81,15 @@ void SystemApp_Init(void)
   /* USER CODE BEGIN SystemApp_Init_1 */
 UTIL_ADV_TRACE_Init();
 UTIL_ADV_TRACE_RegisterTimeStampFunction(TimestampNow);
+
+  /* Select MSI as the wakeup clock so the core restarts on MSI after STOP2 */
+  __HAL_RCC_WAKEUPSTOP_CLK_CONFIG(RCC_STOP_WAKEUPCLOCK_MSI);
+
+  /* Initialize LPM bitmask state */
+  UTIL_LPM_Init();
+
+  /* Block OFF mode — STOP2 is the deepest mode allowed */
+  UTIL_LPM_SetOffMode((1 << CFG_LPM_DUMMY_Id), UTIL_LPM_DISABLE);
   /* USER CODE END SystemApp_Init_1 */
 
   /*Initialize MBMux (to be done after LPM because MBMux uses the sequencer) */
@@ -147,6 +157,21 @@ void UTIL_SEQ_EvtIdle(uint32_t TaskId_bm, uint32_t EvtWaited_bm)
 }
 
 /* USER CODE BEGIN EF */
+void UTIL_SEQ_Idle(void)
+{
+  UTIL_LPM_EnterLowPower();
+}
+
+void UTIL_ADV_TRACE_PreSendHook(void)
+{
+  UTIL_LPM_SetStopMode((1 << CFG_LPM_UART_TX_Id), UTIL_LPM_DISABLE);
+}
+
+void UTIL_ADV_TRACE_PostSendHook(void)
+{
+  UTIL_LPM_SetStopMode((1 << CFG_LPM_UART_TX_Id), UTIL_LPM_ENABLE);
+}
+
 void TimestampNow(uint8_t *buff, uint16_t *size)
 {
   RTC_TimeTypeDef sTime = {0};

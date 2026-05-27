@@ -24,6 +24,7 @@
 #include "sys_app.h"
 #include "stm32_seq.h"
 #include "stm32_systime.h"
+#include "stm32_lpm.h"
 #include "timer_if.h"
 #include "utilities_def.h"
 #include "msg_id.h"
