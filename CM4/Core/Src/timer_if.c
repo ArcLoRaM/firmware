@@ -23,8 +23,10 @@
 #include "timer_if.h"
 
 /* USER CODE BEGIN Includes */
+#include <time.h>   /* mktime */
 #include "lptim.h"  /* hlptim1 handle */
-#include "main.h"   /* Error_Handler */
+#include "main.h"   /* Error_Handler, RTC_PREDIV_S */
+#include "rtc.h"    /* hrtc — used by TIMER_IF_GetTime */
 /* USER CODE END Includes */
 
 /* External variables ---------------------------------------------------------*/
@@ -148,7 +150,8 @@ UTIL_TIMER_Status_t TIMER_IF_StartTimer(uint32_t timeout)
   timeout += RtcTimerContext;
 
   uint32_t now          = GetTimerTicks();
-  uint32_t remaining_ms = (timeout > now) ? (timeout - now) : 1u;
+  uint32_t remaining_ms = timeout - now;               /* unsigned; correct when context is fresh */
+  if (remaining_ms > 64000u) { remaining_ms = 1u; }   /* stale-context safety clamp (CNT wrap) */
 
   /* Convert ms to LPTIM 1024 Hz counts; clamp to 16-bit max (~64 s) */
   uint32_t count = (uint32_t)(((uint64_t)remaining_ms * LPTIM_CLOCK_HZ) / 1000u);
@@ -263,7 +266,28 @@ uint32_t TIMER_IF_GetTime(uint16_t *mSeconds)
 {
   uint32_t seconds = 0;
   /* USER CODE BEGIN TIMER_IF_GetTime */
+  RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
 
+  /* HAL_RTC_GetDate must follow GetTime to unlock shadow registers */
+  HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+  HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
+  if (mSeconds != NULL)
+  {
+    *mSeconds = (uint16_t)(((RTC_PREDIV_S - sTime.SubSeconds) * 1000u) / (RTC_PREDIV_S + 1u));
+  }
+
+  struct tm t = {0};
+  t.tm_year  = sDate.Year + 100;  /* RTC year 0-99 → years since 1900 */
+  t.tm_mon   = sDate.Month - 1;   /* RTC month 1-12 → tm_mon 0-11 */
+  t.tm_mday  = sDate.Date;
+  t.tm_hour  = sTime.Hours;
+  t.tm_min   = sTime.Minutes;
+  t.tm_sec   = sTime.Seconds;
+  t.tm_isdst = -1;
+
+  seconds = (uint32_t)mktime(&t);
   /* USER CODE END TIMER_IF_GetTime */
   return seconds;
 }
@@ -315,7 +339,10 @@ void HAL_LPTIM_CompareMatchCallback(LPTIM_HandleTypeDef *hlptim)
 /* USER CODE BEGIN PrFD */
 static inline uint32_t GetTimerTicks(void)
 {
-  /* uwTick: HAL SysTick ms counter, 1 kHz, wraps at 2^32 ms (~49.7 days). */
-  return uwTick;
+  /* LPTIM1 CNT keeps running in STOP2 (LSI-clocked). Double-read guards APB/LSI crossing.
+   * Returns 0-63999 ms, wrapping every ~64 s. */
+  uint32_t cnt;
+  do { cnt = hlptim1.Instance->CNT; } while (cnt != hlptim1.Instance->CNT);
+  return (cnt * 125u) >> 7;  /* cnt * 1000 / 1024 */
 }
 /* USER CODE END PrFD */
