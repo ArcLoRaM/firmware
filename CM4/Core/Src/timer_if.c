@@ -258,7 +258,12 @@ uint32_t TIMER_IF_Convert_Tick2ms(uint32_t tick)
 void TIMER_IF_DelayMs(uint32_t delay)
 {
   /* USER CODE BEGIN TIMER_IF_DelayMs */
-
+  uint32_t delayTicks = TIMER_IF_Convert_ms2Tick(delay);
+  uint32_t timeout    = GetTimerTicks();
+  while ((GetTimerTicks() - timeout) < delayTicks)
+  {
+    __NOP();
+  }
   /* USER CODE END TIMER_IF_DelayMs */
 }
 
