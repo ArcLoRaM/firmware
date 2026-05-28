@@ -23,6 +23,7 @@
 #include "timer_if.h"
 
 /* USER CODE BEGIN Includes */
+#include <time.h>   /* mktime */
 #include "rtc.h"    /* hrtc handle */
 #include "main.h"   /* RTC_PREDIV_S, Error_Handler */
 /* USER CODE END Includes */
@@ -130,7 +131,8 @@ UTIL_TIMER_Status_t TIMER_IF_StartTimer(uint32_t timeout)
   timeout += RtcTimerContext;
 
   uint32_t now          = GetTimerTicks();
-  uint32_t remaining_ms = (timeout > now) ? (timeout - now) : 1u;
+  uint32_t remaining_ms = timeout - now;                /* unsigned; correct when context is fresh */
+  if (remaining_ms > 86400000u) { remaining_ms = 1u; } /* midnight-wrap safety clamp */
 
   /* Convert ms to WUT 2048 Hz counts; clamp to 16-bit hardware max (~32 s) */
   uint32_t count = (uint32_t)(((uint64_t)remaining_ms * WUT_CLOCK_HZ) / 1000u);
@@ -232,7 +234,27 @@ uint32_t TIMER_IF_GetTime(uint16_t *mSeconds)
 {
   uint32_t seconds = 0;
   /* USER CODE BEGIN TIMER_IF_GetTime */
+  RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
+  hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+  HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+  HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
 
+  if (mSeconds != NULL)
+  {
+    *mSeconds = (uint16_t)(((RTC_PREDIV_S - sTime.SubSeconds) * 1000u) / (RTC_PREDIV_S + 1u));
+  }
+
+  struct tm t = {0};
+  t.tm_year  = sDate.Year + 100;
+  t.tm_mon   = sDate.Month - 1;
+  t.tm_mday  = sDate.Date;
+  t.tm_hour  = sTime.Hours;
+  t.tm_min   = sTime.Minutes;
+  t.tm_sec   = sTime.Seconds;
+  t.tm_isdst = -1;
+
+  seconds = (uint32_t)mktime(&t);
   /* USER CODE END TIMER_IF_GetTime */
   return seconds;
 }
@@ -280,7 +302,14 @@ void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
 /* USER CODE BEGIN PrFD */
 static inline uint32_t GetTimerTicks(void)
 {
-  /* uwTick: HAL SysTick ms counter, 1 kHz, wraps at 2^32 ms (~49.7 days). */
-  return uwTick;
+  /* RTC calendar keeps running in STOP2. HAL_RTCEx_EnableBypassShadow (called in Init)
+   * ensures direct register reads without RSF wait. GetDate must follow GetTime. */
+  RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
+  hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+  HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+  HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+  uint32_t subsec_ms = ((RTC_PREDIV_S - sTime.SubSeconds) * 1000u) / (RTC_PREDIV_S + 1u);
+  return (sTime.Hours * 3600u + sTime.Minutes * 60u + sTime.Seconds) * 1000u + subsec_ms;
 }
 /* USER CODE END PrFD */
