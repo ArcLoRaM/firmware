@@ -20,7 +20,8 @@
       "Bash(xargs grep -l \"setLedCM4\\\\|setLedCM0\")",
       "Bash(gh issue create --repo ArcLoRaM/firmware --label ready-for-agent --title 'Shared Protocol Foundations: Common/Protocol/ and Common/SharedMemory/' --body ' *)",
       "Bash(gh issue create --repo ArcLoRaM/firmware --label ready-for-agent --title 'Frequency Resolver: CM0PLUS/SubGHz_Phy/Logic/freq_resolver' --body ' *)",
-      "Bash(gh issue create --repo ArcLoRaM/firmware --label ready-for-agent --title 'Compliance Engine: CM0PLUS/SubGHz_Phy/Logic/compliance_engine' --body ' *)"
+      "Bash(gh issue create --repo ArcLoRaM/firmware --label ready-for-agent --title 'Compliance Engine: CM0PLUS/SubGHz_Phy/Logic/compliance_engine' --body ' *)",
+      "Bash(cmake --preset host-mingw)"
     ]
   }
 }

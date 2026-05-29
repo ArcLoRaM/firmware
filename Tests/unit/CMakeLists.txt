@@ -56,3 +56,12 @@ add_unity_test(test_placeholder
 #     ../../Common/Protocol/my_module.c
 # )
 # -----------------------------------------------------------------------------
+
+add_unity_test(test_tdma_table
+    test_tdma_table.c
+    ../../Common/Protocol/tdma_table.c
+)
+
+add_unity_test(test_protocol_types
+    test_protocol_types.c
+)
