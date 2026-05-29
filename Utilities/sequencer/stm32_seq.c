@@ -229,7 +229,7 @@ void UTIL_SEQ_Run( UTIL_SEQ_bm_t Mask_bm )
    * If the waited event is there, exit from  UTIL_SEQ_Run() to return to the
    * waiting task
    */
-  local_taskset = TaskSet;
+ local_taskset = TaskSet;
   local_evtset = EvtSet;
   local_taskmask = TaskMask;
   local_evtwaited =  EvtWaited;

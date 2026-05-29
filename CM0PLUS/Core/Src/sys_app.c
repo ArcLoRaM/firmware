@@ -41,6 +41,8 @@
 /* External variables ---------------------------------------------------------*/
 /* USER CODE BEGIN EV */
 extern RTC_HandleTypeDef hrtc;
+extern volatile uint8_t  g_stop2_flag;
+extern volatile uint32_t g_stop2_count;
 /* USER CODE END EV */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -184,7 +186,19 @@ void UTIL_SEQ_EvtIdle(uint32_t TaskId_bm, uint32_t EvtWaited_bm)
 }
 
 /* USER CODE BEGIN EF */
+void UTIL_SEQ_Idle(void)
+{
+  UTIL_LPM_EnterLowPower();
+}
 
+void UTIL_SEQ_PostIdle(void)
+{
+  if (g_stop2_flag)
+  {
+    g_stop2_flag = 0;
+    g_stop2_count++;
+  }
+}
 /* USER CODE END EF */
 
 /* Private functions ---------------------------------------------------------*/

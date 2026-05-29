@@ -39,6 +39,7 @@
 /* External variables ---------------------------------------------------------*/
 /* USER CODE BEGIN EV */
 extern RTC_HandleTypeDef hrtc;
+extern volatile uint8_t g_stop2_flag;
 /* USER CODE END EV */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -170,6 +171,15 @@ void UTIL_ADV_TRACE_PreSendHook(void)
 void UTIL_ADV_TRACE_PostSendHook(void)
 {
   UTIL_LPM_SetStopMode((1 << CFG_LPM_UART_TX_Id), UTIL_LPM_ENABLE);
+}
+
+void UTIL_SEQ_PostIdle(void)
+{
+  if (g_stop2_flag)
+  {
+    g_stop2_flag = 0;
+    APP_LOG(TS_ON, VLEVEL_H, "CM4: woke from STOP2\r\n");
+  }
 }
 
 void TimestampNow(uint8_t *buff, uint16_t *size)
