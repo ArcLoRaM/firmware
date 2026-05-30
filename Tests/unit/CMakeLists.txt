@@ -65,3 +65,13 @@ add_unity_test(test_tdma_table
 add_unity_test(test_protocol_types
     test_protocol_types.c
 )
+
+add_unity_test(test_freq_resolver
+    test_freq_resolver.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/freq_resolver.c
+)
+
+add_unity_test(test_compliance_engine
+    test_compliance_engine.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+)
