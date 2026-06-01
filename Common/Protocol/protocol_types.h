@@ -151,36 +151,6 @@ typedef enum {
 } MacState_t;
 
 /* =========================================================================
- * CM0+-internal inter-machine values
- *
- * Written by the MAC State Machine, read by the TDMA Machine — both on CM0+.
- * These are NOT inter-core shared memory; they live in CM0+ RAM only.
- * ========================================================================= */
-
-/*!
- * \brief   3-bit eligibility mask written by the MAC State Machine and read
- *          by the TDMA Machine at each cell boundary.
- *
- * \details Bit N = 1 means the node wakes for cells where
- *          \c cell_index \c % \c 3 \c == \c N. Two formulas exist — one per
- *          phase direction (uplink ascending, downlink mirror). Default 0x00
- *          (skip all cells) until the first \ref BeaconPayload_t is received.
- *          Used in all \ref DIRECTION_CELL_SKIP phases.
- */
-typedef uint8_t CellEligibilityMask_t;
-
-/*!
- * \brief   Whole-phase TX/RX flag written by the MAC State Machine before
- *          each Sync phase and read once by the TDMA Machine at phase entry.
- *
- * \details 1 = transmit every cell (participation cycle).
- *          0 = receive every cell (audit cycle).
- *          C3 (SyncAnchor) always writes 1. C1 always writes 0.
- *          Used in \ref DIRECTION_MAC_PHASE phases only.
- */
-typedef uint8_t PhaseTxFlag_t;
-
-/* =========================================================================
  * TDMA Table structs
  * ========================================================================= */
 

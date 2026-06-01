@@ -31,7 +31,7 @@
  *
  * Note: CellEligibilityMask_t and PhaseTxFlag_t are CM0+-internal values
  * (written by the MAC State Machine, read by the TDMA Machine on the same
- * core). They are defined in protocol_types.h and live in CM0+ RAM, not
+ * core). They are defined in mac_types.h and live in CM0+ RAM, not
  * in this inter-core shared region.
  *
  * All structs use natural alignment — no __packed — to avoid unaligned
