@@ -99,9 +99,6 @@ int main(void)
 #endif
 
 
-#if TEST_MACRO
-  int abc=2;
-#endif
 
   MX_GPIO_Init();
   // MX_DMA_Init();
