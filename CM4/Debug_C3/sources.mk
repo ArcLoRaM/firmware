@@ -30,5 +30,6 @@ Core/Startup \
 Drivers/STM32WLxx_HAL_Driver \
 MbMux \
 SubGHz_Phy/App \
+SubGHz_Phy/Logic \
 Utilities \
 

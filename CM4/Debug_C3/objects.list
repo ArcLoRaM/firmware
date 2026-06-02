@@ -43,6 +43,7 @@
 "./MbMux/radio_mbwrapper.o"
 "./SubGHz_Phy/App/app_subghz_phy.o"
 "./SubGHz_Phy/App/subghz_phy_app.o"
+"./SubGHz_Phy/Logic/cm4_diag.o"
 "./Utilities/stm32_adv_trace.o"
 "./Utilities/stm32_lpm.o"
 "./Utilities/stm32_mem.o"

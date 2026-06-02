@@ -34,7 +34,8 @@
       "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Wire ComplianceEngine to shared ComplianceStatus_t' --label ready-for-agent --body ' *)",
       "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Wire FrequencyResolver to shared FrequencyResolverState_t' --label ready-for-agent --body ' *)",
       "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Wire AlarmBRequest_t + CM4 heartbeat counter' --label ready-for-agent --body ' *)",
-      "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Implement EmergencyAlertSlot: CM4 liveness watchdog + alert TX path' --label ready-for-agent --body ' *)"
+      "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Implement EmergencyAlertSlot: CM4 liveness watchdog + alert TX path' --label ready-for-agent --body ' *)",
+      "Bash(cmake .. -G \"MinGW Makefiles\")"
     ]
   }
 }

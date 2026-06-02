@@ -155,6 +155,15 @@ void test_report_tx_done_refunds_credit(void)
         ComplianceEngine_RequestChannel(FREQ_868_HZ, 1u, 10));
 }
 
+void test_status_updated_with_production_values(void)
+{
+    /* 868.3 MHz Sync slot, TX_POWER_DBM=14, slot_active_ms=2500 */
+    TEST_ASSERT_EQUAL(COMPLIANCE_GRANTED,
+        ComplianceEngine_RequestChannel(868300000u, 2500u, 14));
+    TEST_ASSERT_EQUAL(868300000u,         s_status.last_freq_hz);
+    TEST_ASSERT_EQUAL(COMPLIANCE_GRANTED, s_status.last_result);
+}
+
 void test_credit_capped_at_max(void)
 {
     /*
@@ -189,5 +198,6 @@ int main(void)
     RUN_TEST(test_status_updated_on_restricted);
     RUN_TEST(test_report_tx_done_refunds_credit);
     RUN_TEST(test_credit_capped_at_max);
+    RUN_TEST(test_status_updated_with_production_values);
     return UNITY_END();
 }

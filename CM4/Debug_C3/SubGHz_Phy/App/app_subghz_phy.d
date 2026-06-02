@@ -46,7 +46,9 @@ SubGHz_Phy/App/app_subghz_phy.o: ../SubGHz_Phy/App/app_subghz_phy.c \
  ../../Utilities/misc/stm32_mem.h \
  ../../Utilities/misc/stm32_tiny_vsnprintf.h ../Core/Inc/utilities_def.h \
  ../../Common/MbMux/mbmux_table.h ../../Common/MbMux/features_info.h \
- ../../Utilities/sequencer/stm32_seq.h
+ ../../Utilities/sequencer/stm32_seq.h \
+ ../../Common/SharedMemory/shared_mem.h \
+ ../../Common/Protocol/protocol_types.h ../SubGHz_Phy/Logic/cm4_diag.h
 ../SubGHz_Phy/App/app_subghz_phy.h:
 ../SubGHz_Phy/App/subghz_phy_app.h:
 ../Core/Inc/sys_app.h:
@@ -99,3 +101,6 @@ SubGHz_Phy/App/app_subghz_phy.o: ../SubGHz_Phy/App/app_subghz_phy.c \
 ../../Common/MbMux/mbmux_table.h:
 ../../Common/MbMux/features_info.h:
 ../../Utilities/sequencer/stm32_seq.h:
+../../Common/SharedMemory/shared_mem.h:
+../../Common/Protocol/protocol_types.h:
+../SubGHz_Phy/Logic/cm4_diag.h:

@@ -10,6 +10,7 @@ RM := rm -rf
 # All of the sources participating in the build are defined here
 -include sources.mk
 -include Utilities/subdir.mk
+-include SubGHz_Phy/Logic/subdir.mk
 -include SubGHz_Phy/App/subdir.mk
 -include MbMux/subdir.mk
 -include Drivers/STM32WLxx_HAL_Driver/subdir.mk

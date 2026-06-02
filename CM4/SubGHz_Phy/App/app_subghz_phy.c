@@ -29,6 +29,8 @@
 #include "stm32_timer.h"
 #endif
 #include "stm32_seq.h"
+#include "shared_mem.h"
+#include "cm4_diag.h"
 
 /* USER CODE END Includes */
 
@@ -82,7 +84,7 @@ void MX_SubGHz_Phy_Init(void)
   SubghzApp_Init();
   /* USER CODE BEGIN MX_SubGHz_Phy_Init_2 */
 #endif
-
+  CM4Diag_Init();
 
   /* USER CODE END MX_SubGHz_Phy_Init_2 */
 }
@@ -90,7 +92,7 @@ void MX_SubGHz_Phy_Init(void)
 void MX_SubGHz_Phy_Process(void)
 {
   /* USER CODE BEGIN MX_SubGHz_Phy_Process_1 */
-
+  CM4Diag_PollCompliance(&g_compliance_status);
   /* USER CODE END MX_SubGHz_Phy_Process_1 */
   /* USER CODE BEGIN MX_SubGHz_Phy_Process_OS */
 UTIL_SEQ_Run(UTIL_SEQ_DEFAULT);

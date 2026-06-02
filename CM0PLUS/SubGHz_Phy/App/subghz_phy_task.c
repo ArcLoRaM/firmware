@@ -297,9 +297,9 @@ void SubGhzPhyTask_Init(void)
 
     APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: Radio.Init done\r\n");
 
-    /* 2. Compliance Engine — NULL status skips shared-memory writes until
-     *    CM4 SRAM2 wiring is ready (issue #10). */
-    ComplianceEngine_Init(NULL, HAL_GetTick);
+    /* 2. Compliance Engine — write results to g_compliance_status in SRAM2
+     *    so CM4 can read duty-cycle state on every wake. */
+    ComplianceEngine_Init(&g_compliance_status, HAL_GetTick);
     APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: ComplianceEngine ready\r\n");
 
     /* 3. Frequency Resolver — stub local state at 868.3 MHz (Sync phase only).

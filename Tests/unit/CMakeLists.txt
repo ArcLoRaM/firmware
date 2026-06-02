@@ -113,3 +113,8 @@ add_unity_test(test_tdma_machine_c1
     ../../Common/Protocol/tdma_table.c
 )
 target_compile_definitions(test_tdma_machine_c1 PRIVATE NODE_CLASS=1)
+
+add_unity_test(test_cm4_diag
+    test_cm4_diag.c
+    ../../CM4/SubGHz_Phy/Logic/cm4_diag.c
+)

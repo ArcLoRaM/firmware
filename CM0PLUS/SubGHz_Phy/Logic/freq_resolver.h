@@ -24,6 +24,19 @@
 #include "protocol_types.h"
 #include "shared_mem.h"
 
+#ifndef FREQ_FALLBACK_HZ
+/*!
+ * Safe fallback frequency returned when a \ref CELL_FREQ_STATIC phase has not
+ * yet been populated by CM4.
+ *
+ * \remark Matches the 868.3 MHz Sync-phase default written by CM4 at boot.
+ *         The TDMA Machine must never call \c Radio.SetChannel(0); this
+ *         constant ensures a valid channel is used even before the first CM4
+ *         write completes.
+ */
+#define FREQ_FALLBACK_HZ  868300000u
+#endif
+
 /*!
  * \brief   Inject the shared-memory region the Frequency Resolver reads from.
  *
