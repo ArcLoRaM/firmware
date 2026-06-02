@@ -144,6 +144,41 @@ typedef struct {
 } FrequencyResolverState_t;
 
 /* =========================================================================
+ * EmergencyAlertSlot_t
+ * ========================================================================= */
+
+#define DIAG_ALERT  0x04u  /*!< DiagType: CM0+ emergency alert — CM4 liveness failure. */
+
+/*!
+ * \brief   Single-entry slot written by CM0+ when CM4 heartbeat failures exceed
+ *          \c CM4_HEARTBEAT_MISS_THRESHOLD consecutive unanswered MbMux signals.
+ *
+ * \details CM0+ populates this slot and triggers an isolated CM4 reset.  On the
+ *          next \c Mesh_Uplink TX opportunity CM0+ assembles and transmits the
+ *          alert before pulling from \c MeshUplinkQueue, then clears \c valid.
+ *          CM4 clears \c valid = 0 early in its boot sequence so a stale slot
+ *          from a previous reset cycle is never re-transmitted.
+ *
+ *          Layout (12 bytes, naturally aligned):
+ *          \code
+ *            offset  0 : valid           (uint8_t) — 1 = populated, 0 = empty
+ *            offset  1 : diag_type       (uint8_t) — always DIAG_ALERT (0x04)
+ *            offset  2 : _pad[2]
+ *            offset  4 : node_id         (uint8_t) — provisioned local identity
+ *            offset  5 : _pad2[3]
+ *            offset  8 : rtc_timestamp_s (uint32_t) — RTC seconds at detection
+ *          \endcode
+ */
+typedef struct {
+    uint8_t  valid;            /*!< 1 = slot populated; CM0+ writes, CM4 clears on restart. */
+    uint8_t  diag_type;        /*!< Always \ref DIAG_ALERT (0x04). */
+    uint8_t  _pad[2];          /*!< Alignment pad — do not use. */
+    uint8_t  node_id;          /*!< Provisioned local node identity. */
+    uint8_t  _pad2[3];         /*!< Alignment pad — do not use. */
+    uint32_t rtc_timestamp_s;  /*!< RTC seconds at CM4 liveness failure detection. */
+} EmergencyAlertSlot_t;        /* 12 bytes */
+
+/* =========================================================================
  * ComplianceStatus_t
  * ========================================================================= */
 
@@ -167,7 +202,9 @@ typedef uint8_t ComplianceResult_t;
  *          saturation for frequent compliance events.
  *
  * \remark  The original PRD estimated this struct at 12 bytes, predating
- *          the final field list. Actual natural size is 20 bytes.
+ *          the final field list. Actual natural size is 16 bytes (fields
+ *          are ordered for optimal packing; explicit \c _pad[2] makes the
+ *          trailing padding visible rather than implicit).
  */
 typedef struct {
     uint32_t           last_freq_hz;        /*!< Frequency of the last RequestChannel call. */
@@ -179,6 +216,44 @@ typedef struct {
     uint8_t            band_unknown_count;  /*!< Incremented on \ref COMPLIANCE_BAND_UNKNOWN;
                                               *  non-zero triggers a DIAG_ALARM from CM4. */
     uint8_t            _pad[2];             /*!< Explicit alignment pad — do not use. */
-} ComplianceStatus_t;                       /* 20 bytes */
+} ComplianceStatus_t;                       /* 16 bytes */
+
+/* =========================================================================
+ * Global instances in shared SRAM2 (section "SHARED_APP")
+ *
+ * Defined in shared_mem.c; placed by both linker scripts at 0x20009000.
+ * CM0+ zeros this region via SharedMem_Init() at startup.  CM4 writes
+ * CM4-owned fields after releasing CM0+ and before the first TDMA slot.
+ *
+ * Expected symbol offsets within the SHARED_APP section
+ * (natural alignment, declaration order — verify in the .map file):
+ *
+ *   Symbol                  Offset   Size  Owner
+ *   g_alarm_b_request       +0x000   12 B  CM4 → CM0+
+ *   g_compliance_status     +0x00C   16 B  CM0+ → CM4
+ *   g_cm4_heartbeat         +0x01C    4 B  CM4 → CM0+
+ *   g_emergency_alert_slot  +0x020   12 B  CM0+ → CM4
+ *   g_freq_resolver_state   +0x02C  980 B  CM4 → CM0+
+ *   (total: 1024 B; ~3072 B remain reserved for future buffers)
+ * ========================================================================= */
+
+extern AlarmBRequest_t          g_alarm_b_request;      /*!< CM4 writes, CM0+ reads. */
+extern ComplianceStatus_t       g_compliance_status;    /*!< CM0+ writes, CM4 reads. */
+extern uint32_t                 g_cm4_heartbeat;        /*!< Incremented by CM4 on every wake. */
+extern EmergencyAlertSlot_t     g_emergency_alert_slot; /*!< CM0+ populates on CM4 liveness failure. */
+extern FrequencyResolverState_t g_freq_resolver_state;  /*!< CM4 writes at boot, CM0+ reads per slot. */
+
+/*!
+ * \brief   Zero-initialise the entire SHARED_APP region.
+ *
+ * \details Called ONCE by CM0+ at the start of \c SubGhzPhyTask_Init().
+ *          Must run before any shared-memory read or write on either core.
+ *          CM4 must NOT call this function — it would clobber CM4's writes.
+ *
+ * \note    Boot ordering: CM4 releases CM0+ → CM0+ startup + SharedMem_Init()
+ *          → CM0+ main loop → CM4 writes \c g_freq_resolver_state and other
+ *          CM4-owned fields.  CM4 writes happen before the first TDMA slot.
+ */
+void SharedMem_Init(void);
 
 #endif /* SHARED_MEM_H */

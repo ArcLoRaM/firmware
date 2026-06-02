@@ -242,10 +242,15 @@ void HAL_RTC_AlarmAEventCallback(RTC_HandleTypeDef *hrtc_arg)
 
 void SubGhzPhyTask_Init(void)
 {
+    /* 0. Zero the inter-core SRAM2 shared region before any machine touches it.
+     *    CM4 writes its fields (g_freq_resolver_state, g_alarm_b_request) after
+     *    this point, before the first TDMA slot fires. */
+    SharedMem_Init();
+
     APP_LOG(TS_OFF, VLEVEL_M,
             "SubGhzPhyTask: init NODE_CLASS=%u\r\n", (unsigned)NODE_CLASS);
 
-    /* 0. Radio — must be initialised before any UTIL_TIMER usage.
+    /* 1. Radio — must be initialised before any UTIL_TIMER usage.
      *    TxTimeoutTimer and RxTimeoutTimer inside the radio driver are created
      *    here; without this call their Callback fields stay NULL (BSS zero),
      *    and the first Radio.Rx() would enqueue a NULL-callback timer →
@@ -292,24 +297,26 @@ void SubGhzPhyTask_Init(void)
 
     APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: Radio.Init done\r\n");
 
-    /* 1. Compliance Engine — NULL status skips shared-memory writes until
-     *    CM4 SRAM2 wiring is ready. */
+    /* 2. Compliance Engine — NULL status skips shared-memory writes until
+     *    CM4 SRAM2 wiring is ready (issue #10). */
     ComplianceEngine_Init(NULL, HAL_GetTick);
     APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: ComplianceEngine ready\r\n");
 
-    /* 2. Frequency Resolver — stub local state at 868.3 MHz (Sync phase only). */
+    /* 3. Frequency Resolver — stub local state at 868.3 MHz (Sync phase only).
+     *    Replace &s_freq_state with &g_freq_resolver_state once CM4 wiring
+     *    is in place (issue #11). */
     FrequencyResolver_Init(&s_freq_state);
     APP_LOG(TS_OFF, VLEVEL_M,
             "SubGhzPhyTask: FrequencyResolver ready, phase_count=%u\r\n",
             (unsigned)TdmaTable_PhaseCount());
 
-    /* 3. MAC State Machine */
+    /* 4. MAC State Machine */
     MAC_Init(&s_mac_hooks);
     APP_LOG(TS_OFF, VLEVEL_M,
             "SubGhzPhyTask: MAC_Init done, state=%u clock=%u\r\n",
             (unsigned)MAC_GetState(), (unsigned)MAC_GetClockState());
 
-    /* 4. TDMA Machine */
+    /* 5. TDMA Machine */
     static const TdmaPlatform_t plat = {
         .GetRtcMs        = plat_get_rtc_ms,
         .ProgramAlarmA   = plat_program_alarm_a,
@@ -322,7 +329,7 @@ void SubGhzPhyTask_Init(void)
     TdmaMachine_Init(&plat);
     APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: TdmaMachine ready\r\n");
 
-    /* 5. Register slot task and arm first wakeup */
+    /* 6. Register slot task and arm first wakeup */
     UTIL_SEQ_RegTask(1u << CFG_SEQ_Task_TdmaSlotWake, 0u, TdmaMachine_SlotTask);
     UTIL_SEQ_SetTask(1u << CFG_SEQ_Task_TdmaSlotWake, CFG_SEQ_Prio_0);
     APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: sequencer task armed\r\n");

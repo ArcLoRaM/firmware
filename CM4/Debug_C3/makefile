@@ -16,6 +16,7 @@ RM := rm -rf
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
 -include Common/System/subdir.mk
+-include Common/SharedMemory/subdir.mk
 -include Common/Protocol/subdir.mk
 -include objects.mk
 

@@ -47,9 +47,10 @@ _Min_Stack_Size = 0x800; /* required amount of stack */
 /* Memories definition */
 MEMORY
 {
-  RAM1       (xrw) : ORIGIN = 0x20000000, LENGTH = 32K
-  RAM_SHARED  (rw) : ORIGIN = 0x20008000, LENGTH = 4K
-  FLASH       (rx) : ORIGIN = 0x08000000, LENGTH = 128K
+  RAM1           (xrw) : ORIGIN = 0x20000000, LENGTH = 32K
+  RAM_SHARED      (rw) : ORIGIN = 0x20008000, LENGTH = 4K
+  RAM_SHARED_APP  (rw) : ORIGIN = 0x20009000, LENGTH = 4K
+  FLASH           (rx) : ORIGIN = 0x08000000, LENGTH = 128K
 }
 
 /* Sections */
@@ -151,6 +152,18 @@ SECTIONS
     _edata = .;        /* define a global symbol at data end */
 
   } >RAM1 AT> FLASH
+
+  /* Application inter-core shared memory — mirrors CM0+ .shared_app at 0x20009000.
+   * CM0+ startup zeros this region via SharedMem_Init(); CM4 must NOT zero it.
+   * shared_mem.c is compiled for both cores; symbols resolve to the same addresses. */
+  .shared_app (NOLOAD) :
+  {
+    . = ALIGN(8);
+    _sSharedApp = .;
+    *(SHARED_APP)
+    . = ALIGN(8);
+    _eSharedApp = .;
+  } >RAM_SHARED_APP
 
   /* Uninitialized data section into "RAM_SHARED" Ram type memory */
   MAPPING_TABLE (NOLOAD) :

@@ -47,7 +47,8 @@ SubGHz_Phy/App/app_subghz_phy.o: ../SubGHz_Phy/App/app_subghz_phy.c \
  ../../Utilities/misc/stm32_tiny_vsnprintf.h ../MbMux/mbmuxif_trace.h \
  ../MbMux/mbmux.h ../Core/Inc/utilities_def.h \
  ../../Utilities/sequencer/stm32_seq.h \
- ../SubGHz_Phy/App/subghz_phy_task.h
+ ../SubGHz_Phy/App/subghz_phy_task.h ../Core/Inc/gpio.h \
+ ../../Utilities/timer/stm32_timer.h
 ../SubGHz_Phy/App/app_subghz_phy.h:
 ../Core/Inc/sys_app.h:
 ../Core/Inc/platform.h:
@@ -101,3 +102,5 @@ SubGHz_Phy/App/app_subghz_phy.o: ../SubGHz_Phy/App/app_subghz_phy.c \
 ../Core/Inc/utilities_def.h:
 ../../Utilities/sequencer/stm32_seq.h:
 ../SubGHz_Phy/App/subghz_phy_task.h:
+../Core/Inc/gpio.h:
+../../Utilities/timer/stm32_timer.h:

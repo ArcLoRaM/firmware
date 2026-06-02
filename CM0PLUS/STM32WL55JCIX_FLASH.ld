@@ -152,6 +152,29 @@ SECTIONS
 
   } >RAM2 AT> FLASH
 
+  /* =========================================================================
+   * Application inter-core shared memory — placed first in RAM_SHARED so
+   * that the SHARED_APP section starts at RAM_SHARED origin (0x20009000).
+   * Zeroed by SharedMem_Init() at CM0+ startup (not by Reset_Handler).
+   * CM4 linker maps the same section to RAM_SHARED_APP at 0x20009000.
+   *
+   * Expected symbol layout (natural alignment, verify in .map file):
+   *   g_alarm_b_request      0x20009000  12 B  AlarmBRequest_t        CM4→CM0+
+   *   g_compliance_status    0x2000900C  16 B  ComplianceStatus_t     CM0+→CM4
+   *   g_cm4_heartbeat        0x2000901C   4 B  uint32_t               CM4→CM0+
+   *   g_emergency_alert_slot 0x20009020  12 B  EmergencyAlertSlot_t   CM0+→CM4
+   *   g_freq_resolver_state  0x2000902C 980 B  FrequencyResolverState_t CM4→CM0+
+   *   (total declared: 1024 B; ~3072 B remain for MbMux + future buffers)
+   * ========================================================================= */
+  .shared_app (NOLOAD) :
+  {
+    . = ALIGN(8);
+    _sSharedApp = .;
+    *(SHARED_APP)
+    . = ALIGN(8);
+    _eSharedApp = .;
+  } >RAM_SHARED
+
   /* Used by the startup to initialize MB_MEM2 */
   _siMB_MEM2 = LOADADDR(.MB_MEM2);
 

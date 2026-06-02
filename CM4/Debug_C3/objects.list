@@ -1,4 +1,5 @@
 "./Common/Protocol/tdma_table.o"
+"./Common/SharedMemory/shared_mem.o"
 "./Common/System/system_stm32wlxx.o"
 "./Core/Src/dma.o"
 "./Core/Src/gpio.o"

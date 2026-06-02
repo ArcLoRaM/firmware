@@ -1,2 +1,3 @@
-../SubGHz_Phy/App/app_subghz_phy.c:73:6:MX_SubGHz_Phy_Init	8	static
+../SubGHz_Phy/App/app_subghz_phy.c:73:6:MX_SubGHz_Phy_Init	16	static
 ../SubGHz_Phy/App/app_subghz_phy.c:91:6:MX_SubGHz_Phy_Process	8	static
+../SubGHz_Phy/App/app_subghz_phy.c:104:13:LedToggle_Cb	80	static

@@ -29,7 +29,12 @@
       "Bash(cmake --build . --target test_mac_state_machine_c1 test_mac_state_machine_c2)",
       "Bash(cmake --build . --target test_tdma_machine_c2 test_tdma_machine_c1)",
       "Bash(gh issue create --repo ArcLoRaM/firmware --title 'build: single-entry-point NODE_CLASS configuration for C1/C2/C3' --label ready-for-agent --body ' *)",
-      "Bash(gh issue create --repo ArcLoRaM/firmware --title 'phy: single-Sync-phase TDMA table and full machine wiring via subghz_phy_task' --label ready-for-agent --body ' *)"
+      "Bash(gh issue create --repo ArcLoRaM/firmware --title 'phy: single-Sync-phase TDMA table and full machine wiring via subghz_phy_task' --label ready-for-agent --body ' *)",
+      "Bash(gh issue create --repo ArcLoRaM/firmware --title 'SRAM2 application partition: shared_mem.c + linker updates' --label ready-for-agent --body ' *)",
+      "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Wire ComplianceEngine to shared ComplianceStatus_t' --label ready-for-agent --body ' *)",
+      "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Wire FrequencyResolver to shared FrequencyResolverState_t' --label ready-for-agent --body ' *)",
+      "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Wire AlarmBRequest_t + CM4 heartbeat counter' --label ready-for-agent --body ' *)",
+      "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Implement EmergencyAlertSlot: CM4 liveness watchdog + alert TX path' --label ready-for-agent --body ' *)"
     ]
   }
 }

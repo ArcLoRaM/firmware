@@ -169,6 +169,77 @@ Discarded input sections
  .debug_frame   0x00000000       0x74 ./Common/Protocol/tdma_table.o
  .ARM.attributes
                 0x00000000       0x2e ./Common/Protocol/tdma_table.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .group         0x00000000        0xc ./Common/SharedMemory/shared_mem.o
+ .text          0x00000000        0x0 ./Common/SharedMemory/shared_mem.o
+ .data          0x00000000        0x0 ./Common/SharedMemory/shared_mem.o
+ .bss           0x00000000        0x0 ./Common/SharedMemory/shared_mem.o
+ SHARED_APP     0x00000000      0x400 ./Common/SharedMemory/shared_mem.o
+ .text.SharedMem_Init
+                0x00000000       0x4c ./Common/SharedMemory/shared_mem.o
+ .debug_info    0x00000000      0x3b6 ./Common/SharedMemory/shared_mem.o
+ .debug_abbrev  0x00000000      0x130 ./Common/SharedMemory/shared_mem.o
+ .debug_aranges
+                0x00000000       0x20 ./Common/SharedMemory/shared_mem.o
+ .debug_rnglists
+                0x00000000       0x13 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000      0x15e ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000      0xad8 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x22 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x8e ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x51 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000      0x103 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x6a ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000      0x1df ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000      0x190 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x28 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x33 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x61 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x24 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x43 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x34 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000      0x364 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x16 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x4a ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x34 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x10 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x58 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x8e ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x1c ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000      0x17e ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x10 ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x3c ./Common/SharedMemory/shared_mem.o
+ .debug_macro   0x00000000       0x20 ./Common/SharedMemory/shared_mem.o
+ .debug_line    0x00000000      0x609 ./Common/SharedMemory/shared_mem.o
+ .debug_str     0x00000000     0x76b9 ./Common/SharedMemory/shared_mem.o
+ .comment       0x00000000       0x44 ./Common/SharedMemory/shared_mem.o
+ .debug_frame   0x00000000       0x2c ./Common/SharedMemory/shared_mem.o
+ .ARM.attributes
+                0x00000000       0x2e ./Common/SharedMemory/shared_mem.o
  .group         0x00000000        0xc ./Common/System/system_stm32wlxx.o
  .group         0x00000000        0xc ./Common/System/system_stm32wlxx.o
  .group         0x00000000        0xc ./Common/System/system_stm32wlxx.o
@@ -634,6 +705,10 @@ Discarded input sections
                 0x00000000       0x20 ./Core/Src/ipcc_if.o
  .debug_macro   0x00000000      0xad8 ./Core/Src/ipcc_if.o
  .debug_macro   0x00000000       0x22 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x24 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x43 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x34 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x1c ./Core/Src/ipcc_if.o
  .debug_macro   0x00000000      0x190 ./Core/Src/ipcc_if.o
  .debug_macro   0x00000000       0x2e ./Core/Src/ipcc_if.o
  .debug_macro   0x00000000       0x3a ./Core/Src/ipcc_if.o
@@ -679,6 +754,17 @@ Discarded input sections
  .debug_macro   0x00000000       0xa6 ./Core/Src/ipcc_if.o
  .debug_macro   0x00000000      0x45a ./Core/Src/ipcc_if.o
  .debug_macro   0x00000000      0x3c0 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000      0x364 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x16 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x4a ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x34 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x10 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x58 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x8e ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000      0x17e ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x10 ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x3c ./Core/Src/ipcc_if.o
+ .debug_macro   0x00000000       0x20 ./Core/Src/ipcc_if.o
  .group         0x00000000        0xc ./Core/Src/lptim.o
  .group         0x00000000        0xc ./Core/Src/lptim.o
  .group         0x00000000        0xc ./Core/Src/lptim.o
@@ -920,6 +1006,7 @@ Discarded input sections
  .debug_macro   0x00000000      0x14a ./Core/Src/main.o
  .debug_macro   0x00000000       0x10 ./Core/Src/main.o
  .debug_macro   0x00000000       0x58 ./Core/Src/main.o
+ .debug_macro   0x00000000       0x61 ./Core/Src/main.o
  .debug_macro   0x00000000       0x24 ./Core/Src/main.o
  .debug_macro   0x00000000       0x43 ./Core/Src/main.o
  .debug_macro   0x00000000       0x34 ./Core/Src/main.o
@@ -7336,6 +7423,7 @@ Memory Configuration
 Name             Origin             Length             Attributes
 RAM1             0x20000000         0x00008000         xrw
 RAM_SHARED       0x20008000         0x00001000         rw
+RAM_SHARED_APP   0x20009000         0x00001000         rw
 FLASH            0x08000000         0x00020000         xr
 *default*        0x00000000         0xffffffff
 
@@ -7345,6 +7433,7 @@ LOAD C:/ST/STM32CubeIDE_2.0.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.exte
 LOAD C:/ST/STM32CubeIDE_2.0.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.14.3.rel1.win32_1.0.100.202602081740/tools/bin/../lib/gcc/arm-none-eabi/14.3.1/thumb/v7e-m/nofp/crtbegin.o
 LOAD C:/ST/STM32CubeIDE_2.0.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.14.3.rel1.win32_1.0.100.202602081740/tools/bin/../lib/gcc/arm-none-eabi/14.3.1/../../../../arm-none-eabi/lib/thumb/v7e-m/nofp/crt0.o
 LOAD ./Common/Protocol/tdma_table.o
+LOAD ./Common/SharedMemory/shared_mem.o
 LOAD ./Common/System/system_stm32wlxx.o
 LOAD ./Core/Src/dma.o
 LOAD ./Core/Src/gpio.o
@@ -8605,6 +8694,13 @@ LOAD C:/ST/STM32CubeIDE_2.0.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.exte
 .igot.plt       0x20000070        0x0 load address 0x08009e18
  .igot.plt      0x20000070        0x0 C:/ST/STM32CubeIDE_2.0.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.14.3.rel1.win32_1.0.100.202602081740/tools/bin/../lib/gcc/arm-none-eabi/14.3.1/thumb/v7e-m/nofp/crtbegin.o
 
+.shared_app     0x20009000        0x0
+                0x20009000                        . = ALIGN (0x8)
+                0x20009000                        _sSharedApp = .
+ *(SHARED_APP)
+                0x20009000                        . = ALIGN (0x8)
+                0x20009000                        _eSharedApp = .
+
 MAPPING_TABLE   0x20008000      0x140
                 0x20008000                        . = ALIGN (0x8)
                 0x20008000                        _sMAPPING_TABLE = .
@@ -9159,7 +9255,7 @@ LOAD C:/ST/STM32CubeIDE_2.0.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.exte
  .debug_rnglists
                 0x0000163c       0x21 ./Utilities/stm32_tiny_vsnprintf.o
 
-.debug_macro    0x00000000    0x215b4
+.debug_macro    0x00000000    0x20dc4
  .debug_macro   0x00000000      0x232 ./Common/System/system_stm32wlxx.o
  .debug_macro   0x00000232       0x2e ./Common/System/system_stm32wlxx.o
  .debug_macro   0x00000260       0x3a ./Common/System/system_stm32wlxx.o
@@ -9208,99 +9304,83 @@ LOAD C:/ST/STM32CubeIDE_2.0.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.exte
  .debug_macro   0x00019bae      0x24b ./Core/Src/ipcc.o
  .debug_macro   0x00019df9      0x391 ./Core/Src/ipcc_if.o
  .debug_macro   0x0001a18a       0x5b ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a1e5       0x24 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a209       0x94 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a29d       0x43 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a2e0       0x34 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a314       0x1c ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a330       0x22 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a352       0x57 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a3a9       0x22 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a3cb      0x14a ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a515       0x10 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a525       0x58 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a57d      0x364 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a8e1       0x16 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a8f7       0x4a ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a941       0x34 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a975       0x10 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a985       0x58 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001a9dd       0x8e ./Core/Src/ipcc_if.o
- .debug_macro   0x0001aa6b       0x16 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001aa81      0x17e ./Core/Src/ipcc_if.o
- .debug_macro   0x0001abff       0x10 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001ac0f       0x3c ./Core/Src/ipcc_if.o
- .debug_macro   0x0001ac4b       0x20 ./Core/Src/ipcc_if.o
- .debug_macro   0x0001ac6b       0xcc ./Core/Src/ipcc_if.o
- .debug_macro   0x0001ad37      0x24b ./Core/Src/lptim.o
- .debug_macro   0x0001af82      0x3da ./Core/Src/main.o
- .debug_macro   0x0001b35c       0x61 ./Core/Src/main.o
- .debug_macro   0x0001b3bd       0x46 ./Core/Src/main.o
- .debug_macro   0x0001b403       0x10 ./Core/Src/main.o
- .debug_macro   0x0001b413      0x24b ./Core/Src/rtc.o
- .debug_macro   0x0001b65e      0x3d4 ./Core/Src/stm32_lpm_if.o
- .debug_macro   0x0001ba32      0x241 ./Core/Src/stm32wlxx_hal_msp.o
- .debug_macro   0x0001bc73      0x24b ./Core/Src/stm32wlxx_it.o
- .debug_macro   0x0001bebe      0x4f4 ./Core/Src/sys_app.o
- .debug_macro   0x0001c3b2       0x16 ./Core/Src/sys_app.o
- .debug_macro   0x0001c3c8       0x9e ./Core/Src/sys_app.o
- .debug_macro   0x0001c466      0x112 ./Core/Src/sys_app.o
- .debug_macro   0x0001c578       0x10 ./Core/Src/sys_app.o
- .debug_macro   0x0001c588       0x16 ./Core/Src/sys_app.o
- .debug_macro   0x0001c59e       0x16 ./Core/Src/sys_app.o
- .debug_macro   0x0001c5b4      0x146 ./Core/Src/sys_app.o
- .debug_macro   0x0001c6fa       0x56 ./Core/Src/sys_app.o
- .debug_macro   0x0001c750       0x4c ./Core/Src/sys_app.o
- .debug_macro   0x0001c79c       0x16 ./Core/Src/sys_app.o
- .debug_macro   0x0001c7b2       0x22 ./Core/Src/sys_app.o
- .debug_macro   0x0001c7d4       0x16 ./Core/Src/sys_app.o
- .debug_macro   0x0001c7ea       0x10 ./Core/Src/sys_app.o
- .debug_macro   0x0001c7fa       0x10 ./Core/Src/sys_app.o
- .debug_macro   0x0001c80a       0x10 ./Core/Src/sys_app.o
- .debug_macro   0x0001c81a       0x1c ./Core/Src/sys_app.o
- .debug_macro   0x0001c836       0x52 ./Core/Src/sys_app.o
- .debug_macro   0x0001c888       0x22 ./Core/Src/sys_app.o
- .debug_macro   0x0001c8aa       0x10 ./Core/Src/sys_app.o
- .debug_macro   0x0001c8ba       0x52 ./Core/Src/sys_app.o
- .debug_macro   0x0001c90c       0xc1 ./Core/Src/sys_app.o
- .debug_macro   0x0001c9cd       0x1c ./Core/Src/sys_app.o
- .debug_macro   0x0001c9e9       0x3d ./Core/Src/sys_app.o
- .debug_macro   0x0001ca26       0x35 ./Core/Src/sys_app.o
- .debug_macro   0x0001ca5b       0xa6 ./Core/Src/sys_app.o
- .debug_macro   0x0001cb01       0x26 ./Core/Src/sys_app.o
- .debug_macro   0x0001cb27      0x112 ./Core/Src/sysmem.o
- .debug_macro   0x0001cc39      0x23c ./Core/Src/sysmem.o
- .debug_macro   0x0001ce75      0x468 ./Core/Src/timer_if.o
- .debug_macro   0x0001d2dd      0x19b ./Core/Src/timer_if.o
- .debug_macro   0x0001d478      0x24b ./Core/Src/usart.o
- .debug_macro   0x0001d6c3      0x37e ./Core/Src/usart_if.o
- .debug_macro   0x0001da41      0x256 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal.o
- .debug_macro   0x0001dc97      0x232 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_cortex.o
- .debug_macro   0x0001dec9      0x232 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_dma.o
- .debug_macro   0x0001e0fb      0x232 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_flash_ex.o
- .debug_macro   0x0001e32d      0x238 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_gpio.o
- .debug_macro   0x0001e565      0x244 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_ipcc.o
- .debug_macro   0x0001e7a9      0x248 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_lptim.o
- .debug_macro   0x0001e9f1      0x28c ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_pwr.o
- .debug_macro   0x0001ec7d      0x244 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_pwr_ex.o
- .debug_macro   0x0001eec1      0x292 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_rcc.o
- .debug_macro   0x0001f153      0x244 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_rcc_ex.o
- .debug_macro   0x0001f397      0x233 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_rtc.o
- .debug_macro   0x0001f5ca      0x239 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_rtc_ex.o
- .debug_macro   0x0001f803      0x25d ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_uart.o
- .debug_macro   0x0001fa60      0x23e ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_uart_ex.o
- .debug_macro   0x0001fc9e      0x3c0 ./MbMux/mbmux.o
- .debug_macro   0x0002005e      0x3de ./MbMux/mbmuxif_sys.o
- .debug_macro   0x0002043c      0x3cd ./MbMux/mbmuxif_trace.o
- .debug_macro   0x00020809      0x3bb ./SubGHz_Phy/App/app_subghz_phy.o
- .debug_macro   0x00020bc4      0x1c1 ./Utilities/stm32_adv_trace.o
- .debug_macro   0x00020d85       0x1c ./Utilities/stm32_adv_trace.o
- .debug_macro   0x00020da1      0x1ba ./Utilities/stm32_lpm.o
- .debug_macro   0x00020f5b      0x18c ./Utilities/stm32_mem.o
- .debug_macro   0x000210e7      0x1b9 ./Utilities/stm32_seq.o
- .debug_macro   0x000212a0       0x1c ./Utilities/stm32_seq.o
- .debug_macro   0x000212bc      0x1b5 ./Utilities/stm32_timer.o
- .debug_macro   0x00021471      0x143 ./Utilities/stm32_tiny_vsnprintf.o
+ .debug_macro   0x0001a1e5       0x94 ./Core/Src/ipcc_if.o
+ .debug_macro   0x0001a279       0x22 ./Core/Src/ipcc_if.o
+ .debug_macro   0x0001a29b       0x57 ./Core/Src/ipcc_if.o
+ .debug_macro   0x0001a2f2       0x22 ./Core/Src/ipcc_if.o
+ .debug_macro   0x0001a314      0x14a ./Core/Src/ipcc_if.o
+ .debug_macro   0x0001a45e       0x10 ./Core/Src/ipcc_if.o
+ .debug_macro   0x0001a46e       0x58 ./Core/Src/ipcc_if.o
+ .debug_macro   0x0001a4c6       0x16 ./Core/Src/ipcc_if.o
+ .debug_macro   0x0001a4dc       0xcc ./Core/Src/ipcc_if.o
+ .debug_macro   0x0001a5a8      0x24b ./Core/Src/lptim.o
+ .debug_macro   0x0001a7f3      0x3da ./Core/Src/main.o
+ .debug_macro   0x0001abcd       0x46 ./Core/Src/main.o
+ .debug_macro   0x0001ac13       0x10 ./Core/Src/main.o
+ .debug_macro   0x0001ac23      0x24b ./Core/Src/rtc.o
+ .debug_macro   0x0001ae6e      0x3d4 ./Core/Src/stm32_lpm_if.o
+ .debug_macro   0x0001b242      0x241 ./Core/Src/stm32wlxx_hal_msp.o
+ .debug_macro   0x0001b483      0x24b ./Core/Src/stm32wlxx_it.o
+ .debug_macro   0x0001b6ce      0x4f4 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bbc2       0x16 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bbd8       0x9e ./Core/Src/sys_app.o
+ .debug_macro   0x0001bc76      0x112 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bd88       0x10 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bd98       0x16 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bdae       0x16 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bdc4      0x146 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bf0a       0x56 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bf60       0x4c ./Core/Src/sys_app.o
+ .debug_macro   0x0001bfac       0x16 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bfc2       0x22 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bfe4       0x16 ./Core/Src/sys_app.o
+ .debug_macro   0x0001bffa       0x10 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c00a       0x10 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c01a       0x10 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c02a       0x1c ./Core/Src/sys_app.o
+ .debug_macro   0x0001c046       0x52 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c098       0x22 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c0ba       0x10 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c0ca       0x52 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c11c       0xc1 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c1dd       0x1c ./Core/Src/sys_app.o
+ .debug_macro   0x0001c1f9       0x3d ./Core/Src/sys_app.o
+ .debug_macro   0x0001c236       0x35 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c26b       0xa6 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c311       0x26 ./Core/Src/sys_app.o
+ .debug_macro   0x0001c337      0x112 ./Core/Src/sysmem.o
+ .debug_macro   0x0001c449      0x23c ./Core/Src/sysmem.o
+ .debug_macro   0x0001c685      0x468 ./Core/Src/timer_if.o
+ .debug_macro   0x0001caed      0x19b ./Core/Src/timer_if.o
+ .debug_macro   0x0001cc88      0x24b ./Core/Src/usart.o
+ .debug_macro   0x0001ced3      0x37e ./Core/Src/usart_if.o
+ .debug_macro   0x0001d251      0x256 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal.o
+ .debug_macro   0x0001d4a7      0x232 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_cortex.o
+ .debug_macro   0x0001d6d9      0x232 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_dma.o
+ .debug_macro   0x0001d90b      0x232 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_flash_ex.o
+ .debug_macro   0x0001db3d      0x238 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_gpio.o
+ .debug_macro   0x0001dd75      0x244 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_ipcc.o
+ .debug_macro   0x0001dfb9      0x248 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_lptim.o
+ .debug_macro   0x0001e201      0x28c ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_pwr.o
+ .debug_macro   0x0001e48d      0x244 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_pwr_ex.o
+ .debug_macro   0x0001e6d1      0x292 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_rcc.o
+ .debug_macro   0x0001e963      0x244 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_rcc_ex.o
+ .debug_macro   0x0001eba7      0x233 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_rtc.o
+ .debug_macro   0x0001edda      0x239 ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_rtc_ex.o
+ .debug_macro   0x0001f013      0x25d ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_uart.o
+ .debug_macro   0x0001f270      0x23e ./Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal_uart_ex.o
+ .debug_macro   0x0001f4ae      0x3c0 ./MbMux/mbmux.o
+ .debug_macro   0x0001f86e      0x3de ./MbMux/mbmuxif_sys.o
+ .debug_macro   0x0001fc4c      0x3cd ./MbMux/mbmuxif_trace.o
+ .debug_macro   0x00020019      0x3bb ./SubGHz_Phy/App/app_subghz_phy.o
+ .debug_macro   0x000203d4      0x1c1 ./Utilities/stm32_adv_trace.o
+ .debug_macro   0x00020595       0x1c ./Utilities/stm32_adv_trace.o
+ .debug_macro   0x000205b1      0x1ba ./Utilities/stm32_lpm.o
+ .debug_macro   0x0002076b      0x18c ./Utilities/stm32_mem.o
+ .debug_macro   0x000208f7      0x1b9 ./Utilities/stm32_seq.o
+ .debug_macro   0x00020ab0       0x1c ./Utilities/stm32_seq.o
+ .debug_macro   0x00020acc      0x1b5 ./Utilities/stm32_timer.o
+ .debug_macro   0x00020c81      0x143 ./Utilities/stm32_tiny_vsnprintf.o
 
 .debug_line     0x00000000    0x23099
  .debug_line    0x00000000      0x8f8 ./Common/System/system_stm32wlxx.o
