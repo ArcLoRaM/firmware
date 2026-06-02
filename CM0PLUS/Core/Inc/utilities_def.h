@@ -81,7 +81,7 @@ typedef enum
   CFG_SEQ_Task_MbRadioNotifSnd,
   CFG_SEQ_Task_MbKmsCmdRcv,
   /* USER CODE BEGIN CFG_SEQ_Task_Id_t */
-
+  CFG_SEQ_Task_TdmaSlotWake,
   /* USER CODE END CFG_SEQ_Task_Id_t */
   CFG_SEQ_Task_NBR
 } CFG_SEQ_Task_Id_t;

@@ -1,0 +1,13 @@
+../MbMux/mbmux.c:108:6:MBMUX_Init	24	static
+../MbMux/mbmux.c:140:6:MBMUX_SetCm0plusFeatureListPtr	16	static
+../MbMux/mbmux.c:151:8:MBMUX_RegisterFeature	32	static
+../MbMux/mbmux.c:223:6:MBMUX_UnregisterFeature	24	static
+../MbMux/mbmux.c:267:19:MBMUX_GetFeatureComPtr	24	static
+../MbMux/mbmux.c:293:9:MBMUX_CommandSnd	24	static
+../MbMux/mbmux.c:311:10:MBMUX_AcknowledgeSnd	24	static
+../MbMux/mbmux.c:330:16:MBMUX_CheckIfFeatureSupportedByCm0plus	40	static
+../MbMux/mbmux.c:361:13:MBMUX_IsrResponseRcvCb	24	static
+../MbMux/mbmux.c:376:13:MBMUX_IsrNotificationRcvCb	24	static
+../MbMux/mbmux.c:391:16:MBMUX_FindChStillUnregistered	24	static
+../MbMux/mbmux.c:451:16:MBMUX_GetFeatureChIdx	16	static
+../MbMux/mbmux.c:462:13:MBMUX_IsrNotRegistered	16	static

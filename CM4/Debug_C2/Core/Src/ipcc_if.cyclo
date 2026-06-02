@@ -1,0 +1,9 @@
+../../Drivers/STM32WLxx_HAL_Driver/Inc/stm32wlxx_ll_exti.h:336:22:LL_EXTI_EnableIT_32_63	1
+../../Drivers/STM32WLxx_HAL_Driver/Inc/stm32wlxx_ll_exti.h:1011:22:LL_EXTI_EnableRisingTrig_32_63	1
+../Core/Src/ipcc_if.c:78:6:IPCC_IF_Init	2
+../Core/Src/ipcc_if.c:107:10:IPCC_IF_CmdRespStatus	1
+../Core/Src/ipcc_if.c:118:10:IPCC_IF_NotifAckStatus	1
+../Core/Src/ipcc_if.c:129:9:IPCC_IF_CommandSnd	2
+../Core/Src/ipcc_if.c:147:9:IPCC_IF_AcknowledgeSnd	2
+../Core/Src/ipcc_if.c:171:13:IpccIfIsrTxCb	1
+../Core/Src/ipcc_if.c:186:13:IpccIfIsrRxCb	1

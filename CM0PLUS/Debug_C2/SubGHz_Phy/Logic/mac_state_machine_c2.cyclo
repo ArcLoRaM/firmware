@@ -1,0 +1,13 @@
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:47:17:sync_per_slot_ms	4
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:58:17:u32_abs_diff	2
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:63:13:trigger_sync_lost	2
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:75:6:MAC_Init	2
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:100:16:MAC_OnSlotOpportunity	12
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:144:6:MAC_OnSyncPacketReceived	11
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:196:6:MAC_OnBeaconReceived	7
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:227:6:MAC_OnExternalSyncAcquired	1
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:232:23:MAC_GetState	1
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:233:23:MAC_GetClockState	1
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:234:23:MAC_GetCellEligibilityMask_Uplink	1
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:235:23:MAC_GetCellEligibilityMask_Downlink	1
+../SubGHz_Phy/Logic/mac_state_machine_c2.c:236:23:MAC_GetPhaseTxFlag	1

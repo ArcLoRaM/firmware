@@ -1,0 +1,10 @@
+../SubGHz_Phy/Logic/mac_state_machine_c3.c:45:6:MAC_Init	24	static
+../SubGHz_Phy/Logic/mac_state_machine_c3.c:63:16:MAC_OnSlotOpportunity	40	static
+../SubGHz_Phy/Logic/mac_state_machine_c3.c:98:6:MAC_OnSyncPacketReceived	16	static
+../SubGHz_Phy/Logic/mac_state_machine_c3.c:106:6:MAC_OnBeaconReceived	24	static
+../SubGHz_Phy/Logic/mac_state_machine_c3.c:117:6:MAC_OnExternalSyncAcquired	16	static
+../SubGHz_Phy/Logic/mac_state_machine_c3.c:123:23:MAC_GetState	8	static
+../SubGHz_Phy/Logic/mac_state_machine_c3.c:124:23:MAC_GetClockState	8	static
+../SubGHz_Phy/Logic/mac_state_machine_c3.c:125:23:MAC_GetCellEligibilityMask_Uplink	8	static
+../SubGHz_Phy/Logic/mac_state_machine_c3.c:126:23:MAC_GetCellEligibilityMask_Downlink	8	static
+../SubGHz_Phy/Logic/mac_state_machine_c3.c:127:23:MAC_GetPhaseTxFlag	8	static

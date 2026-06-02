@@ -1,0 +1,6 @@
+../SubGHz_Phy/Logic/compliance_engine.c:72:17:band_max_credit	1
+../SubGHz_Phy/Logic/compliance_engine.c:78:12:find_band	4
+../SubGHz_Phy/Logic/compliance_engine.c:88:13:refresh_credit	3
+../SubGHz_Phy/Logic/compliance_engine.c:110:6:ComplianceEngine_Init	3
+../SubGHz_Phy/Logic/compliance_engine.c:124:20:ComplianceEngine_RequestChannel	4
+../SubGHz_Phy/Logic/compliance_engine.c:173:6:ComplianceEngine_ReportTxDone	4

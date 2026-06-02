@@ -22,6 +22,7 @@
 #include "compliance_engine.h"
 #include "mac_state_machine.h"
 #include "mac_types.h"
+#include "sys_app.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -30,7 +31,7 @@
  * ========================================================================= */
 
 #ifndef NODE_CLASS
-#define NODE_CLASS  NODE_CLASS_C2
+#  error "NODE_CLASS must be defined at build level (-DNODE_CLASS=NODE_CLASS_CX)"
 #endif
 
 #if   NODE_CLASS == NODE_CLASS_C1
@@ -200,6 +201,9 @@ void TdmaMachine_SlotTask(void)
 
     /* ---- Step 1: read RTC ---- */
     now_ms = s_platform.GetRtcMs();
+    APP_LOG(TS_ON, VLEVEL_H, "TDMA: slot ph=%u cell=%u sl=%u now=%lu ms\r\n",
+            (unsigned)s_cursor.phase_index, (unsigned)s_cursor.cell_index,
+            (unsigned)s_cursor.slot_index, now_ms);
 
     /* ---- Step 2: cursor integrity checkpoint ---- */
     {
@@ -249,6 +253,9 @@ void TdmaMachine_SlotTask(void)
 
     /* ---- Step 7: MAC decision ---- */
     decision = MAC_OnSlotOpportunity(&s_cursor, phase);
+    APP_LOG(TS_ON, VLEVEL_H, "TDMA: MAC dec=%u mac_state=%u clock=%u\r\n",
+            (unsigned)decision, (unsigned)MAC_GetState(),
+            (unsigned)MAC_GetClockState());
 
     /* ---- Step 8: radio action ---- */
     if (decision == SLOT_TX) {
@@ -256,8 +263,12 @@ void TdmaMachine_SlotTask(void)
             ComplianceEngine_RequestChannel(freq_hz,
                                             phase->slot_active_ms,
                                             TX_POWER_DBM);
+        APP_LOG(TS_ON, VLEVEL_H, "TDMA: TX compliance result=%u freq=%lu\r\n",
+                (unsigned)result, freq_hz);
         if (result == COMPLIANCE_GRANTED) {
-            s_platform.RadioSend(NULL, 0u);
+            SyncPayload_t pkt;
+            memset(&pkt, 0, sizeof(pkt));
+            s_platform.RadioSend((const uint8_t *)&pkt, (uint8_t)sizeof(pkt));
             uint32_t actual_toa = s_platform.RadioTimeOnAir();
             ComplianceEngine_ReportTxDone(freq_hz, actual_toa);
         }

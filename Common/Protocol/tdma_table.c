@@ -29,7 +29,7 @@
  * ========================================================================= */
 static const Phase_t s_sync_phase = {
     .type             = PHASE_TYPE_SYNC,
-    .participant_mask = PARTICIPANT_C2 | PARTICIPANT_C3,
+    .participant_mask = PARTICIPANT_C1 | PARTICIPANT_C2 | PARTICIPANT_C3,
     .direction_mode   = DIRECTION_MAC_PHASE,
     .cell_count       = 3u,
     .slot_count       = 1u,

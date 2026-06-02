@@ -149,10 +149,12 @@ void RTC_LSECSS_IRQHandler(void)
 {
   /* USER CODE BEGIN RTC_LSECSS_IRQn 0 */
 
+
   /* USER CODE END RTC_LSECSS_IRQn 0 */
   HAL_RTCEx_WakeUpTimerIRQHandler(&hrtc);
   HAL_RTC_AlarmIRQHandler(&hrtc);
   /* USER CODE BEGIN RTC_LSECSS_IRQn 1 */
+
 
   /* USER CODE END RTC_LSECSS_IRQn 1 */
 }

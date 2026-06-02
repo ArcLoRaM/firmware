@@ -63,7 +63,7 @@ void Error_Handler(void);
 #define LED_CM0_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-// #define USING_NUCLEO        /* comment out to disable board-specific LED/timer code */
+ #define USING_NUCLEO        /* comment out to disable board-specific LED/timer code */
 
 #ifdef USING_NUCLEO
 #define LED_BLINK_CM0_Pin   GPIO_PIN_15

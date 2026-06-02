@@ -1,0 +1,3 @@
+../MbMux/mbmuxif_trace.c:70:8:MBMUXIF_TraceInit	3
+../MbMux/mbmuxif_trace.c:97:6:MBMUXIF_TraceSendAck	2
+../MbMux/mbmuxif_trace.c:116:13:MBMUXIF_IsrTraceNotifRcvCb	2

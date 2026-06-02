@@ -1,0 +1,8 @@
+../../Drivers/STM32WLxx_HAL_Driver/Inc/stm32wlxx_ll_pwr.h:2207:22:LL_PWR_ClearFlag_C2STOP_C2STB	8	static
+../../Drivers/STM32WLxx_HAL_Driver/Inc/stm32wlxx_ll_rcc.h:1971:22:LL_RCC_SetClkAfterWakeFromStop	16	static
+../Core/Src/stm32_lpm_if.c:77:6:PWR_EnterOffMode	8	static
+../Core/Src/stm32_lpm_if.c:84:6:PWR_ExitOffMode	8	static
+../Core/Src/stm32_lpm_if.c:91:6:PWR_EnterStopMode	8	static
+../Core/Src/stm32_lpm_if.c:109:6:PWR_ExitStopMode	8	static
+../Core/Src/stm32_lpm_if.c:126:6:PWR_EnterSleepMode	8	static
+../Core/Src/stm32_lpm_if.c:142:6:PWR_ExitSleepMode	8	static

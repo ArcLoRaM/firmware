@@ -1,0 +1,10 @@
+../SubGHz_Phy/Logic/tdma_machine.c:61:13:enter_phase	24	static
+../SubGHz_Phy/Logic/tdma_machine.c:72:13:advance_to_next_phase	16	static
+../SubGHz_Phy/Logic/tdma_machine.c:89:13:advance_cursor	16	static
+../SubGHz_Phy/Logic/tdma_machine.c:131:13:skip_to_participating_phase	24	static
+../SubGHz_Phy/Logic/tdma_machine.c:157:17:u32_abs_diff	16	static
+../SubGHz_Phy/Logic/tdma_machine.c:164:13:next_slot_is_rx	16	static
+../SubGHz_Phy/Logic/tdma_machine.c:176:6:TdmaMachine_Init	32	static
+../SubGHz_Phy/Logic/tdma_machine.c:192:6:TdmaMachine_SlotTask	112	static
+../SubGHz_Phy/Logic/tdma_machine.c:303:15:TdmaMachine_GetCursor	16	static
+../SubGHz_Phy/Logic/tdma_machine.c:304:15:TdmaMachine_IsCursorSuspect	8	static

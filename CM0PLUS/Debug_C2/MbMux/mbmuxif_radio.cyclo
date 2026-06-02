@@ -1,0 +1,8 @@
+../MbMux/mbmuxif_radio.c:88:8:MBMUXIF_RadioInit	3
+../MbMux/mbmuxif_radio.c:114:19:MBMUXIF_GetRadioFeatureNotifComPtr	2
+../MbMux/mbmuxif_radio.c:130:6:MBMUXIF_RadioSendNotif	1
+../MbMux/mbmuxif_radio.c:141:6:MBMUXIF_RadioSendResp	2
+../MbMux/mbmuxif_radio.c:160:13:MBMUXIF_IsrRadioAckRcvCb	1
+../MbMux/mbmuxif_radio.c:171:13:MBMUXIF_IsrRadioCmdRcvCb	1
+../MbMux/mbmuxif_radio.c:183:13:MBMUXIF_TaskRadioCmdRcv	1
+../MbMux/mbmuxif_radio.c:194:13:MBMUXIF_TaskRadioNotifSnd	2

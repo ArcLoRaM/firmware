@@ -25,6 +25,7 @@
 
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include "subghz_phy_task.h"
 #ifdef USING_NUCLEO
 #include "gpio.h"
 #include "stm32_timer.h"
@@ -76,7 +77,7 @@ void MX_SubGHz_Phy_Init(void)
   /* USER CODE END MX_SubGHz_Phy_Init_1 */
   SystemApp_Init();
   /* USER CODE BEGIN MX_SubGHz_Phy_Init_1_1 */
-
+  SubGhzPhyTask_Init();
   /* USER CODE END MX_SubGHz_Phy_Init_1_1 */
   /* USER CODE BEGIN MX_SubGHz_Phy_Init_2 */
 #ifdef USING_NUCLEO

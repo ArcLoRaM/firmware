@@ -1,0 +1,2 @@
+../SubGHz_Phy/Logic/freq_resolver.c:23:6:FrequencyResolver_Init	1
+../SubGHz_Phy/Logic/freq_resolver.c:28:10:FrequencyResolver_GetFreq	10
