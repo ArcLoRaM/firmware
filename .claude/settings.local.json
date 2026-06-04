@@ -35,7 +35,14 @@
       "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Wire FrequencyResolver to shared FrequencyResolverState_t' --label ready-for-agent --body ' *)",
       "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Wire AlarmBRequest_t + CM4 heartbeat counter' --label ready-for-agent --body ' *)",
       "Bash(gh issue create --repo ArcLoRaM/firmware --title 'Implement EmergencyAlertSlot: CM4 liveness watchdog + alert TX path' --label ready-for-agent --body ' *)",
-      "Bash(cmake .. -G \"MinGW Makefiles\")"
+      "Bash(cmake .. -G \"MinGW Makefiles\")",
+      "Bash(gh auth *)",
+      "Bash(gh repo *)",
+      "Bash(gh issue create --repo ArcLoRaM/firmware --label ready-for-agent --title '[Sync] Settle BCD/binary boundary and fix subsecond write on Packet 1' --body ' *)",
+      "Bash(ctest --test-dir build -V)",
+      "Bash(cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug)",
+      "Bash(cmake --build build --target test_rtc_ssr)",
+      "Bash(ctest --test-dir build -R test_rtc_ssr -V)"
     ]
   }
 }

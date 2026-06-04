@@ -134,6 +134,24 @@ void TdmaMachine_SlotTask(void);
 FrameCursor_t TdmaMachine_GetCursor(void);
 
 /*!
+ * \brief   Re-anchor the FrameCursor and alarm chain after Sync acquisition.
+ *
+ * \details Called by the \c sync_bootstrapped MAC hook (Packet 1). Sets the
+ *          cursor to the received cell, advances one step to the next cell,
+ *          and programs RTC Alarm A for that next cell start.  After this call
+ *          the normal \ref TdmaMachine_SlotTask loop resumes from the correct
+ *          position without missing any cells.
+ *
+ * \param   sync_phase_idx  Phase index from \c SyncPayload_t.sync_phase_index.
+ * \param   sync_cell_idx   Cell index from \c SyncPayload_t.sync_cell_index.
+ * \param   slot_start_ms   Nominal start of the received cell in the new RTC
+ *                          domain (= \c get_rtc_snapshot ms value on Packet 1).
+ */
+void TdmaMachine_BootstrapFromSync(uint8_t  sync_phase_idx,
+                                    uint8_t  sync_cell_idx,
+                                    uint32_t slot_start_ms);
+
+/*!
  * \brief   Return \c true if the RTC integrity checkpoint detected an
  *          implausible delta on the most recent \ref TdmaMachine_SlotTask
  *          entry.

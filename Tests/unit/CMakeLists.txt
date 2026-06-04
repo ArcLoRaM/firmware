@@ -118,3 +118,7 @@ add_unity_test(test_cm4_diag
     test_cm4_diag.c
     ../../CM4/SubGHz_Phy/Logic/cm4_diag.c
 )
+
+add_unity_test(test_rtc_ssr
+    test_rtc_ssr.c
+)

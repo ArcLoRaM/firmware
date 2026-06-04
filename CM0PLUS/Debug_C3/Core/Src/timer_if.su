@@ -15,4 +15,5 @@
 ../Core/Src/timer_if.c:281:10:TIMER_IF_BkUp_Read_Seconds	16	static
 ../Core/Src/timer_if.c:290:10:TIMER_IF_BkUp_Read_SubSeconds	16	static
 ../Core/Src/timer_if.c:300:6:HAL_RTCEx_WakeUpTimerEventCallback	16	static
-../Core/Src/timer_if.c:308:24:GetTimerTicks	48	static
+../Core/Src/timer_if.c:305:6:RTC_GetCalendarBcd	48	static
+../Core/Src/timer_if.c:324:24:GetTimerTicks	48	static

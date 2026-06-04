@@ -18,6 +18,8 @@ static int      s_alarm_calls;
 static uint32_t s_channel_set;
 static int      s_channel_calls;
 static int      s_radio_send_calls;
+static uint8_t  s_last_sent_buf[32];
+static uint8_t  s_last_sent_len;
 static uint32_t s_radio_set_rx_timeout;
 static int      s_radio_set_rx_calls;
 static int      s_radio_sleep_calls;
@@ -25,7 +27,14 @@ static int      s_radio_sleep_calls;
 static uint32_t stub_GetRtcMs(void)                          { return s_rtc_ms;                                      }
 static void     stub_ProgramAlarmA(uint32_t t)               { s_alarm_programmed = t; s_alarm_calls++;              }
 static void     stub_RadioSetChannel(uint32_t f)             { s_channel_set = f; s_channel_calls++;                 }
-static void     stub_RadioSend(const uint8_t *b, uint8_t l)  { (void)b; (void)l; s_radio_send_calls++;              }
+static void     stub_RadioSend(const uint8_t *b, uint8_t l)
+{
+    if (l <= (uint8_t)sizeof(s_last_sent_buf)) {
+        memcpy(s_last_sent_buf, b, l);
+        s_last_sent_len = l;
+    }
+    s_radio_send_calls++;
+}
 static void     stub_RadioSetRx(uint32_t ms)                 { s_radio_set_rx_timeout = ms; s_radio_set_rx_calls++;  }
 static void     stub_RadioSleep(void)                        { s_radio_sleep_calls++;                                }
 static uint32_t stub_RadioTimeOnAir(void)                    { return 2500u; /* == slot_active_ms */                 }
@@ -50,7 +59,25 @@ static ComplianceStatus_t       s_comp_status;
 /* Stub get_tick reuses s_rtc_ms so time advances consistently */
 static uint32_t comp_get_tick(void) { return s_rtc_ms; }
 
-static const MAC_Hooks_t k_mac_hooks = { NULL, NULL, NULL, NULL };
+/* Snapshot stub: pretend RTC reads 0 after any rtc_set */
+static uint32_t s_mac_snapshot_ms;
+static void stub_mac_rtc_set(uint32_t ms, uint8_t d, uint8_t mo, uint8_t y)
+{
+    (void)ms; (void)d; (void)mo; (void)y;
+    s_mac_snapshot_ms = ms;
+}
+static void stub_mac_get_rtc_snapshot(uint32_t *ms, uint8_t *d, uint8_t *mo, uint8_t *y)
+{
+    *ms = s_mac_snapshot_ms; *d = 0x01u; *mo = 0x01u; *y = 0x24u;
+}
+
+static const MAC_Hooks_t k_mac_hooks = {
+    .rtc_set           = stub_mac_rtc_set,
+    .get_rtc_snapshot  = stub_mac_get_rtc_snapshot,
+    .sync_bootstrapped = NULL,
+    .sync_locked       = NULL,
+    .sync_lost         = NULL,
+};
 
 /* Stub TDMA: slot_active_ms=2500, gap[0]=500, per-slot step=3000 ms */
 #define SLOT_ACTIVE_MS   2500u
@@ -70,6 +97,9 @@ static void init_all(void)
     s_radio_set_rx_timeout= 0u;
     s_radio_set_rx_calls  = 0;
     s_radio_sleep_calls   = 0;
+    memset(s_last_sent_buf, 0, sizeof(s_last_sent_buf));
+    s_last_sent_len       = 0u;
+    s_mac_snapshot_ms     = 0u;
 
     /* Static 868.1 MHz on Sync phase (phase 0, cell mode STATIC) */
     s_freq_state.phases[0].cell_mode           = CELL_FREQ_STATIC;
@@ -86,9 +116,14 @@ static void sync_mac(void)
 {
     SyncPayload_t p;
     memset(&p, 0, sizeof(p));
-    p.sync_slot_index = 0u;  MAC_OnSyncPacketReceived(&p, 0u);
-    p.sync_slot_index = 1u;  MAC_OnSyncPacketReceived(&p, 3000u);
-    p.sync_slot_index = 2u;  MAC_OnSyncPacketReceived(&p, 6000u);
+    p.sync_phase_index = 0u;
+    s_mac_snapshot_ms  = 0u;
+    p.sync_cell_index = 0u;  p.ms_since_midnight_sync_phase = 0u;
+    MAC_OnSyncPacketReceived(&p, 0u);
+    p.sync_cell_index = 1u;
+    MAC_OnSyncPacketReceived(&p, 3000u);
+    p.sync_cell_index = 2u;
+    MAC_OnSyncPacketReceived(&p, 6000u);
 }
 
 /* Call SlotTask after advancing simulated RTC to the last programmed alarm */
@@ -123,11 +158,11 @@ void test_slot_task_programs_alarm_nominal_for_tx_slot(void)
     s_rtc_ms = 0u;
     TdmaMachine_SlotTask();
     /*
-     * MAC Synchronized, first Sync phase entry → audit_cycle=0 (even)
-     * → phase_tx_flag=1 → TX.  Next slot also TX (same direction) → no guard.
-     * next_alarm = 0 + 2500 + 500 = 3000.
+     * Cell 0 of Sync phase: always SLOT_RX for C2 (epoch not yet received).
+     * phase_tx_flag=0 (C2 reactive model) → next_slot_is_rx=true → guard applied.
+     * next_alarm = 0 + 2500 + 500 - GUARD_TIME_MS = 2995.
      */
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
 }
 
 /* =========================================================================
@@ -161,9 +196,23 @@ void test_slot_task_rx_sets_correct_radio_timeout(void)
 
 void test_slot_task_tx_calls_radio_send(void)
 {
-    sync_mac();   /* MAC → Synchronized, phase_tx_flag will be 1 on first entry */
+    /* C2 TX requires: CLOCK_WARM + epoch received at cell 0.
+     * Step 1: sync_mac → WARM. Step 2: run cell 0 (RX).
+     * Step 3: arm epoch. Step 4: run cell 1 → TX → RadioSend called. */
+    sync_mac();
     s_rtc_ms = 0u;
-    TdmaMachine_SlotTask();
+    TdmaMachine_SlotTask();        /* cell 0 → SLOT_RX, no send */
+    TEST_ASSERT_EQUAL(0, s_radio_send_calls);
+
+    /* Arm epoch: simulate receiving a sync packet in the cell-0 RX window */
+    SyncPayload_t arm;
+    memset(&arm, 0, sizeof(arm));
+    arm.sync_phase_index             = 0u;
+    arm.ms_since_midnight_sync_phase = 0u;
+    arm.sync_cell_index              = 0u;
+    MAC_OnSyncPacketReceived(&arm, 0u);  /* error=0 → Tier 1 → epoch armed */
+
+    step_slot();                   /* cell 1 → SLOT_TX */
     TEST_ASSERT_EQUAL(1, s_radio_send_calls);
 }
 
@@ -263,6 +312,51 @@ void test_cursor_suspect_on_implausible_delta(void)
 }
 
 /* =========================================================================
+ * BootstrapFromSync
+ * ========================================================================= */
+
+void test_bootstrap_cursor_positioned_at_next_cell(void)
+{
+    /* Stub table has 3 cells per Sync phase. Bootstrap at cell=1 → advance → cell=2.
+     * (cell=2 would wrap frame back to 0 since phase has only 3 cells.) */
+    TdmaMachine_BootstrapFromSync(0u, 1u, 3000u);
+    TEST_ASSERT_EQUAL(2u, TdmaMachine_GetCursor().cell_index);
+    TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().phase_index);
+}
+
+void test_bootstrap_next_alarm_accounts_for_received_cell(void)
+{
+    /* slot_start=3000, slot_active=2500, gap=500 → alarm = 3000+2500+500 = 6000 */
+    TdmaMachine_BootstrapFromSync(0u, 1u, 3000u);
+    TEST_ASSERT_EQUAL(6000u, s_alarm_programmed);
+}
+
+void test_sync_tx_payload_fields_match_cursor(void)
+{
+    /* C2 can only TX at cells 1+ after receiving epoch at cell 0.
+     * Sequence: sync_mac → run cell 0 (RX) → arm epoch → run cell 1 (TX). */
+    sync_mac();
+    s_rtc_ms = 0u;
+    TdmaMachine_SlotTask();   /* cell 0 → RX, no send */
+
+    /* Arm epoch */
+    SyncPayload_t arm;
+    memset(&arm, 0, sizeof(arm));
+    arm.sync_phase_index             = 0u;
+    arm.ms_since_midnight_sync_phase = 0u;
+    arm.sync_cell_index              = 0u;
+    MAC_OnSyncPacketReceived(&arm, 0u);
+
+    step_slot();              /* cell 1 → TX */
+    TEST_ASSERT_EQUAL(1, s_radio_send_calls);
+    TEST_ASSERT_EQUAL(10u, s_last_sent_len);
+    SyncPayload_t pkt;
+    memcpy(&pkt, s_last_sent_buf, sizeof(pkt));
+    TEST_ASSERT_EQUAL(0u, pkt.sync_phase_index);
+    TEST_ASSERT_EQUAL(1u, pkt.sync_cell_index);  /* cursor at cell 1 when TX */
+}
+
+/* =========================================================================
  * main
  * ========================================================================= */
 
@@ -281,5 +375,8 @@ int main(void)
     RUN_TEST(test_frame_wrap_resets_cursor);
     RUN_TEST(test_cursor_integrity_clean_on_expected_wake);
     RUN_TEST(test_cursor_suspect_on_implausible_delta);
+    RUN_TEST(test_bootstrap_cursor_positioned_at_next_cell);
+    RUN_TEST(test_bootstrap_next_alarm_accounts_for_received_cell);
+    RUN_TEST(test_sync_tx_payload_fields_match_cursor);
     return UNITY_END();
 }

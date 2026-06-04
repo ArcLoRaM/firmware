@@ -1,53 +1,68 @@
-# ADR-0005: Sync Payload Uses Raw BCD + SSR, Not a Flat Integer
+# ADR-0005: Sync Payload Uses Binary ms-Since-Midnight + BCD Date
 
 ## Status
-Accepted
+Supersedes previous "Raw BCD + SSR" format (see git history for original).
 
 ## Context
-The `Sync` Phase transmits a packet whose payload carries the Frame Epoch — the
-absolute RTC time at the start of the current frame. Receivers use this to set
-their RTC on cold start and to correct clock drift on every subsequent frame.
+The `Sync` Phase transmits a packet whose payload carries the Sync Phase Epoch —
+the absolute start time of the current Sync Phase occurrence. Receivers use this
+to set their RTC on cold start and to correct clock drift on every subsequent
+occurrence. C3 is the sole epoch generator; C2 relays C3's received epoch verbatim.
 
-The project uses `RTC_BINARY_NONE` mode: the STM32 RTC stores time as a BCD
-calendar (hours, minutes, seconds, date) plus a raw SubSeconds SSR register that
-counts **down** from `PREDIV_S` to 0. Any elapsed-ms computation requires:
+Three format options were considered:
 
-    ss_ms = (PREDIV_S − SubSeconds) × 1000 / (PREDIV_S + 1)
+**Option A — Raw BCD + SSR** (previous format): transmit H:M:S as BCD plus raw
+SSR register. Eliminated: SSR provides no useful precision (HAL_RTC_SetTime resets
+it silently); BCD arithmetic is required on both TX (reading RTC) and RX sides for
+any error computation; `GetTimerTicks()` already yields binary ms making BCD an
+intermediate conversion with no benefit.
 
-Two payload formats were considered:
+**Option B — Binary ms-since-midnight** (chosen for time): `uint32_t` ms since
+midnight (0–86,399,999). TX path: `GetTimerTicks()` already returns this — zero
+conversion. RX path: `target_ms = payload + sync_cell_index × per_cell_ms`, then
+`H = ms/3600000`, `M = (ms%3600000)/60000`, `S = (ms%60000)/1000` — integer
+division only, no BCD arithmetic, no SSR formula.
 
-**Option A — Raw BCD + SSR** (chosen): transmit the fields exactly as
-`RTC_TimeTypeDef` and `RTC_DateTypeDef` return them. The receiver calls
-`HAL_RTC_SetTime(payload, RTC_FORMAT_BCD)` and
-`HAL_RTC_SetDate(payload, RTC_FORMAT_BCD)` directly — no write-path conversion.
-
-**Option B — Compact integer**: transmit `uint32_t` seconds-since-2000 +
-`uint16_t` milliseconds. Smaller on wire, but requires BCD↔integer conversion
-on both the transmit path (reading RTC) and the receive path (writing RTC).
-
-The `Sync` Phase also supports multi-hop relaying: the SyncAnchor transmits in
-slot 0; relay nodes forward the packet in subsequent slots (all uniform duration).
-The receiver needs to know which slot it received from to compute the correct
-preamble-arrival offset.
+**Option C — Unix-style seconds + ms**: requires epoch reference and larger integer
+types. Unnecessary for a network that tracks time-of-day only.
 
 ## Decision
-The `SyncPayload` struct carries raw BCD calendar fields, raw SSR, and a
-`sync_slot_index` field (which slot within the Sync Phase transmitted this packet).
-Relay nodes forward the struct verbatim except for incrementing `sync_slot_index`.
+`SyncPayload_t` (10 bytes) carries:
+- `packet_type_id` (1 byte): packet type discriminator for future format evolution.
+- `ms_since_midnight_sync_phase` (4 bytes, binary): sync phase start time in ms
+  since midnight. C3 writes `GetTimerTicks()` at phase entry. C2 relays C3's
+  received value unchanged.
+- `day`, `month`, `year` (3 bytes, BCD): date passed through from `HAL_RTC_GetDate`
+  with no conversion. `HAL_RTC_SetDate` accepts BCD directly.
+- `sync_phase_index` (1 byte): TDMA Table phase index. Receiver uses it to look up
+  `per_cell_ms` and bootstrap the FrameCursor in multi-Sync-phase frames.
+- `sync_cell_index` (1 byte): cell within the Sync Phase. Receiver computes
+  `target_ms = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms`.
 
 Rationale:
-1. **Write-path conversion eliminated.** `RTC_BINARY_NONE` forces the SSR formula
-   for elapsed-ms arithmetic regardless of payload format; using BCD avoids a
-   *second* conversion on the RTC write path.
-2. **Relay-strategy-agnostic.** `sync_slot_index` lets the receiver compute
-   `expected_offset_ms` without knowing whether relays use concurrent transmission
-   or a random sub-slot strategy — the choice is deferred.
-3. **No new integer types.** The BCD fields map 1:1 to HAL struct members,
-   eliminating any risk of unit confusion (seconds vs milliseconds vs ticks).
+1. **Zero TX conversion.** `GetTimerTicks()` already returns ms-since-midnight in
+   binary. No BCD read or SSR formula required on the transmit path.
+2. **Trivial RX decomposition.** Integer division only. No BCD arithmetic, no
+   per-field carry propagation.
+3. **C3-only epoch authority.** C2 never reads its own RTC for the payload epoch;
+   it forwards C3's value. This eliminates inter-node epoch divergence under drift.
+4. **Multi-phase frame support.** `sync_phase_index` lets a scanning node bootstrap
+   its FrameCursor to the correct phase regardless of how many Sync Phases the
+   frame contains.
 
 ## Consequences
-The `SyncPayload` struct is 11 bytes. Elapsed-ms arithmetic still requires the
-SSR formula — that cost is unavoidable under `RTC_BINARY_NONE` and is isolated to
-`rtc_to_ms()` in `sync.c`. The cold-start set loses sub-second precision
-(`HAL_RTC_SetTime` does not accept SubSeconds on write); this is accepted as a
-one-frame imprecision corrected on the second sync packet.
+Struct is 10 bytes (down from 11). Existing `sync_slot_index` field renamed to
+`sync_cell_index` (semantics unchanged; cell == slot in Sync phases with 1 slot/cell).
+
+**Known limitation — midnight rollover:** if `ms_since_midnight_sync_phase +
+sync_cell_index × per_cell_ms ≥ 86,400,000`, the BCD date in the payload is from
+the previous day and the receiver must advance the date by one day after setting
+the time. Direct BCD calendar arithmetic is non-trivial (variable month lengths,
+leap years). `HAL_RTC_DST_Add1Hour` handles the complexity natively (24 calls =
++1 day). Deferred to a future issue; extremely rare in practice (requires a Sync
+Phase to straddle midnight and the cell offset to push past 00:00:00).
+
+SSR sub-second correction: ongoing drift beyond `SYNC_PARTICIPATE_THRESHOLD_MS`
+but below `SYNC_RESYNC_THRESHOLD_MS` (8ms–300ms) is corrected via
+`HAL_RTCEx_SetSynchroShift` without a full RTC reset (three-tier dispatch;
+see CONTEXT.md Sync Algorithm).

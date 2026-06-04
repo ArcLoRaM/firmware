@@ -123,14 +123,14 @@ void test_absent_footer_returns_zero(void)
     TEST_ASSERT_EQUAL(0u, FrequencyResolver_GetFreq(&c, SLOT_POS_FOOTER));
 }
 
-void test_absent_static_cell_returns_zero(void)
+void test_static_zero_returns_fallback(void)
 {
-    /* static_freq_hz left at 0 */
+    /* static_freq_hz left at 0 — simulates uninitialised SRAM2 (CM4 not yet written) */
     s_state.phases[0].cell_mode = CELL_FREQ_STATIC;
     FrequencyResolver_Init(&s_state);
 
     FrameCursor_t c = { .phase_index = 0u, .cell_index = 0u, .slot_index = 0u };
-    TEST_ASSERT_EQUAL(0u, FrequencyResolver_GetFreq(&c, SLOT_POS_CELL));
+    TEST_ASSERT_EQUAL(FREQ_FALLBACK_HZ, FrequencyResolver_GetFreq(&c, SLOT_POS_CELL));
 }
 
 /* --- HOP mode (deferred) -------------------------------------------------- */
@@ -157,7 +157,7 @@ int main(void)
     RUN_TEST(test_header_footer_are_independent_of_cell_mode);
     RUN_TEST(test_absent_header_returns_zero);
     RUN_TEST(test_absent_footer_returns_zero);
-    RUN_TEST(test_absent_static_cell_returns_zero);
+    RUN_TEST(test_static_zero_returns_fallback);
     RUN_TEST(test_hop_mode_returns_zero_while_deferred);
     return UNITY_END();
 }

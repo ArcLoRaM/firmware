@@ -301,6 +301,22 @@ void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
 {
   UTIL_TIMER_IRQ_MAP_PROCESS();
 }
+
+void RTC_GetCalendarBcd(FrameEpoch_t *out)
+{
+  RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
+  hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+  HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BCD);
+  HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BCD);
+  out->hours      = sTime.Hours;
+  out->minutes    = sTime.Minutes;
+  out->seconds    = sTime.Seconds;
+  out->subseconds = sTime.SubSeconds; /* raw SSR, binary downcounter */
+  out->day        = sDate.Date;
+  out->month      = sDate.Month;
+  out->year       = sDate.Year;
+}
 /* USER CODE END EF */
 
 /* Private functions ---------------------------------------------------------*/

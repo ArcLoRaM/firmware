@@ -35,27 +35,6 @@
 #include "tdma_table.h"       /* TdmaTable_PhaseCount */
 
 /* =========================================================================
- * FrequencyResolver stub state (initial integration)
- *
- * CM4 shared-memory wiring is not yet in place. Use a local static
- * initialised to CELL_FREQ_STATIC at 868.3 MHz so the radio is tuned to
- * a real frequency on every Sync slot. Replace &s_freq_state with the
- * SRAM2 extern once CM4 writes FrequencyResolverState_t.
- * ========================================================================= */
-
-static FrequencyResolverState_t s_freq_state = {
-    .phases = {
-        [0] = {
-            .header_freq_hz = 0u,
-            .footer_freq_hz = 0u,
-            .cell_mode      = CELL_FREQ_STATIC,
-            .cell           = { .static_freq_hz = 868300000u },
-        },
-        /* phases[1..FREQ_MAX_PHASES-1] zero-initialised — unused */
-    },
-};
-
-/* =========================================================================
  * Radio event callbacks — bridge radio ISR events to MAC layer
  * ========================================================================= */
 
@@ -169,19 +148,23 @@ static uint32_t plat_radio_toa(void)
  * MAC State Machine hooks
  * ========================================================================= */
 
-static void mac_hook_rtc_set(uint8_t hours, uint8_t minutes, uint8_t seconds,
-                              uint8_t day,   uint8_t month,   uint8_t year,
-                              uint32_t subseconds)
+/* Packet 1 / Tier 3 hook: decompose binary target_ms to H:M:S; apply HAL_RTC_SetTime(BIN).
+ * Sub-second component (target_ms % 1000) is aligned via SHIFTR ADD1S after SetTime:
+ * set one second early, then ADD1S=1 advances calendar to target_s with SSR = SUBFS. */
+static void mac_hook_rtc_set(uint32_t target_ms,
+                              uint8_t  day, uint8_t month, uint8_t year)
 {
-    APP_LOG(TS_OFF, VLEVEL_M,
-            "MAC: rtc_set %02x:%02x:%02x date %02x/%02x/20%02x\r\n",
-            hours, minutes, seconds, day, month, year);
+    uint32_t target_s  = (target_ms / 1000u) % 86400u;
+    uint32_t subsec_ms = target_ms % 1000u;
+
+    /* Set one second early when sub-second adjustment is needed.
+     * Midnight edge (target_s == 0) skipped to avoid date roll-back. */
+    uint32_t set_s = (subsec_ms > 0u && target_s > 0u) ? target_s - 1u : target_s;
 
     RTC_TimeTypeDef t = {0};
-    t.Hours          = hours;
-    t.Minutes        = minutes;
-    t.Seconds        = seconds;
-    t.SubSeconds     = subseconds;
+    t.Hours          = (uint8_t)(set_s / 3600u);
+    t.Minutes        = (uint8_t)((set_s % 3600u) / 60u);
+    t.Seconds        = (uint8_t)(set_s % 60u);
     t.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
     t.StoreOperation = RTC_STOREOPERATION_RESET;
 
@@ -190,20 +173,59 @@ static void mac_hook_rtc_set(uint8_t hours, uint8_t minutes, uint8_t seconds,
     d.Month = month;
     d.Year  = year;
 
-    /* SyncPayload fields are BCD — pass FORMAT_BCD directly */
     hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
-    HAL_RTC_SetTime(&hrtc, &t, RTC_FORMAT_BCD);
+    HAL_RTC_SetTime(&hrtc, &t, RTC_FORMAT_BIN);
     HAL_RTC_SetDate(&hrtc, &d, RTC_FORMAT_BCD);
+    /* SSR = PREDIV_S (start of set_s) after SetTime */
+
+    APP_LOG(TS_OFF, VLEVEL_M,
+            "MAC: rtc_set %02u:%02u:%02u.%03u\r\n",
+            (unsigned)t.Hours, (unsigned)t.Minutes,
+            (unsigned)t.Seconds, (unsigned)subsec_ms);
+
+    /* Sub-second alignment via SHIFTR.
+     * ADD1S=1 advances calendar by 1 s and sets SSR = SUBFS, so
+     * elapsed-in-second = (PREDIV_S − SUBFS)/(PREDIV_S+1) ≈ subsec_ms/1000. */
+    if (subsec_ms > 0u && target_s > 0u) {
+        hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+        if (!READ_BIT(hrtc.Instance->ICSR, RTC_ICSR_SHPF)) {
+            uint32_t shift_ticks = (subsec_ms * (RTC_PREDIV_S + 1u)) / 1000u;
+            HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
+                                       (RTC_PREDIV_S + 1u) - shift_ticks);
+        }
+    }
 }
 
+/* Tier 2 hook: apply SSR-only correction when CLOCK_WARM and 8ms ≤ error < 300ms.
+ * Direction: error_ms > 0 → RTC fast → delay (ADD1S=0).
+ *            error_ms < 0 → RTC slow → advance (ADD1S=1, SSR set to SUBFS). */
 static void mac_hook_rtc_align_sub(uint32_t preamble_timestamp_ms,
                                     uint32_t expected_offset_ms)
 {
-    /* Sub-second alignment: compute error and log. Full SSR adjustment deferred. */
     int32_t error_ms = (int32_t)preamble_timestamp_ms - (int32_t)expected_offset_ms;
     APP_LOG(TS_OFF, VLEVEL_M,
-            "MAC: rtc_align_sub preamble=%lu expected=%lu err=%ld ms\r\n",
-            preamble_timestamp_ms, expected_offset_ms, error_ms);
+            "MAC: rtc_align_sub preamble=%u expected=%u err=%d ms\r\n",
+            (unsigned)preamble_timestamp_ms, (unsigned)expected_offset_ms,
+            (int)error_ms);
+
+    if (error_ms == 0) return;
+
+    hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+    if (READ_BIT(hrtc.Instance->ICSR, RTC_ICSR_SHPF)) return;  /* shift pending */
+    if (hrtc.Instance->SSR & 0x8000u) return;                  /* SS[15] guard (AN4759) */
+
+    uint32_t error_abs   = (error_ms < 0) ? (uint32_t)(-error_ms) : (uint32_t)(error_ms);
+    uint32_t shift_ticks = (error_abs * (RTC_PREDIV_S + 1u)) / 1000u;
+
+    if (error_ms > 0) {
+        /* RTC fast → delay: SUBFS added to SSR prescaler counter */
+        HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_RESET, shift_ticks);
+    } else {
+        /* RTC slow → advance: ADD1S=1 sets SSR = SUBFS after +1 calendar second.
+         * Advance = 1 − SUBFS/(PREDIV_S+1) = shift_ticks/(PREDIV_S+1)  (AN4759 §2.6) */
+        HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
+                                   (RTC_PREDIV_S + 1u) - shift_ticks);
+    }
 }
 
 static void mac_hook_sync_locked(void)
@@ -302,10 +324,9 @@ void SubGhzPhyTask_Init(void)
     ComplianceEngine_Init(&g_compliance_status, HAL_GetTick);
     APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: ComplianceEngine ready\r\n");
 
-    /* 3. Frequency Resolver — stub local state at 868.3 MHz (Sync phase only).
-     *    Replace &s_freq_state with &g_freq_resolver_state once CM4 wiring
-     *    is in place (issue #11). */
-    FrequencyResolver_Init(&s_freq_state);
+    /* 3. Frequency Resolver — reads g_freq_resolver_state from SRAM2.
+     *    CM4 populates all phases with default 868.3 MHz CELL_FREQ_STATIC at boot. */
+    FrequencyResolver_Init(&g_freq_resolver_state);
     APP_LOG(TS_OFF, VLEVEL_M,
             "SubGhzPhyTask: FrequencyResolver ready, phase_count=%u\r\n",
             (unsigned)TdmaTable_PhaseCount());
@@ -333,4 +354,5 @@ void SubGhzPhyTask_Init(void)
     UTIL_SEQ_RegTask(1u << CFG_SEQ_Task_TdmaSlotWake, 0u, TdmaMachine_SlotTask);
     UTIL_SEQ_SetTask(1u << CFG_SEQ_Task_TdmaSlotWake, CFG_SEQ_Prio_0);
     APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: sequencer task armed\r\n");
+    
 }

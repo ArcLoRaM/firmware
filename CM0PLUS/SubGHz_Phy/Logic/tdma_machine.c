@@ -268,6 +268,10 @@ void TdmaMachine_SlotTask(void)
         if (result == COMPLIANCE_GRANTED) {
             SyncPayload_t pkt;
             memset(&pkt, 0, sizeof(pkt));
+            pkt.ms_since_midnight_sync_phase = MAC_GetSyncPhaseEpochMs();
+            MAC_GetSyncPhaseDate(&pkt.day, &pkt.month, &pkt.year);
+            pkt.sync_phase_index = (uint8_t)s_cursor.phase_index;
+            pkt.sync_cell_index  = (uint8_t)s_cursor.cell_index;
             s_platform.RadioSend((const uint8_t *)&pkt, (uint8_t)sizeof(pkt));
             uint32_t actual_toa = s_platform.RadioTimeOnAir();
             ComplianceEngine_ReportTxDone(freq_hz, actual_toa);
@@ -300,5 +304,28 @@ void TdmaMachine_SlotTask(void)
     s_platform.ProgramAlarmA(alarm_ms);
 }
 
-FrameCursor_t TdmaMachine_GetCursor(void)  { return s_cursor;          }
+void TdmaMachine_BootstrapFromSync(uint8_t  sync_phase_idx,
+                                    uint8_t  sync_cell_idx,
+                                    uint32_t slot_start_ms)
+{
+    s_cursor.phase_index = sync_phase_idx;
+    s_cursor.cell_index  = sync_cell_idx;
+    s_cursor.slot_index  = 0u;
+    s_slot_idx           = 0u;
+    s_slot_pos           = SLOT_POS_CELL;
+    s_slot_start_ms      = slot_start_ms;
+    s_cursor_suspect     = false;
+
+    const Phase_t *phase = TdmaTable_GetPhase(sync_phase_idx);
+    if (phase != NULL) {
+        uint32_t next_ms = slot_start_ms + phase->slot_active_ms
+                           + phase->gap_slots_ms[s_slot_idx];
+        advance_cursor(phase);
+        s_slot_start_ms    = next_ms;
+        s_expected_wake_ms = next_ms;
+        s_platform.ProgramAlarmA(next_ms);
+    }
+}
+
+FrameCursor_t TdmaMachine_GetCursor(void)       { return s_cursor;          }
 bool          TdmaMachine_IsCursorSuspect(void) { return s_cursor_suspect; }

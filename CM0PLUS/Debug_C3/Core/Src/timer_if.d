@@ -44,7 +44,8 @@ Core/Src/timer_if.o: ../Core/Src/timer_if.c ../Core/Inc/timer_if.h \
  ../../Utilities/misc/stm32_tiny_vsnprintf.h ../MbMux/mbmuxif_trace.h \
  ../MbMux/mbmux.h ../../Common/MbMux/mbmux_table.h \
  ../../Common/MbMux/features_info.h ../Core/Inc/utilities_def.h \
- ../../Utilities/misc/stm32_systime.h ../Core/Inc/rtc.h \
+ ../../Utilities/misc/stm32_systime.h \
+ ../../Common/Protocol/protocol_types.h ../Core/Inc/rtc.h \
  ../Core/Inc/main.h
 ../Core/Inc/timer_if.h:
 ../../Utilities/timer/stm32_timer.h:
@@ -97,5 +98,6 @@ Core/Src/timer_if.o: ../Core/Src/timer_if.c ../Core/Inc/timer_if.h \
 ../../Common/MbMux/features_info.h:
 ../Core/Inc/utilities_def.h:
 ../../Utilities/misc/stm32_systime.h:
+../../Common/Protocol/protocol_types.h:
 ../Core/Inc/rtc.h:
 ../Core/Inc/main.h:

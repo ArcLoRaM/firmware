@@ -8,11 +8,12 @@ void tearDown(void) {}
 
 /* --- SyncPayload layout ------------------------------------------------- */
 
-void test_sync_payload_is_11_bytes(void)
+void test_sync_payload_is_10_bytes(void)
 {
-    /* On-wire format must be exactly 11 bytes (packed, no padding).
-     * If this fails, __attribute__((packed)) was lost or a field was added. */
-    TEST_ASSERT_EQUAL(11u, sizeof(SyncPayload_t));
+    /* 1+4+1+1+1+1+1 = 10 bytes packed.
+     * packet_type_id(1) + ms_since_midnight_sync_phase(4)
+     * + day(1) + month(1) + year(1) + sync_phase_index(1) + sync_cell_index(1). */
+    TEST_ASSERT_EQUAL(10u, sizeof(SyncPayload_t));
 }
 
 /* --- AlarmBRequest layout ----------------------------------------------- */
@@ -33,7 +34,7 @@ void test_alarm_b_request_is_12_bytes(void)
 int main(void)
 {
     UNITY_BEGIN();
-    RUN_TEST(test_sync_payload_is_11_bytes);
+    RUN_TEST(test_sync_payload_is_10_bytes);
     RUN_TEST(test_alarm_b_request_pending_is_at_offset_zero);
     RUN_TEST(test_alarm_b_request_is_12_bytes);
     return UNITY_END();

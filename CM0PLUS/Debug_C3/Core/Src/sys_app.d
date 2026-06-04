@@ -48,7 +48,8 @@ Core/Src/sys_app.o: ../Core/Src/sys_app.c ../Core/Inc/platform.h \
  ../../Utilities/sequencer/stm32_seq.h \
  ../../Utilities/misc/stm32_systime.h \
  ../../Utilities/lpm/tiny_lpm/stm32_lpm.h ../Core/Inc/timer_if.h \
- ../../Utilities/timer/stm32_timer.h ../Core/Inc/utilities_def.h \
+ ../../Utilities/timer/stm32_timer.h \
+ ../../Common/Protocol/protocol_types.h ../Core/Inc/utilities_def.h \
  ../../Common/MbMux/msg_id.h ../MbMux/mbmuxif_sys.h \
  ../MbMux/mbmuxif_radio.h ../../Common/MbMux/features_info.h \
  ../Core/Inc/stm32_lpm_if.h
@@ -108,6 +109,7 @@ Core/Src/sys_app.o: ../Core/Src/sys_app.c ../Core/Inc/platform.h \
 ../../Utilities/lpm/tiny_lpm/stm32_lpm.h:
 ../Core/Inc/timer_if.h:
 ../../Utilities/timer/stm32_timer.h:
+../../Common/Protocol/protocol_types.h:
 ../Core/Inc/utilities_def.h:
 ../../Common/MbMux/msg_id.h:
 ../MbMux/mbmuxif_sys.h:

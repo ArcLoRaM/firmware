@@ -31,7 +31,7 @@ extern "C" {
 #include "stm32_systime.h"
 
 /* USER CODE BEGIN Includes */
-
+#include "protocol_types.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -161,7 +161,13 @@ void TIMER_IF_BkUp_Write_SubSeconds(uint32_t SubSeconds);
 uint32_t TIMER_IF_BkUp_Read_SubSeconds(void);
 
 /* USER CODE BEGIN EFP */
-
+/**
+ * @brief Read the live RTC calendar into a FrameEpoch_t using BCD format.
+ * @note  Useful for relay TX (fill SyncPayload directly) and post-set diagnostics.
+ *        Calendar fields are BCD; subseconds is raw SSR (binary, counts DOWN from PREDIV_S).
+ * @param[out] out  Destination struct — must not be NULL.
+ */
+void RTC_GetCalendarBcd(FrameEpoch_t *out);
 /* USER CODE END EFP */
 
 #ifdef __cplusplus

@@ -6,5 +6,6 @@
 ../SubGHz_Phy/Logic/tdma_machine.c:164:13:next_slot_is_rx	2
 ../SubGHz_Phy/Logic/tdma_machine.c:176:6:TdmaMachine_Init	3
 ../SubGHz_Phy/Logic/tdma_machine.c:192:6:TdmaMachine_SlotTask	10
-../SubGHz_Phy/Logic/tdma_machine.c:303:15:TdmaMachine_GetCursor	1
-../SubGHz_Phy/Logic/tdma_machine.c:304:15:TdmaMachine_IsCursorSuspect	1
+../SubGHz_Phy/Logic/tdma_machine.c:307:6:TdmaMachine_BootstrapFromSync	2
+../SubGHz_Phy/Logic/tdma_machine.c:330:15:TdmaMachine_GetCursor	1
+../SubGHz_Phy/Logic/tdma_machine.c:331:15:TdmaMachine_IsCursorSuspect	1

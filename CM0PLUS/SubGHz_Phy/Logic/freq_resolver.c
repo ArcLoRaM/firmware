@@ -17,6 +17,7 @@
  *
  */
 #include "freq_resolver.h"
+#include <assert.h>
 
 static const FrequencyResolverState_t *s_state = NULL;
 
@@ -42,8 +43,16 @@ uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor, SlotPosition_t p
 
     case SLOT_POS_CELL:
         switch (pf->cell_mode) {
-        case CELL_FREQ_STATIC:
-            return pf->cell.static_freq_hz;
+        case CELL_FREQ_STATIC: {
+            uint32_t freq = pf->cell.static_freq_hz;
+            if (freq == 0u) {
+#if !defined(NDEBUG) && !defined(HOST_TEST)
+                assert(0); /* CM4 has not populated g_freq_resolver_state yet */
+#endif
+                return FREQ_FALLBACK_HZ;
+            }
+            return freq;
+        }
 
         case CELL_FREQ_HOP:
             return 0u;  /* deferred */

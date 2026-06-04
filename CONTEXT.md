@@ -247,7 +247,7 @@ opportunity boundaries.
 | State | Applies to | Condition | Radio behaviour |
 |---|---|---|---|
 | `Scanning` | C1, C2 | No sync established (`ClockState = CLOCK_COLD` or `CLOCK_ACQUIRING`). Boot default for C1/C2. | Continuous wide RX. No TX. Listening for Sync packets only. |
-| `Synchronized` | C1, C2 | Three Sync packets received, preamble offset error below threshold (`ClockState = CLOCK_WARM`). Seeking peers — discovery behaviour is implied, not a separate state. | Listens on known frame boundaries. Attempts cluster join or mesh peer exchange. No data TX. |
+| `Synchronized` | C1, C2 | Two consecutive Sync packets with preamble error below `SYNC_PARTICIPATE_THRESHOLD_MS` after initial RTC set (`ClockState = CLOCK_WARM`). Seeking peers — discovery behaviour is implied, not a separate state. | Listens on known frame boundaries. Attempts cluster join or mesh peer exchange. No data TX. |
 | `Active` | C3 | Boot default for C3. C3 is the SyncAnchor — it requires no sync acquisition. Immediately operational: transmitting Sync packets, listening for peer connections. | Follows TDMA Table (C3 slot pattern). Originates Sync packets. Accepts mesh and cluster connections. |
 | `Paired` | C1, C2, C3 | C1/C2: connected to cluster master or mesh backbone. C3: at least one node (C2 or C1) is connected. | Full TDMA schedule: TX from phase-specific buffers when non-empty. |
 
@@ -278,18 +278,20 @@ struct FrameCursor {
 };
 ```
 
-### Frame Epoch
-The absolute timestamp of the current Frame's start. Set or corrected when a
-`Mesh_Beacon` or `Sync` packet is received. All Frame Cursor time computations
-are relative to the Frame Epoch. Nodes that miss a beacon drift until the next
-one corrects it.
+### Sync Phase Epoch
+The absolute timestamp of the **start of the current Sync Phase occurrence**
+(not the frame start). Carried in `SyncPayload_t` and used by receivers to set
+their RTC and anchor the binary-ms clock-error computation.
 
-Stored as raw RTC fields in `RTC_BINARY_NONE` mode — BCD calendar plus raw
-SubSeconds SSR (counts **down** from `PREDIV_S`). Never converted to a flat
-integer; arithmetic uses the SubSeconds formula:
-`ss_ms = (PREDIV_S − SubSeconds) × 1000 / (PREDIV_S + 1)`.
-With `PREDIV_S = 4095` (see ADR-0009), one SSR tick = 244 µs — the finest
-achievable sync correction granularity for this node.
+`Frame Epoch` (frame start) is an internal TDMA Machine concept only, derived
+when needed as:
+`frame_epoch_ms = sync_phase_epoch_ms − TdmaTable_PhaseStartOffset_ms(sync_phase_index)`
+
+**Time-format boundary.** BCD calendar fields live in HAL call sites
+(`HAL_RTC_SetTime` / `HAL_RTC_GetTime`). All MAC timing arithmetic —
+elapsed-ms, expected-offset, clock-error — operates in binary milliseconds via
+`GetTimerTicks()` (`CM0PLUS/Core/Src/timer_if.c`). The boundary is the HAL
+call site in `subghz_phy_task.c`.
 
 ---
 
@@ -301,34 +303,46 @@ Sole time authority for the network. All other nodes derive their wall-clock tim
 from the SyncAnchor transitively through relay hops.
 
 ### SyncPayload
-The on-wire payload of a sync packet. Carries the `FrameEpoch` plus a
-`sync_slot_index` field. Relay nodes forward the struct verbatim except for
-incrementing `sync_slot_index`.
+The on-wire payload of a sync packet. Carries the Sync Phase Epoch as a single
+binary millisecond field plus BCD date, `sync_phase_index`, and `sync_cell_index`.
+C3 generates the epoch; C2 relays C3's received epoch verbatim (never self-generates).
 
 ```c
-typedef struct {
-    uint8_t  hours;           /* BCD 00–23 */
-    uint8_t  minutes;         /* BCD 00–59 */
-    uint8_t  seconds;         /* BCD 00–59 */
-    uint32_t subseconds;      /* Raw SSR (counts DOWN from PREDIV_S) */
-    uint8_t  day;             /* BCD 01–31 */
-    uint8_t  month;           /* BCD 01–12 */
-    uint8_t  year;            /* BCD 00–99, years since 2000 */
-    uint8_t  sync_slot_index; /* 0 = SyncAnchor, 1 = first relay, … */
-} SyncPayload;                /* 11 bytes */
+typedef struct __attribute__((packed)) {
+    uint8_t  packet_type_id;               /* Packet type discriminator */
+    uint32_t ms_since_midnight_sync_phase; /* Sync phase start time, binary ms,
+                                              range 0–86,399,999. C3: GetTimerTicks()
+                                              at phase entry. Receiver: target_ms =
+                                              this + sync_cell_index × per_cell_ms;
+                                              decompose → H:M:S for HAL_RTC_SetTime. */
+    uint8_t  day;                          /* BCD 01–31 */
+    uint8_t  month;                        /* BCD 01–12 */
+    uint8_t  year;                         /* BCD 00–99, years since 2000 */
+    uint8_t  sync_phase_index;             /* TDMA Table phase index of this Sync Phase.
+                                              Receiver uses it to look up per_cell_ms
+                                              and bootstrap the FrameCursor correctly
+                                              in multi-Sync-phase frames. */
+    uint8_t  sync_cell_index;              /* Cell within this Sync Phase (0-based).
+                                              Receiver: target_ms = ms_since_midnight_sync_phase
+                                              + sync_cell_index × per_cell_ms. */
+} SyncPayload_t;                           /* 10 bytes */
 ```
 
-### sync_slot_index
-Index of the TDMA Slot within the Sync Phase in which this packet was transmitted.
-Under concurrent transmission, all participating C2 and C3 nodes transmitting in
-the same Slot stamp the same `sync_slot_index` — it is not a hop-depth counter.
-The receiver uses this field to compute the expected preamble arrival offset from
-Frame Epoch regardless of which concurrent transmitter's signal was captured:
+### sync_cell_index
+Index of the Cell within the Sync Phase in which this packet was transmitted (renamed
+from `sync_slot_index`). Under concurrent transmission, all C2/C3 nodes in the same
+Cell stamp the same `sync_cell_index`. The receiver uses this field together with
+`ms_since_midnight_sync_phase` to compute the expected preamble arrival time:
 
 ```
-expected_offset_ms = preceding_phases_ms
-                   + sync_slot_index × (sync_slot_active_ms + sync_slot_gap_ms)
+expected_arrival_ms = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms
 ```
+
+**Known limitation — midnight rollover:** If `expected_arrival_ms ≥ 86,400,000`,
+the BCD date in the payload is from the previous day and the date must be advanced
+by one day. This requires calendar arithmetic (variable month lengths, leap years).
+`HAL_RTC_DST_Add1Hour` handles this complexity natively; advancing 24 hours avoids
+manual BCD arithmetic. Deferred to a future issue.
 
 ### CT Sync Propagation Model
 Sync packets are propagated via **Concurrent Transmission (CT)**: every eligible
@@ -343,11 +357,11 @@ the preamble-locking failure ceiling (~100 ms, 3·T_S).
 for Sync: C2 + C3 transmit (all concurrently), C1 RX-only. Sync Phase airtime is
 `1 × packet_length` regardless of network depth.
 
-**C2 audit cycles**: C2 nodes alternate between participation cycles (CT
-retransmission) and audit cycles (RX-only, no retransmission). On an audit cycle
-the C2 captures the upstream-originated sync normally and measures its local drift
-without self-interference. Starting ratio: 1 audit per participation cycle (0.5).
-The MAC State Machine tracks the cycle counter; no TDMA Table change is required.
+**C2 sync relay model**: C2 always receives Cell 0 of every Sync Phase occurrence
+to capture C3's epoch, then relays it in Cells 1+ if the measured error is below
+`SYNC_PARTICIPATE_THRESHOLD_MS`. C2 never self-generates an epoch; it only forwards
+what it receives from C3. Three-tier per-occurrence dispatch (see Sync Algorithm)
+replaces the former audit/participate cycle alternation.
 
 **Variable TX power**: C2 nodes use differentiated TX power across participants to
 provide power offset at receivers near the equidistant-failure zone. Policy
@@ -370,31 +384,36 @@ Three-value enum tracking RTC synchronisation quality.
 |---|---|
 | `CLOCK_COLD` | No Sync packet received. Boot default. MAC State Machine is in `Scanning`. |
 | `CLOCK_ACQUIRING` | At least one Sync packet processed. RTC partially calibrated; sub-second precision not yet confirmed. |
-| `CLOCK_WARM` | Three Sync packets received with preamble offset error below `SYNC_LOCK_THRESHOLD_MS`. Node is fully Synchronized. |
+| `CLOCK_WARM` | Two consecutive Sync packets with preamble offset error below `SYNC_PARTICIPATE_THRESHOLD_MS = 8ms` (after initial RTC set on Packet 1). Node is fully Synchronized. |
 
 ### Sync Algorithm — summary
 
-Synchronisation requires three consecutive Sync packets to reach `CLOCK_WARM`.
+**Acquisition (CLOCK_COLD → CLOCK_WARM):** requires 1 RTC-set packet + 2 consecutive
+good packets (error below `SYNC_PARTICIPATE_THRESHOLD_MS = 8ms`).
 
-**Packet 1 (`CLOCK_COLD` → `CLOCK_ACQUIRING`):** parse `SyncPayload` → call
-`HAL_RTC_SetTime` / `HAL_RTC_SetDate` with BCD fields directly (no conversion) →
-set Frame Cursor to start of `Sync` Phase → `ClockState = CLOCK_ACQUIRING`.
-Sub-second precision is lost; cursor is approximate.
+**Packet 1 (`CLOCK_COLD` → `CLOCK_ACQUIRING`):** parse `SyncPayload` →
+`target_ms = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms` →
+call `HAL_RTC_SetTime(BIN: H=ms/3600000, M=(ms%3600000)/60000, S=(ms%60000)/1000)` +
+`HAL_RTC_SetDate(BCD: day, month, year)` → read `GetTimerTicks()` in new RTC domain →
+`s_sync_phase_ms = rtc_now − sync_cell_index × per_cell_ms` (phase start in new RTC) →
+call `sync_bootstrapped` hook to re-anchor TDMA cursor → `s_sync_consecutive = 0`,
+`ClockState = CLOCK_ACQUIRING`.
 
-**Packet 2 (`CLOCK_ACQUIRING`, internal count = 1):** capture `PreambleStamp` in
-DIO1 ISR → parse `SyncPayload` → compute sub-second deviation:
-`elapsed_ms = rtc_to_ms(PreambleStamp) − rtc_to_ms(FrameEpoch)` → align RTC
-sub-second register. Frame Cursor now accurate to sub-second.
+**Packets 2+ (`CLOCK_ACQUIRING`):** capture `PreambleStamp` in DIO1 ISR →
+`expected_arrival = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms` →
+`clock_error = |preamble_ts − expected_arrival|`.
+If `clock_error < SYNC_PARTICIPATE_THRESHOLD_MS (8ms)`: `s_sync_consecutive++`;
+if `s_sync_consecutive ≥ 2`: `ClockState = CLOCK_WARM`, MAC transitions to
+`Synchronized`. If `clock_error ≥ 8ms`: `s_sync_consecutive = 0` (reset).
 
-**Packet 3 (`CLOCK_ACQUIRING`, internal count = 2):** capture `PreambleStamp` →
-compute `clock_error_ms` from `expected_offset_ms` → if
-`clock_error_ms < SYNC_LOCK_THRESHOLD_MS`: `ClockState = CLOCK_WARM`, MAC State
-Machine transitions to `Synchronized`. Otherwise remain `CLOCK_ACQUIRING` and
-wait for the next Sync packet.
+**CLOCK_WARM ongoing check (three-tier per Sync Phase occurrence):**
+C2 always receives Cell 0 to measure error against the incoming epoch:
+- **Tier 1 — error < 8ms:** relay in Cells 1+ (store `ms_since_midnight_sync_phase` for TX).
+- **Tier 2 — 8ms ≤ error < 300ms:** SSR-only correction via `HAL_RTCEx_SetSynchroShift`
+  (shift_ticks = error_ms × (PREDIV_S + 1) / 1000); receive only this occurrence.
+- **Tier 3 — error ≥ 300ms:** full `HAL_RTC_SetTime` re-anchor; `ClockState = CLOCK_COLD`.
 
-**Sync loss:** if RTC drift exceeds threshold or too many consecutive Sync packets
-are missed, `ClockState` resets to `CLOCK_COLD` and the MAC State Machine returns
-to `Scanning`. The full three-packet acquisition loop must restart.
+Constants: `SYNC_PARTICIPATE_THRESHOLD_MS = 8` · `SYNC_RESYNC_THRESHOLD_MS = 300`.
 
 ---
 
@@ -664,13 +683,14 @@ anchor all C2 nodes depend on — suppressing it would be a protocol hazard.
 
 ### phase_tx_flag
 Shared memory value written by the MAC State Machine before each `Sync` phase.
-Used exclusively in `DIRECTION_MAC_PHASE` phases. A `uint8_t` flag:
-`1` = Tx every cell (participation cycle), `0` = Rx every cell (audit cycle).
-The TDMA Machine reads it once at phase entry; the direction is uniform across
-all cells in the phase.
+Used exclusively in `DIRECTION_MAC_PHASE` phases. A `uint8_t` flag indicating
+whether this node intends to relay in this Sync Phase occurrence.
 
-The MAC tracks the audit cycle counter and sets the flag accordingly before each
-Sync phase. C3 (SyncAnchor) always writes `1`. C1 always writes `0` (Rx-only).
+C3 (SyncAnchor) always writes `1` (transmits every cell). C1 always writes `0`
+(Rx-only). C2 no longer pre-writes this flag — C2 participation is determined
+reactively per-occurrence based on the three-tier error check on Cell 0. The
+TDMA Machine guard-time look-ahead treats C2 Sync phases conservatively as RX
+(`flag = 0`) since participation is unknown until Cell 0 is received.
 
 ---
 

@@ -81,24 +81,63 @@
  */
 typedef struct {
     /*!
-     * Packet 1 hook — set the RTC calendar from BCD fields decoded from
-     * the SyncPayload.  Sub-second accuracy is not yet established at this
-     * point; the call only coarsely aligns the calendar.
+     * Packet 1 hook — set the RTC from a pre-computed binary target time.
+     *
+     * \param target_ms  ms-since-midnight of the current cell's nominal start:
+     *                   ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms.
+     *                   Caller decomposes: H = ms/3600000, M = (ms%3600000)/60000,
+     *                   S = (ms%60000)/1000; calls HAL_RTC_SetTime(BIN) + SetDate(BCD).
+     * \param day        BCD day 01–31 (pass-through from SyncPayload).
+     * \param month      BCD month 01–12.
+     * \param year       BCD year 00–99 (years since 2000).
      */
-    void (*rtc_set)(uint8_t hours, uint8_t minutes, uint8_t seconds,
-                    uint8_t day,   uint8_t month,   uint8_t year,
-                    uint32_t subseconds);
+    void (*rtc_set)(uint32_t target_ms,
+                    uint8_t  day, uint8_t month, uint8_t year);
 
     /*!
-     * Packet 2 hook — align the RTC sub-second register.
-     * \c preamble_timestamp_ms is the captured preamble arrival time;
-     * \c expected_offset_ms is the computed expected offset from the
-     * Frame Epoch for that sync_slot_index.
+     * Tier 2 drift correction hook — CLOCK_WARM, 8ms ≤ error < 300ms.
+     *
+     * \details Applies HAL_RTCEx_SetSynchroShift without a full calendar
+     *          re-anchor. Must not block. Called only from
+     *          \ref MAC_OnSyncPacketReceived. Relay is suppressed for this
+     *          sync occurrence regardless of the return path.
+     *
+     * \param preamble_timestamp_ms  DIO1 ISR timestamp (GetTimerTicks domain).
+     * \param expected_offset_ms     ms_since_midnight_sync_phase +
+     *                               sync_cell_index × per_cell_ms.
      */
     void (*rtc_align_subsecond)(uint32_t preamble_timestamp_ms,
                                  uint32_t expected_offset_ms);
 
-    /*! Fired when ClockState transitions to CLOCK_WARM (third valid packet). */
+    /*!
+     * Atomic snapshot of the current RTC time and date.
+     *
+     * \details Called at Sync Phase entry (C3/C2 TX path) to capture the epoch
+     *          for the outgoing SyncPayload, and immediately after \c rtc_set
+     *          (C2 Packet 1 path) to read the new RTC domain. A single call
+     *          avoids the race where two separate reads straddle midnight.
+     *
+     * \param[out] ms    GetTimerTicks() — ms since midnight in new RTC domain.
+     * \param[out] day   BCD day 01–31.
+     * \param[out] month BCD month 01–12.
+     * \param[out] year  BCD year 00–99.
+     */
+    void (*get_rtc_snapshot)(uint32_t *ms,
+                              uint8_t  *day, uint8_t *month, uint8_t *year);
+
+    /*!
+     * Packet 1 hook — called after the TDMA cursor has been re-anchored.
+     *
+     * \param sync_phase_idx  Phase index from \c SyncPayload.sync_phase_index.
+     * \param sync_cell_idx   Cell index from \c SyncPayload.sync_cell_index.
+     * \param slot_start_ms   Nominal start of the received cell in the new
+     *                        RTC domain (= \c get_rtc_snapshot ms value).
+     */
+    void (*sync_bootstrapped)(uint8_t  sync_phase_idx,
+                               uint8_t  sync_cell_idx,
+                               uint32_t slot_start_ms);
+
+    /*! Fired when ClockState transitions to CLOCK_WARM (2 consecutive good packets). */
     void (*sync_locked)(void);
 
     /*! Fired when ClockState degrades back to CLOCK_COLD. */
@@ -212,11 +251,44 @@ CellEligibilityMask_t MAC_GetCellEligibilityMask_Downlink(void);
 /*!
  * \brief   Return the phase_tx_flag last written by the MAC.
  *
- * \details Written at Sync phase entry. 1 = TX (participation cycle),
- *          0 = RX (audit cycle).
+ * \details C3: always 1. C1: always 0. C2: not pre-written (reactive model).
  *
  * \retval  \ref PhaseTxFlag_t Current flag value.
  */
 PhaseTxFlag_t MAC_GetPhaseTxFlag(void);
+
+/*!
+ * \brief   Return the Sync Phase start time (binary ms) in the current RTC domain.
+ *
+ * \details Set on Packet 1: \c get_rtc_snapshot().ms − sync_cell_index × per_cell_ms.
+ *          Valid after \ref MAC_OnSyncPacketReceived with \c CLOCK_COLD.
+ *          Used for CLOCK_ACQUIRING elapsed-ms error computation.
+ *
+ * \retval  uint32_t Phase start in ms-since-midnight (current RTC domain).
+ */
+uint32_t MAC_GetSyncPhaseMs(void);
+
+/*!
+ * \brief   Return the Sync Phase Epoch captured for TX relay.
+ *
+ * \details C3: \c get_rtc_snapshot().ms captured at Sync Phase entry.
+ *          C2: \c ms_since_midnight_sync_phase received in Cell 0 (Tier 1 only).
+ *          Written into the outgoing \c SyncPayload_t.ms_since_midnight_sync_phase.
+ *
+ * \retval  uint32_t ms_since_midnight_sync_phase for the current occurrence.
+ */
+uint32_t MAC_GetSyncPhaseEpochMs(void);
+
+/*!
+ * \brief   Return the BCD date captured at Sync Phase entry.
+ *
+ * \details Populated by \c get_rtc_snapshot at phase entry (C3) or by the
+ *          received SyncPayload date fields (C2 relay).
+ *
+ * \param[out] day   BCD day 01–31.
+ * \param[out] month BCD month 01–12.
+ * \param[out] year  BCD year 00–99.
+ */
+void MAC_GetSyncPhaseDate(uint8_t *day, uint8_t *month, uint8_t *year);
 
 #endif /* MAC_STATE_MACHINE_H */

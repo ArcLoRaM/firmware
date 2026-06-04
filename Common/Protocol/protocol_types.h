@@ -206,25 +206,38 @@ typedef struct {
  * ========================================================================= */
 
 /*!
- * \brief   On-wire payload of a Sync packet — 11 bytes.
+ * \brief   On-wire payload of a Sync packet — 10 bytes.
  *
- * \details Packed to avoid the 1-byte alignment padding that the compiler
- *          would insert between \c seconds (uint8_t) and \c subseconds
- *          (uint32_t). This is an on-wire format struct; always \c memcpy
- *          \c subseconds into a local \c uint32_t before performing
- *          arithmetic on CM0+ (no hardware unaligned-load support).
+ * \details Packed to ensure no padding between the uint32_t time field and its
+ *          neighbours. This is an on-wire format struct; always \c memcpy the
+ *          \c ms_since_midnight_sync_phase field into a local \c uint32_t before
+ *          arithmetic on CM0+ (no hardware unaligned-load support at odd offsets).
+ *
+ *          C3 is the sole epoch authority: it writes \c GetTimerTicks() into
+ *          \c ms_since_midnight_sync_phase at Sync Phase entry. C2 relays C3's
+ *          received value verbatim — it never self-generates an epoch.
+ *
+ *          Receiver Packet 1 path:
+ *            target_ms = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms
+ *            H = target_ms / 3600000;  M = (target_ms % 3600000) / 60000;
+ *            S = (target_ms % 60000) / 1000;
+ *            HAL_RTC_SetTime(BIN: H, M, S) + HAL_RTC_SetDate(BCD: day, month, year)
+ *
+ *          See ADR-0005 and CONTEXT.md — Sync Algorithm.
  */
 typedef struct __attribute__((packed)) {
-    uint8_t  hours;           /*!< BCD 00–23. */
-    uint8_t  minutes;         /*!< BCD 00–59. */
-    uint8_t  seconds;         /*!< BCD 00–59. */
-    uint32_t subseconds;      /*!< Raw SSR (counts DOWN from PREDIV_S). */
-    uint8_t  day;             /*!< BCD 01–31. */
-    uint8_t  month;           /*!< BCD 01–12. */
-    uint8_t  year;            /*!< BCD 00–99, years since 2000. */
-    uint8_t  sync_slot_index; /*!< TDMA Slot index within the Sync Phase.
-                                *  0 = SyncAnchor, incremented by each relay. */
-} SyncPayload_t;              /* 11 bytes */
+    uint8_t  packet_type_id;               /*!< Packet type discriminator. */
+    uint32_t ms_since_midnight_sync_phase; /*!< Sync Phase start time, binary ms,
+                                             *  range 0–86,399,999. */
+    uint8_t  day;                          /*!< BCD 01–31. */
+    uint8_t  month;                        /*!< BCD 01–12. */
+    uint8_t  year;                         /*!< BCD 00–99, years since 2000. */
+    uint8_t  sync_phase_index;             /*!< TDMA Table phase index of this Sync
+                                             *  Phase — used to look up per_cell_ms
+                                             *  and bootstrap the FrameCursor. */
+    uint8_t  sync_cell_index;              /*!< Cell within the Sync Phase (0-based).
+                                             *  Renamed from sync_slot_index. */
+} SyncPayload_t;                           /* 10 bytes: 1+4+1+1+1+1+1 */
 
 /*!
  * \brief   Beacon payload written by CM4, read by CM0+ once per
