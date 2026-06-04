@@ -42,7 +42,15 @@
       "Bash(ctest --test-dir build -V)",
       "Bash(cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug)",
       "Bash(cmake --build build --target test_rtc_ssr)",
-      "Bash(ctest --test-dir build -R test_rtc_ssr -V)"
+      "Bash(ctest --test-dir build -R test_rtc_ssr -V)",
+      "Bash(cmake .. -DCMAKE_BUILD_TYPE=Debug -G \"MinGW Makefiles\")",
+      "Bash(cmake --build . --target test_tdma_machine_c2)",
+      "Bash(ctest -R \"test_tdma_machine_c2$\" -V)",
+      "Bash(cmake --build . --target test_tdma_machine_c2_2sync)",
+      "Bash(ctest -R \"test_tdma_machine_c2\" -V)",
+      "Bash(cmake --build .)",
+      "Bash(ctest -V)",
+      "Bash(ctest)"
     ]
   }
 }

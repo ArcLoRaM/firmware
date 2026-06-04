@@ -114,6 +114,16 @@ add_unity_test(test_tdma_machine_c1
 )
 target_compile_definitions(test_tdma_machine_c1 PRIVATE NODE_CLASS=1)
 
+add_unity_test(test_tdma_machine_c2_2sync
+    test_tdma_machine_c2_2sync.c
+    stub_tdma_table_2sync.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/tdma_machine.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/mac_state_machine_c2.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/freq_resolver.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+)
+target_compile_definitions(test_tdma_machine_c2_2sync PRIVATE NODE_CLASS=2)
+
 add_unity_test(test_cm4_diag
     test_cm4_diag.c
     ../../CM4/SubGHz_Phy/Logic/cm4_diag.c

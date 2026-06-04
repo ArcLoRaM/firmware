@@ -331,6 +331,39 @@ void test_bootstrap_next_alarm_accounts_for_received_cell(void)
     TEST_ASSERT_EQUAL(6000u, s_alarm_programmed);
 }
 
+void test_bootstrap_cell0_cursor_at_cell1(void)
+{
+    /* Receive Packet 1 at cell 0, slot_start=0 → cursor must advance to cell 1. */
+    TdmaMachine_BootstrapFromSync(0u, 0u, 0u);
+    TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().phase_index);
+    TEST_ASSERT_EQUAL(1u, TdmaMachine_GetCursor().cell_index);
+}
+
+void test_bootstrap_cell0_alarm_one_step(void)
+{
+    /* Receive at cell 0, slot_start=0 → alarm = 0 + slot_active_ms + gap = 3000. */
+    TdmaMachine_BootstrapFromSync(0u, 0u, 0u);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS, s_alarm_programmed);
+}
+
+void test_bootstrap_last_cell_cursor_wraps(void)
+{
+    /* Receive at cell 2 (last cell of 3-cell Sync phase), slot_start=6000.
+     * advance_cursor wraps to {0,0,0}: only 1 phase in table → frame wrap. */
+    TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
+    TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().phase_index);
+    TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().cell_index);
+}
+
+void test_bootstrap_last_cell_alarm_one_step(void)
+{
+    /* Receive at cell 2, slot_start=6000.
+     * Correct: alarm = 6000 + 3000 = 9000 (next frame cell-0 start).
+     * Wrong "full frame": slot_start + frame_duration = 6000 + 9000 = 15000. */
+    TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
+    TEST_ASSERT_EQUAL(6000u + SLOT_STEP_MS, s_alarm_programmed);
+}
+
 void test_sync_tx_payload_fields_match_cursor(void)
 {
     /* C2 can only TX at cells 1+ after receiving epoch at cell 0.
@@ -377,6 +410,10 @@ int main(void)
     RUN_TEST(test_cursor_suspect_on_implausible_delta);
     RUN_TEST(test_bootstrap_cursor_positioned_at_next_cell);
     RUN_TEST(test_bootstrap_next_alarm_accounts_for_received_cell);
+    RUN_TEST(test_bootstrap_cell0_cursor_at_cell1);
+    RUN_TEST(test_bootstrap_cell0_alarm_one_step);
+    RUN_TEST(test_bootstrap_last_cell_cursor_wraps);
+    RUN_TEST(test_bootstrap_last_cell_alarm_one_step);
     RUN_TEST(test_sync_tx_payload_fields_match_cursor);
     return UNITY_END();
 }
