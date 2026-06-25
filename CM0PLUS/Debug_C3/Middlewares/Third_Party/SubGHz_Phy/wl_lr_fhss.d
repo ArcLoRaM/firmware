@@ -1,7 +1,7 @@
 Middlewares/Third_Party/SubGHz_Phy/wl_lr_fhss.o: \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/wl_lr_fhss.c \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/wl_lr_fhss.h \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_driver.h \
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/wl_lr_fhss.c \
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/wl_lr_fhss.h \
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_driver.h \
  ../SubGHz_Phy/Target/radio_conf.h ../Core/Inc/platform.h \
  ../../Drivers/CMSIS/Device/ST/STM32WLxx/Include/stm32wlxx.h \
  ../../Drivers/CMSIS/Device/ST/STM32WLxx/Include/stm32wl55xx.h \
@@ -49,11 +49,11 @@ Middlewares/Third_Party/SubGHz_Phy/wl_lr_fhss.o: \
  ../../Common/MbMux/features_info.h ../Core/Inc/utilities_def.h \
  ../SubGHz_Phy/Target/mw_log_conf.h ../SubGHz_Phy/Target/radio_board_if.h \
  ../Core/Inc/utilities_def.h ../MbMux/mbmuxif_sys.h \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/lr_fhss_mac.h \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_def.h \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/lr_fhss_v1_base_types.h
-C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/wl_lr_fhss.h:
-C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_driver.h:
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/lr_fhss_mac.h \
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_def.h \
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/lr_fhss_v1_base_types.h
+C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/wl_lr_fhss.h:
+C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_driver.h:
 ../SubGHz_Phy/Target/radio_conf.h:
 ../Core/Inc/platform.h:
 ../../Drivers/CMSIS/Device/ST/STM32WLxx/Include/stm32wlxx.h:
@@ -109,6 +109,6 @@ C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_P
 ../SubGHz_Phy/Target/radio_board_if.h:
 ../Core/Inc/utilities_def.h:
 ../MbMux/mbmuxif_sys.h:
-C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/lr_fhss_mac.h:
-C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_def.h:
-C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/lr_fhss_v1_base_types.h:
+C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/lr_fhss_mac.h:
+C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_def.h:
+C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/lr_fhss_v1_base_types.h:

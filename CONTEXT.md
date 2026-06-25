@@ -68,17 +68,49 @@ distinct from Radio State.
 
 ### Cell
 The repeating unit within a Phase. All Cells in a Phase are identical. A Phase
-is a sequence of `cell_count` identical Cells.
+is a sequence of `cell_count` identical Cells. A Cell contains one or more
+Slots (`slot_count`). When a Cell contains multiple Slots, the individual
+Slots may have different Radio States — see Cell Role.
 
 ### Slot
-The atomic radio access opportunity within a Cell. Each Slot corresponds to one
-complete exchange: a DATA+ACK pair, or a single packet (Beacon, Sync). Guard time
-is applied by the TDMA Machine — it is not a separate Slot type.
+The atomic radio access opportunity within a Cell — the only level at which the
+radio hardware is actually commanded to Tx, Rx, or Sleep. Each Slot corresponds
+to a single packet (Beacon, Sync, Data, or ACK). A Slot is *not* a complete
+exchange (e.g., Data + ACK). Guard time is applied by the TDMA Machine — it is
+not a separate Slot type.
+
+### Cell Role
+The logical characterization of what a node does during a Cell. Determined by
+the phase's `DirectionMode` and the MAC State Machine. Three values:
+
+| Role | Meaning |
+|---|---|
+| `Tx-role` | The node initiates a primary exchange (data, sync, or beacon transmission) in this Cell. |
+| `Rx-role` | The node receives a primary exchange in this Cell. |
+| `Skip` | The node sleeps through the Cell entirely — no Slot is active. |
+
+Cell Role is defined by the radio direction of the cell's primary exchange.
+When a Cell contains multiple Slots (e.g., a data packet followed by an
+acknowledgement), different Slots within the same Cell may have different
+Radio States. The MAC State Machine resolves each Slot's Radio State from
+the Cell Role and slot position.
+
+In a single-slot Cell (`slot_count = 1`), Cell Role and the Slot's Radio
+State coincide — which is why the two concepts are easily conflated.
+
+`DirectionMode` governs how Cell Role is assigned:
+- `DIRECTION_CELL_SKIP`: Cell Role derived from `CellEligibilityMask` +
+  hop-count residue. Cells whose eligibility bit is clear are Skip.
+- `DIRECTION_MAC_CELL`: MAC assigns Cell Role per-cell from internal state.
+  No cells are Skip — all are either Tx-role or Rx-role.
+- `DIRECTION_MAC_PHASE`: `phase_tx_flag` assigns the same Cell Role to
+  every Cell in the Phase.
 
 ### Slot Kind
 Qualifies how a Slot is accessed:
-- `SCHEDULED`: direction is predetermined — derived from `CellTxMask`,
-  `phase_tx_flag`, or `CellEligibilityMask` depending on the phase's `DirectionMode`.
+- `SCHEDULED`: the Cell Role is predetermined by the phase's `DirectionMode`
+  (via `phase_tx_flag`, `CellEligibilityMask`, or MAC-internal state). Each
+  Slot's Radio State follows from the Cell Role.
 - `CONTENTION`: any eligible node may attempt to transmit after channel sensing
   and random backoff. The MAC State Machine decides Tx vs Rx at runtime.
 
@@ -97,7 +129,7 @@ entirely. Absent when `duration_ms == 0`.
 
 ### Slot Active Duration
 A per-Phase field (`slot_active_ms`) representing the worst-case duration of one
-complete Slot exchange (DATA+ACK pair, or a single packet for Beacon/Sync Phases).
+ Slot.
 Actual airtime may be shorter as modulation parameters vary, but the alarm chain
 always uses `slot_active_ms` to guarantee no overlap. The next alarm is programmed
 as `slot_start + slot_active_ms + gap_after_ms[i]`.
@@ -107,8 +139,40 @@ The hardware operating state of the radio chip: `Tx | Rx | Sleep`.
 Maps directly to SX127X / STM32WL PHY states. A hardware-layer concept — not to be confused with Phase Type (MAC layer).
 
 ### Guard Time
-A global protocol constant (`GUARD_TIME_MS`). Not stored in the TDMA Table.
-Applied by the TDMA Machine: whenever a node enters Rx mode, it opens the receive window `GUARD_TIME_MS` before the nominal Slot start and holds it until `GUARD_TIME_MS` after the nominal end. Absorbs clock drift accumulated since the last Frame Epoch correction.
+A timing margin that absorbs RTC clock drift accumulated since the last Frame
+Epoch correction. Not stored in the TDMA Table.
+
+**Version 1** uses a global protocol constant (`GUARD_TIME_MS`). A dedicated
+module — the **Guard Time Resolver** (`GuardTimeResolver_GetGuardMs()`) —
+provides this value. The TDMA Machine calls it and applies it in two places:
+
+1. **Alarm look-ahead:** when programming the next RTC Alarm, if the TDMA
+   Machine predicts the next Slot will be Rx (via `next_slot_is_rx()`), it
+   subtracts `guard_ms` from the nominal alarm time — waking the node early.
+2. **Rx window extension:** `RadioSetRx(slot_active_ms + 2 × guard_ms)` —
+   the receive window opens `guard_ms` before nominal start and holds
+   `guard_ms` after nominal end.
+
+The Rx prediction (`next_slot_is_rx()`) covers all three DirectionModes:
+- `DIRECTION_MAC_PHASE`: reads `MAC_GetPhaseTxFlag()` — stable across phase
+  boundaries (C1 = 0, C3 = 1, C2 = 0 for look-ahead).
+- `DIRECTION_CELL_SKIP`: computes from `CellEligibilityMask` + `cell_index`;
+  selects uplink or downlink mask based on `phase->type`.
+- `DIRECTION_MAC_CELL`: `cell_index >= BEACON_K_TX_CELLS` → Rx; otherwise
+  conservatively assumes Tx (no look-ahead).
+
+Prediction inputs are stable across phase boundaries — no boundary
+special-casing is needed.
+
+The Tx node always transmits at nominal time (no guard adjustment on Tx side).
+The Rx guard must therefore absorb bilateral drift — both the local and the
+peer's RTC divergence from true time.
+
+**Version 2** (deferred) will replace the constant with a variable value based
+on estimated clock drift, duration without receiving synchronization, and
+possibly other factors. The single-value resolver interface
+(`GuardTimeResolver_GetGuardMs()`) may be split into separate alarm-advance
+and Rx-extension values if V2 requires decoupling them.
 
 ### TDMA Table
 The read-only schedule descriptor for one Frame. An ordered array of Phase structs.
@@ -137,7 +201,7 @@ struct Phase {
                                      // MAC_CELL: MAC holds internal per-phase Tx schedule; no shared memory write
                                      // MAC_PHASE: MAC writes phase_tx_flag (uint8_t)
 
-    uint8_t      cell_count;        // Cell repetitions in this Phase (0-32)
+    uint8_t       cell_count;        // Cell repetitions in this Phase (0-32)
     uint8_t       slot_count;        // Slots per Cell (1–16)
     uint32_t      slot_active_ms;    // worst-case duration of one Slot exchange
 
@@ -150,22 +214,23 @@ struct Phase {
 `DIRECTION_CELL_SKIP` applies to `Mesh_Uplink`, `Cluster_Exchange`, and
 `Mesh_Downlink` — per-cell eligibility depends on runtime state (hop count, Cell
 Permit). The TDMA Machine reads `CellEligibilityMask` from shared memory at each
-cell boundary; ineligible cells are slept entirely. The eligibility formula
-differs per phase: uplink uses the hop-count ascending pattern; downlink uses the
-mirror descending pattern (see Hop-Count Cell Eligibility).
+cell boundary; cells whose eligibility bit is clear are Skip. For eligible cells,
+the MAC assigns Cell Role from the hop-count residue formula: uplink uses the
+ascending pattern; downlink uses the mirror descending pattern (see Hop-Count
+Cell Eligibility).
 
 `DIRECTION_MAC_CELL` applies to `Mesh_Beacon` — the TDMA Machine wakes for
-**every** cell and passes the opportunity to the MAC. The MAC decides Tx or Rx
-entirely from internal state: at phase entry it randomly selects K cell indices
-(K is a provisioned constant) in which to transmit its `BeaconPayload`; all
-other cells are receive. No bitmap is written to shared memory. Random K-of-N
-selection ensures a node can discover peers at any hop depth — including same
-hop-count peers, which would never be heard under a deterministic mod-3 Tx
-assignment since both sides would Tx simultaneously in the same cells.
+**every** cell and passes the opportunity to the MAC. The MAC assigns Cell Role
+entirely from internal state — no cells are Skip. For `Mesh_Beacon`, at phase
+entry, it randomly selects K cell indices (K is a provisioned constant) as
+Tx-role; all other cells are Rx-role. No bitmap is written to shared memory.
+Random K-of-N selection ensures a node can discover peers at any hop depth —
+including same hop-count peers, which would never be heard under a deterministic
+mod-3 assignment since both sides would transmit simultaneously in the same cells.
 
 `DIRECTION_MAC_PHASE` applies to `Sync` — the MAC pre-writes `phase_tx_flag`
-(a `uint8_t`) to shared memory before the phase: 1 = Tx every cell, 0 = Rx every
-cell. The TDMA Machine reads it once at phase entry.
+(a `uint8_t`) to shared memory before the phase: `1` = Tx-role for all cells,
+`0` = Rx-role for all cells. The TDMA Machine reads it once at phase entry.
 
 ### Participant Mask
 A per-Phase 3-bit field (`participant_mask`) indicating which Node Classes
@@ -193,11 +258,11 @@ Never modifies it. Responsible purely for timing mechanics — when to wake and 
 - Checking `participant_mask` at Phase entry — if local class is excluded, skip
   Phase entirely and program alarm for next Phase start
 - For `DIRECTION_CELL_SKIP` phases: reading `CellEligibilityMask` from shared memory
-  at each cell boundary; sleeping cells where eligibility bit is clear
+  at each cell boundary; Skip cells where eligibility bit is clear
 - For `DIRECTION_MAC_CELL` phases: waking for every cell and passing the
-  opportunity to the MAC; no cells slept
+  opportunity to the MAC; no cells are Skip
 - For `DIRECTION_MAC_PHASE` phases: reading `phase_tx_flag` once at phase entry;
-  all cells follow the same direction for the entire phase
+  all cells have the same Cell Role for the entire phase
 - Programming RTC alarms for each wake-up (alarm-chain sleep model)
 - Applying Guard Time on Rx Slots
 - Correcting Frame Epoch on Mesh_Beacon or Sync reception
@@ -224,14 +289,14 @@ State Machine determines *whether* that opportunity is taken and *how*.
 
 **MAC State Machine responsibilities:**
 - Maintaining the node's operational state (see states below)
-- At each opportunity in `DIRECTION_CELL_SKIP` phases: determining Tx vs Rx
-  direction from the hop-count residue formula for that phase (uplink ascending
+- At each opportunity in `DIRECTION_CELL_SKIP` phases: assigning Cell Role
+  from the hop-count residue formula for that phase (uplink ascending
   or downlink mirror — see Hop-Count Cell Eligibility)
 - After each beacon update: computing and writing `CellEligibilityMask` for
   `Mesh_Uplink` (uplink formula) and `Mesh_Downlink` (downlink mirror formula)
-- At each `DIRECTION_MAC_CELL` cell opportunity: deciding Tx or Rx from the
+- At each `DIRECTION_MAC_CELL` cell opportunity: assigning Cell Role from the
   MAC-internal K-cell schedule selected at phase entry; applying `BeaconTxBudget`
-  to gate whether a selected Tx cell is actually used
+  to gate whether a Tx-role cell is actually used
 - Before each `Sync` phase: checking audit cycle counter, writing `phase_tx_flag`
 - Executing contention logic in CONTENTION footer Slots (CSMA + backoff)
 - Selecting packet type (data vs join request) in `Cluster_Exchange` footer
@@ -582,10 +647,10 @@ its uplink-transmit residue at 0 and its relay-receive residue at 1. This avoids
 a special case: C3 participates in `Mesh_Uplink` identically to a C2 (it is
 wall-powered and never truly sleeps, but will not ACK outside its window).
 
-Each node has two active cell groups per mod-3 cycle:
-- `cell_index % 3 == hop_count % 3`: **uplink-transmit** — Tx DATA to upstream, Rx ACK
-- `cell_index % 3 == (hop_count + 1) % 3`: **relay-receive** — Rx DATA from downstream, Tx ACK
-- `cell_index % 3 == (hop_count + 2) % 3`: **sleep** — node skips this cell entirely
+Each node has two active cell groups per mod-3 cycle (Cell Role in parentheses):
+- `cell_index % 3 == hop_count % 3`: **uplink-transmit** (Tx-role) — primary exchange is Tx DATA to upstream
+- `cell_index % 3 == (hop_count + 1) % 3`: **relay-receive** (Rx-role) — primary exchange is Rx DATA from downstream
+- `cell_index % 3 == (hop_count + 2) % 3`: **sleep** (Skip) — node skips this cell entirely
 
 C3 (effective hop 3) has no upstream, so its uplink-transmit role (residue 0) is
 vacant. C3 is active only in relay-receive cells (residue 1: cells 1, 4, 7, …) —
@@ -595,9 +660,9 @@ the same cells where hop=1 C2 nodes uplink-transmit — and skips all others.
 → C2). A node's sleep residue inverts: it sleeps at its uplink-Tx residue and
 is active at the two complementary residues:
 
-- `cell_index % 3 == (hop_count + 2) % 3`: **downlink-relay** — Tx DATA downward, Rx ACK
-- `cell_index % 3 == (hop_count + 1) % 3`: **downlink-receive** — Rx DATA from upstream, Tx ACK
-- `cell_index % 3 == hop_count % 3`: **sleep** — same residue as uplink-transmit
+- `cell_index % 3 == (hop_count + 2) % 3`: **downlink-relay** (Tx-role) — primary exchange is Tx DATA downward
+- `cell_index % 3 == (hop_count + 1) % 3`: **downlink-receive** (Rx-role) — primary exchange is Rx DATA from upstream
+- `cell_index % 3 == hop_count % 3`: **sleep** (Skip) — same residue as uplink-transmit
 
 | Node | dl-relay Tx residue | dl-receive Rx residue | sleep |
 |---|---|---|---|
@@ -682,15 +747,15 @@ a beacon from, so no trigger can fire; and as the mesh root its beacon is the
 anchor all C2 nodes depend on — suppressing it would be a protocol hazard.
 
 ### phase_tx_flag
-Shared memory value written by the MAC State Machine before each `Sync` phase.
-Used exclusively in `DIRECTION_MAC_PHASE` phases. A `uint8_t` flag indicating
-whether this node intends to relay in this Sync Phase occurrence.
+Shared memory value written by the MAC State Machine before each
+`DIRECTION_MAC_PHASE` phase. A `uint8_t` flag that assigns Cell Role uniformly
+to every Cell in the Phase: `1` = Tx-role, `0` = Rx-role.
 
-C3 (SyncAnchor) always writes `1` (transmits every cell). C1 always writes `0`
-(Rx-only). C2 no longer pre-writes this flag — C2 participation is determined
-reactively per-occurrence based on the three-tier error check on Cell 0. The
-TDMA Machine guard-time look-ahead treats C2 Sync phases conservatively as RX
-(`flag = 0`) since participation is unknown until Cell 0 is received.
+C3 (SyncAnchor) always writes `1`. C1 always writes `0`. C2 does not
+pre-write this flag — C2 participation is determined reactively per-occurrence
+based on the three-tier error check on Cell 0. The TDMA Machine guard-time
+look-ahead treats C2 conservatively as Rx-role (`flag = 0`) since participation
+is unknown until Cell 0 is received.
 
 ---
 
@@ -1112,7 +1177,7 @@ semantics are not yet finalised.
 
 ---
 
-**Resolved — TDMA Table direction split (final):** `DirectionMode` is a three-value enum. `DIRECTION_CELL_SKIP` (`Mesh_Uplink`, `Cluster_Exchange`, `Mesh_Downlink`): MAC-written `CellEligibilityMask` / Cell Permit; ineligible cells slept; uplink uses ascending hop-count residue, downlink uses mirror descending pattern (sleep at uplink-Tx residue). `DIRECTION_MAC_CELL` (`Mesh_Beacon`): TDMA wakes every cell; MAC selects K random Tx cells at phase entry from internal state — no shared memory bitmap; random selection enables same-hop-count peer discovery. `DIRECTION_MAC_PHASE` (`Sync`): MAC pre-writes `phase_tx_flag` (`uint8_t`); whole-phase Tx or Rx. `DIRECTION_STATIC` removed — no phase requires a fully fixed compile-time bitmap. See ADR-0010 (original split) and ADR-0011 (three-value finalisation, revised).
+**Resolved — TDMA Table direction split (final):** `DirectionMode` is a three-value enum governing Cell Role assignment. `DIRECTION_CELL_SKIP` (`Mesh_Uplink`, `Cluster_Exchange`, `Mesh_Downlink`): MAC-written `CellEligibilityMask` / Cell Permit; ineligible cells are Skip; uplink uses ascending hop-count residue, downlink uses mirror descending pattern (Skip at uplink-Tx residue). `DIRECTION_MAC_CELL` (`Mesh_Beacon`): TDMA wakes every cell; MAC assigns Tx-role to K random cells at phase entry from internal state — no shared memory bitmap; random selection enables same-hop-count peer discovery. `DIRECTION_MAC_PHASE` (`Sync`): MAC pre-writes `phase_tx_flag` (`uint8_t`); uniform Cell Role (Tx-role or Rx-role) for the entire phase. `DIRECTION_STATIC` removed — no phase requires a fully fixed compile-time bitmap. See ADR-0010 (original split) and ADR-0011 (three-value finalisation, revised).
 
 **Resolved — Spectrum Access Compliance Engine:** A MAC-agnostic compliance component resides entirely on CM0+. It exposes two hooks to the MAC State Machine: `RequestChannel(freq_hz, expected_toa_ms, tx_power_dbm) → Result` (called before any TX) and `ReportTxDone(freq_hz, actual_toa_ms)` (called after TX completes). The MAC State Machine calls these; the engine knows nothing about the protocol above it. Initial strategy: ETSI duty-cycle time-credit accounting per `RegionProfile` / `Band`. Interface is open to future strategies (LBT, FHSS dwell-time). CM4 is not involved in compliance decisions. `expected_toa_ms` is `slot_active_ms` from the TDMA Table (conservative, always compliant — flagged for optimization to per-packet ToA calculation). TX power is passed explicitly so the engine can validate against `Band.max_tx_power_dbm` and return `POWER_TOO_HIGH` without reading radio hardware state directly.
 

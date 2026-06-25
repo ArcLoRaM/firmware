@@ -1,5 +1,5 @@
 Middlewares/Third_Party/SubGHz_Phy/radio_fw.o: \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_fw.c \
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_fw.c \
  ../SubGHz_Phy/Target/timer.h ../../Utilities/timer/stm32_timer.h \
  ../../Drivers/CMSIS/Include/cmsis_compiler.h \
  ../../Drivers/CMSIS/Include/cmsis_gcc.h ../Core/Inc/utilities_conf.h \
@@ -45,14 +45,14 @@ Middlewares/Third_Party/SubGHz_Phy/radio_fw.o: \
  ../../Utilities/misc/stm32_tiny_vsnprintf.h ../MbMux/mbmuxif_trace.h \
  ../MbMux/mbmux.h ../../Common/MbMux/mbmux_table.h \
  ../../Common/MbMux/features_info.h ../Core/Inc/utilities_def.h \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_fw.h \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_def.h \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_ex.h \
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_fw.h \
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_def.h \
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_ex.h \
  ../SubGHz_Phy/Target/radio_conf.h ../Core/Inc/platform.h \
  ../Core/Inc/subghz.h ../SubGHz_Phy/Target/mw_log_conf.h \
  ../SubGHz_Phy/Target/radio_board_if.h ../Core/Inc/utilities_def.h \
  ../MbMux/mbmuxif_sys.h \
- C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_driver.h \
+ C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_driver.h \
  ../SubGHz_Phy/Target/mw_log_conf.h
 ../SubGHz_Phy/Target/timer.h:
 ../../Utilities/timer/stm32_timer.h:
@@ -104,9 +104,9 @@ Middlewares/Third_Party/SubGHz_Phy/radio_fw.o: \
 ../../Common/MbMux/mbmux_table.h:
 ../../Common/MbMux/features_info.h:
 ../Core/Inc/utilities_def.h:
-C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_fw.h:
-C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_def.h:
-C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_ex.h:
+C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_fw.h:
+C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_def.h:
+C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_ex.h:
 ../SubGHz_Phy/Target/radio_conf.h:
 ../Core/Inc/platform.h:
 ../Core/Inc/subghz.h:
@@ -114,5 +114,5 @@ C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_P
 ../SubGHz_Phy/Target/radio_board_if.h:
 ../Core/Inc/utilities_def.h:
 ../MbMux/mbmuxif_sys.h:
-C:/Users/srcla/Desktop/ArcLoRaM/Hardware/STM32/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_driver.h:
+C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Middlewares/Third_Party/SubGHz_Phy/radio_driver/radio_driver.h:
 ../SubGHz_Phy/Target/mw_log_conf.h:
