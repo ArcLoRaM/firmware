@@ -1,6 +1,0 @@
-../MbMux/radio_mbwrapper.c:114:6:Process_Radio_Cmd	120	static
-../MbMux/radio_mbwrapper.c:381:13:RadioTxDone_mbwrapper	16	static
-../MbMux/radio_mbwrapper.c:400:13:RadioTxTimeout_mbwrapper	16	static
-../MbMux/radio_mbwrapper.c:419:13:RadioRxDone_mbwrapper	48	static
-../MbMux/radio_mbwrapper.c:467:13:RadioRxTimeout_mbwrapper	16	static
-../MbMux/radio_mbwrapper.c:487:13:RadioRxError_mbwrapper	16	static

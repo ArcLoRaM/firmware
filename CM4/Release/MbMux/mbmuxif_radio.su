@@ -1,7 +1,0 @@
-../MbMux/mbmuxif_radio.c:227:13:MBMUXIF_TaskRadioNotifRcv	0	static
-../MbMux/mbmuxif_radio.c:215:13:MBMUXIF_IsrRadioNotifRcvCb	0	static
-../MbMux/mbmuxif_radio.c:204:13:MBMUXIF_IsrRadioRespRcvCb	0	static
-../MbMux/mbmuxif_radio.c:96:8:MBMUXIF_RadioInit	16	static
-../MbMux/mbmuxif_radio.c:151:19:MBMUXIF_GetRadioFeatureCmdComPtr	8	static
-../MbMux/mbmuxif_radio.c:167:6:MBMUXIF_RadioSendCmd	8	static
-../MbMux/mbmuxif_radio.c:185:6:MBMUXIF_RadioSendAck	8	static

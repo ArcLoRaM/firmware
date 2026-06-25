@@ -1,2 +1,0 @@
-../MbMux/features_info.c:111:6:FEAT_INFO_Init	8	static
-../MbMux/features_info.c:122:19:FEAT_INFO_GetListPtr	8	static

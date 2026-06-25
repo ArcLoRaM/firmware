@@ -1,2 +1,0 @@
-../SubGHz_Phy/Logic/freq_resolver.c:23:6:FrequencyResolver_Init	16	static
-../SubGHz_Phy/Logic/freq_resolver.c:28:10:FrequencyResolver_GetFreq	24	static

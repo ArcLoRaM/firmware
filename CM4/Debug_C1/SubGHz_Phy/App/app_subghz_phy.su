@@ -1,3 +1,0 @@
-../SubGHz_Phy/App/app_subghz_phy.c:73:6:MX_SubGHz_Phy_Init	8	static
-../SubGHz_Phy/App/app_subghz_phy.c:90:6:MX_SubGHz_Phy_Process	8	static
-../SubGHz_Phy/App/app_subghz_phy.c:113:6:setLedCM4	4	static

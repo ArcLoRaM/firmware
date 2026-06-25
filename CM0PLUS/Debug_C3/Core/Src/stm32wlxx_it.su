@@ -1,8 +1,0 @@
-../Core/Src/stm32wlxx_it.c:71:6:NMI_Handler	8	static
-../Core/Src/stm32wlxx_it.c:86:6:HardFault_Handler	8	static
-../Core/Src/stm32wlxx_it.c:101:6:SVC_Handler	8	static
-../Core/Src/stm32wlxx_it.c:114:6:PendSV_Handler	8	static
-../Core/Src/stm32wlxx_it.c:127:6:SysTick_Handler	8	static
-../Core/Src/stm32wlxx_it.c:148:6:RTC_LSECSS_IRQHandler	8	static
-../Core/Src/stm32wlxx_it.c:165:6:IPCC_C2_RX_C2_TX_IRQHandler	8	static
-../Core/Src/stm32wlxx_it.c:180:6:SUBGHZ_Radio_IRQHandler	8	static

@@ -1,3 +1,0 @@
-C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Common/Protocol/tdma_table.c:58:16:TdmaTable_GetPhase	16	static
-C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Common/Protocol/tdma_table.c:66:9:TdmaTable_PhaseCount	8	static
-C:/Users/Simon/Desktop/ArcLoram/ArcLoRaM_Base/Common/Protocol/tdma_table.c:71:10:TdmaTable_PhaseStartOffset_ms	16	static

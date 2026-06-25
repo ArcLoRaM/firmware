@@ -1,3 +1,0 @@
-../SubGHz_Phy/App/app_subghz_phy.c:75:6:MX_SubGHz_Phy_Init	2
-../SubGHz_Phy/App/app_subghz_phy.c:99:6:MX_SubGHz_Phy_Process	1
-../SubGHz_Phy/App/app_subghz_phy.c:122:6:setLedCM4	1
