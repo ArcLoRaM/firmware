@@ -100,16 +100,16 @@ void test_c3_phase_tx_flag_stays_1_across_multiple_entries(void)
     TEST_ASSERT_EQUAL(1u, MAC_GetPhaseTxFlag());
 }
 
-/* ------- C3 transmits all cells including cell 0 -------------------------- */
+/* ------- C3 transmits cell 0, skips cells 1+ in Sync -------------------- */
 
-void test_c3_sync_all_cells_tx(void)
+void test_c3_sync_cell0_tx_cells1plus_skip(void)
 {
     FrameCursor_t c0 = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
     FrameCursor_t c1 = {.phase_index = 0u, .cell_index = 1u, .slot_index = 0u};
     FrameCursor_t c2 = {.phase_index = 0u, .cell_index = 2u, .slot_index = 0u};
     TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c0, TdmaTable_GetPhase(0u)));
-    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c1, TdmaTable_GetPhase(0u)));
-    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c2, TdmaTable_GetPhase(0u)));
+    TEST_ASSERT_EQUAL(SLOT_SKIP, MAC_OnSlotOpportunity(&c1, TdmaTable_GetPhase(0u)));
+    TEST_ASSERT_EQUAL(SLOT_SKIP, MAC_OnSlotOpportunity(&c2, TdmaTable_GetPhase(0u)));
 }
 
 /* ------- Epoch captured at Sync phase entry ------------------------------- */
@@ -171,8 +171,19 @@ void test_c3_beacon_tx_budget_bypassed(void)
 {
     FrameCursor_t c0 = {.phase_index = 5u, .cell_index = 0u, .slot_index = 0u};
     FrameCursor_t c1 = {.phase_index = 5u, .cell_index = 1u, .slot_index = 0u};
+    FrameCursor_t c2 = {.phase_index = 5u, .cell_index = 2u, .slot_index = 0u};
+    FrameCursor_t c3 = {.phase_index = 5u, .cell_index = 3u, .slot_index = 0u};
     TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c0, &s_beacon_phase));
     TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c1, &s_beacon_phase));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c2, &s_beacon_phase));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c3, &s_beacon_phase));
+}
+
+/* ------- Epoch Received flag (always false for C3) ----------------------- */
+
+void test_c3_epoch_received_always_false(void)
+{
+    TEST_ASSERT_FALSE(MAC_GetEpochReceivedThisPhase());
 }
 
 /* ------- main ------------------------------------------------------------- */
@@ -184,11 +195,15 @@ int main(void)
     RUN_TEST(test_c3_sync_phase_returns_tx_without_acquisition);
     RUN_TEST(test_c3_phase_tx_flag_always_1_first_entry);
     RUN_TEST(test_c3_phase_tx_flag_stays_1_across_multiple_entries);
-    RUN_TEST(test_c3_sync_all_cells_tx);
+    RUN_TEST(test_c3_sync_cell0_tx_cells1plus_skip);
     RUN_TEST(test_c3_sync_phase_epoch_ms_captured_at_phase_entry);
     RUN_TEST(test_c3_sync_phase_date_captured_at_phase_entry);
     RUN_TEST(test_c3_sync_phase_date_not_captured_on_non_sync_phase);
     RUN_TEST(test_c3_epoch_updated_on_each_sync_phase_entry);
     RUN_TEST(test_c3_beacon_tx_budget_bypassed);
+
+/* ------- Epoch Received flag (always false for C3) ----------------------- */
+
+    RUN_TEST(test_c3_epoch_received_always_false);
     return UNITY_END();
 }

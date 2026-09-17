@@ -38,27 +38,34 @@
 _Static_assert(sizeof(AlarmBRequest_t)       == 12u, "AlarmBRequest_t size mismatch");
 _Static_assert(sizeof(ComplianceStatus_t)    == 16u, "ComplianceStatus_t size mismatch");
 _Static_assert(sizeof(EmergencyAlertSlot_t)  == 12u, "EmergencyAlertSlot_t size mismatch");
+_Static_assert(sizeof(PhaseFrequency_t)       == 20u, "PhaseFrequency_t size mismatch");
 
 /* =========================================================================
  * Global instances in SRAM2 application shared region
  *
  * Section "SHARED_APP" is mapped to 0x20009000 by both linker scripts.
  * Declaration order determines the within-section layout (natural alignment):
- *   g_alarm_b_request      +0x000  12 B
- *   g_compliance_status    +0x00C  16 B
- *   g_cm4_heartbeat        +0x01C   4 B
- *   g_emergency_alert_slot +0x020  12 B
- *   g_freq_resolver_state  +0x02C 980 B
- *   total: 1024 B
+ *   g_alarm_b_request       +0x000  12 B
+ *   g_compliance_status     +0x00C  16 B
+ *   g_cm4_heartbeat         +0x01C   4 B
+ *   g_emergency_alert_slot  +0x020  12 B
+ *   g_freq_resolver_state   +0x02C 400 B
+ *   g_freq_override_tables  +0x1BC 640 B
+ *   total: 1088 B
  * ========================================================================= */
 
+#ifndef HOST_TEST
 #define SHARED_APP  __attribute__((section("SHARED_APP")))
+#else
+#define SHARED_APP
+#endif
 
 AlarmBRequest_t          g_alarm_b_request      SHARED_APP;
 ComplianceStatus_t       g_compliance_status    SHARED_APP;
 uint32_t                 g_cm4_heartbeat        SHARED_APP;
 EmergencyAlertSlot_t     g_emergency_alert_slot SHARED_APP;
 FrequencyResolverState_t g_freq_resolver_state  SHARED_APP;
+uint32_t g_freq_override_tables[FREQ_MAX_OVERRIDE_TABLES][FREQ_MAX_CELLS_PER_PHASE] SHARED_APP;
 
 /* =========================================================================
  * SharedMem_Init
@@ -71,4 +78,5 @@ void SharedMem_Init(void)
     g_cm4_heartbeat = 0u;
     memset(&g_emergency_alert_slot, 0, sizeof(g_emergency_alert_slot));
     memset(&g_freq_resolver_state,  0, sizeof(g_freq_resolver_state));
+    memset(&g_freq_override_tables, 0, sizeof(g_freq_override_tables));
 }

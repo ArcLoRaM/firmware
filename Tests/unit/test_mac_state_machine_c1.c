@@ -223,6 +223,51 @@ void test_c1_cell_eligibility_written_on_beacon(void)
     TEST_ASSERT_EQUAL_HEX8(0x05u, MAC_GetCellEligibilityMask_Uplink());
 }
 
+/* ------- Epoch Received flag (C1 receives but never relays) ------------- */
+
+void test_c1_epoch_received_false_after_init(void)
+{
+    TEST_ASSERT_FALSE(MAC_GetEpochReceivedThisPhase());
+}
+
+void test_c1_epoch_received_true_after_tier1(void)
+{
+    three_sync_packets();
+    /* CLOCK_WARM: receive a Tier 1 sync packet (error=0 < 8ms) */
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_phase_index             = 0u;
+    p.sync_cell_index              = 0u;
+    p.ms_since_midnight_sync_phase = 0u;
+    MAC_OnSyncPacketReceived(&p, 0u);
+    TEST_ASSERT_TRUE(MAC_GetEpochReceivedThisPhase());
+}
+
+void test_c1_epoch_received_resets_on_phase_entry(void)
+{
+    three_sync_packets();
+    /* Trigger phase entry at Sync phase */
+    FrameCursor_t c = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u));
+
+    /* Receive Tier 1 — epoch received = true */
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_phase_index             = 0u;
+    p.sync_cell_index              = 0u;
+    p.ms_since_midnight_sync_phase = 0u;
+    MAC_OnSyncPacketReceived(&p, 0u);
+    TEST_ASSERT_TRUE(MAC_GetEpochReceivedThisPhase());
+
+    /* Phase entry to a different phase resets the flag */
+    FrameCursor_t c1 = {.phase_index = 1u, .cell_index = 0u, .slot_index = 0u};
+    static const Phase_t s_other = {
+        .type = PHASE_TYPE_MESH_BEACON, .direction_mode = DIRECTION_MAC_CELL, .cell_count = 3u
+    };
+    MAC_OnSlotOpportunity(&c1, &s_other);
+    TEST_ASSERT_FALSE(MAC_GetEpochReceivedThisPhase());
+}
+
 /* ------- main ------------------------------------------------------------- */
 
 int main(void)
@@ -244,5 +289,11 @@ int main(void)
     RUN_TEST(test_c1_phase_tx_flag_always_zero);
     RUN_TEST(test_c1_beacon_transitions_to_paired);
     RUN_TEST(test_c1_cell_eligibility_written_on_beacon);
+
+/* ------- Epoch Received flag (always false for C1) ----------------------- */
+
+    RUN_TEST(test_c1_epoch_received_false_after_init);
+    RUN_TEST(test_c1_epoch_received_true_after_tier1);
+    RUN_TEST(test_c1_epoch_received_resets_on_phase_entry);
     return UNITY_END();
 }

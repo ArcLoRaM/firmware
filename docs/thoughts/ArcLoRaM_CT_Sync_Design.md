@@ -2,6 +2,12 @@
 
 ## Purpose of this Document
 
+> **Status: deferred.** The pure CT model described here is deferred. The
+> current implementation uses a three-tier relay model with partial CT
+> (same-hop-count concurrent transmission). See `CT Sync Propagation Model`
+> in `CONTEXT.md` for the current design. This document is retained as the
+> design reference for when the pure CT model is implemented.
+
 This document captures the design decisions made for integrating **Concurrent Transmission (CT)** into ArcLoRaM's sync packet propagation mechanism. It explains the core CT principle, the rationale for each acknowledged decision, and how the proposal interacts with the existing ArcLoRaM architecture documented in `CONTEXT.md` and the project philosophy document.
 
 The goal of CT-based sync is to **collapse the per-hop sequential sync forwarding into a single network-wide synchronised pulse**, reducing Sync Phase airtime to a constant independent of network depth while preserving the existing TDMA structure, drift correction logic, and node hierarchy.
@@ -36,11 +42,11 @@ This is the architectural insight that makes CT particularly attractive for ArcL
 
 ## Part 2 — Design Decisions Registered
 
-### Decision 1 — `sync_slot_index` Semantics
+### Decision 1 — `sync_cell_index` Semantics
 
-**Registered:** `sync_slot_index` identifies the TDMA slot index within the Sync Phase, identical across all concurrent transmitters in that slot. It is **not** related to mesh depth or hop count from the SyncAnchor.
+**Registered:** `sync_cell_index` identifies the TDMA slot index within the Sync Phase, identical across all concurrent transmitters in that slot. It is **not** related to mesh depth or hop count from the SyncAnchor.
 
-**Relation to existing structure:** The `SyncPayload` struct in `CONTEXT.md` retains its current 11-byte layout. The `sync_slot_index` field's meaning is clarified rather than changed: it continues to indicate which Sync Phase slot the packet belongs to, used by the receiver to compute `expected_offset_ms` relative to the Frame Epoch. Under CT, all concurrent C2 transmitters in a given Sync slot stamp the same `sync_slot_index` because they are all transmitting in the same TDMA slot.
+**Relation to existing structure:** The `SyncPayload` struct in `CONTEXT.md` retains its current 10-byte layout. The `sync_cell_index` field's meaning is clarified rather than changed: it continues to indicate which Sync Phase slot the packet belongs to, used by the receiver to compute `expected_offset_ms` relative to the Frame Epoch. Under CT, all concurrent C2 transmitters in a given Sync slot stamp the same `sync_cell_index` because they are all transmitting in the same TDMA slot.
 
 **Implication:** No payload restructure required. The existing sync algorithm and `expected_offset_ms` computation remain valid.
 
@@ -94,7 +100,7 @@ The 16 ms operating target sits comfortably below the 100 ms ceiling, providing 
 
 **Registered:** The Sync Phase structure is unchanged. It remains a sequence of identical Cells, each containing exactly one Slot. CT changes *who transmits in each Slot* (every eligible C2 plus the SyncAnchor concurrently, rather than sequential per-hop forwarding) but does not change the Phase blueprint.
 
-**Relation to existing structure:** The `Phase` struct in `CONTEXT.md`, the `participant_mask`, the `cell_bitmap[3]`, the `slot_active_ms`, and the `cell_count` fields all remain valid for the Sync Phase. The only change is interpretive: the `cell_bitmap[3]` for the Sync Phase now expresses "all C2 + C3 transmit, C1 receives" for every Cell, rather than encoding a per-hop forwarding chain.
+**Relation to existing structure:** The `Phase` struct in `CONTEXT.md`, the `participant_mask`, the `slot_active_ms`, and the `cell_count` fields all remain valid for the Sync Phase. The `participant_mask` for the Sync Phase expresses "C2 + C3 transmit, C1 receives" for every Cell.
 
 **Implication:** No TDMA Table restructure required for Sync Phase. The deferred "TDMA Table class refactoring" work item in `CONTEXT.md` does not need to absorb a Sync Phase redesign.
 
@@ -110,7 +116,7 @@ The 16 ms operating target sits comfortably below the 100 ms ceiling, providing 
 
 **Relation to existing structure:** This is consistent with the existing node class hierarchy in `CONTEXT.md`, where C1's role is described as "cluster-only" and "sensor data producer" with "no routing responsibilities". Sync forwarding falls into the broader category of routing-equivalent network functions, which C1 does not participate in.
 
-**Implication:** The Sync Phase `participant_mask` excludes C1 from transmission (`cell_bitmap` for C1 = all-zero, indicating RX-only for every Slot). C1 listens during the Sync Phase to capture sync corrections but never transmits.
+**Implication:** The Sync Phase `participant_mask` excludes C1 from transmission (C1 bit clear in `participant_mask`, indicating RX-only for every Slot). C1 listens during the Sync Phase to capture sync corrections but never transmits.
 
 ### Decision 9b / 10 — All Depths Transmit Concurrently
 
@@ -127,7 +133,13 @@ The mechanism by which this works:
 
 **Implication:** Sync Phase airtime becomes `1 × packet_length` regardless of network depth, instead of `network_depth × packet_length`. For a 5-hop network, this is a 5× reduction in Sync Phase airtime per Frame.
 
-### Decision 11 — Listen-to-Transmit Ratio for Audit Cycles
+### Decision 11 — Listen-to-Transmit Ratio for Audit Cycles (Deferred)
+
+**Deferred:** This decision is part of the pure CT model, which is deferred.
+The current implementation uses the three-tier per-occurrence dispatch (see
+`CT Sync Propagation Model` in `CONTEXT.md`) instead of audit/participate
+cycle alternation. The audit cycle concept below is retained for reference
+and may be revisited when the pure CT model is implemented.
 
 **Registered:** C2 nodes alternate between participation cycles (CT retransmission of the sync packet) and audit cycles (RX-only, no retransmission, used to measure local drift against the upstream-originated sync without self-interference). The ratio of audit cycles to participation cycles is an empirical parameter, dependent on sync packet cadence and observed drift behaviour. **Starting value: 0.5 (alternating, one audit per participation cycle).** The ratio will be tuned later based on field measurements.
 
@@ -143,15 +155,15 @@ The simplest implementation: the C2 maintains a local counter of completed Sync 
 
 | Component | Change Type | Description |
 |---|---|---|
-| `SyncPayload` struct | None | Layout preserved; `sync_slot_index` semantics clarified (TDMA slot index, not hop depth) |
+| `SyncPayload` struct | None | Layout preserved; `sync_cell_index` semantics clarified (TDMA slot index, not hop depth) |
 | Sync Phase blueprint | None | Phase remains N identical Cells × 1 Slot |
 | `participant_mask` for Sync | Clarified | C2 + C3 transmit, C1 RX-only, for every Sync Slot |
 | Sync algorithm (RX path) | None | PreambleStamp, `expected_offset_ms`, three-packet acquisition preserved |
 | `ClockState` machine | None | `CLOCK_COLD/ACQUIRING/WARM` transitions preserved |
-| Sync Phase airtime | Reduced | From `network_depth × packet_length` to `1 × packet_length` |
+| Sync Phase airtime | Reduced (deferred) | From `network_depth × packet_length` to `1 × packet_length` — under pure CT model only |
 | Sync propagation model | Replaced | Sequential hop-by-hop forwarding → concurrent network-wide pulse |
 | C2 TX power policy | New | Variable TX power across C2s for equidistant-C1 mitigation |
-| C2 MAC State Machine | New mode | Audit cycles (RX-only sync) interleaved with participation cycles |
+| C2 MAC State Machine | New mode | Audit cycles (RX-only sync) interleaved with participation cycles — **deferred** (part of pure CT model) |
 | Preamble length | Specified | 8 symbols (LoRa default), pending empirical confirmation |
 | Beacon cadence constraint | New | Sized to keep inter-C2 drift below 16 ms under worst-case temperature |
 | Regulatory compliance | Open | Duty cycle interpretation (per-device vs per-region) requires clarification |
@@ -165,7 +177,7 @@ The following parameters and behaviours are decided in principle but require har
 1. **Preamble length** — confirm 8 symbols is appropriate, or determine a better value.
 2. **Sync Phase cadence** — measure worst-case inter-C2 drift under Arctic temperature swings and size the Frame's Sync Phase interval to stay below 16 ms.
 3. **Variable TX power scheme** — choose between randomised, hop-count-based, or deterministic-per-node policies based on field testing of the equidistant-C1 scenario.
-4. **Audit cycle ratio** — start at 0.5, tune based on observed drift accumulation and sync acquisition reliability.
+4. **Audit cycle ratio** — deferred (part of pure CT model); start at 0.5 when implemented, tune based on observed drift accumulation and sync acquisition reliability.
 5. **Need for offset-CT-style timing jitter** — evaluate whether variable TX power plus multiple Sync slots per Phase is sufficient, or whether sub-symbol jitter is also required.
 6. **Regulatory duty cycle interpretation** — clarify with the applicable regulator whether aggregate concurrent transmission triggers per-region duty cycle limits.
 

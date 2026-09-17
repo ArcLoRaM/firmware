@@ -67,7 +67,7 @@ void setUp(void)
     s_radio_sleep_calls  = 0;
 
     s_freq_state.phases[0].cell_mode           = CELL_FREQ_STATIC;
-    s_freq_state.phases[0].cell.static_freq_hz = 868100000u;
+    s_freq_state.phases[0].cell_freq_or_seed = 868100000u;
 
     FrequencyResolver_Init(&s_freq_state);
     ComplianceEngine_Init(&s_comp_status, comp_get_tick);

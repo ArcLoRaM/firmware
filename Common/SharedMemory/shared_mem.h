@@ -84,13 +84,34 @@ typedef struct {
 
 #ifndef FREQ_MAX_PHASES
 /*!
- * Maximum number of Phases in the TDMA Table supported by the Frequency
- * Resolver shared memory layout.
+ * \brief   Maximum number of Phases in the TDMA Table supported by the
+ *          Frequency Resolver shared memory layout.
  *
- * \remark Sized for the expected full frame layout. Increasing this value
- *         grows FrequencyResolverState_t by ~140 bytes per extra phase.
+ * \details Sized for full flexibility (20 phases) even though the initial
+ *          frame will likely use 7-9. The per-phase struct is 20 bytes
+ *          (override tables are split into a separate pool), so the total
+ *          FrequencyResolverState is 400 bytes.
+ *
+ * \remark  Increasing this value grows FrequencyResolverState_t by 20 bytes
+ *          per extra phase.
  */
-#define FREQ_MAX_PHASES           7u
+#define FREQ_MAX_PHASES           20u
+#endif
+
+#ifndef FREQ_MAX_OVERRIDE_TABLES
+/*!
+ * \brief   Maximum number of per-cell override frequency tables.
+ *
+ * \details Only phases using \ref CELL_FREQ_OVERRIDE consume an entry in
+ *          this pool. Phases using \ref CELL_FREQ_STATIC or \ref
+ *          CELL_FREQ_HOP do not. Each table is FREQ_MAX_CELLS_PER_PHASE x
+ *          4 bytes (128 bytes).
+ *
+ * \remark  5 tables is generous: the 5 phase types are unlikely to all
+ *          use OVERRIDE mode simultaneously. Increasing this value grows
+ *          the override pool by 128 bytes per extra table.
+ */
+#define FREQ_MAX_OVERRIDE_TABLES  5u
 #endif
 
 #ifndef FREQ_MAX_CELLS_PER_PHASE
@@ -119,25 +140,34 @@ typedef enum {
  *
  * \details CM4 is the sole writer. CM0+ Frequency Resolver is read-only.
  *          Header and footer use independent fixed frequencies. Cell
- *          frequency follows \c cell_mode.
+ *          frequency follows \c cell_mode. For \ref CELL_FREQ_STATIC and
+ *          \ref CELL_FREQ_HOP, the frequency or seed is stored inline in
+ *          \c cell_freq_or_seed. For \ref CELL_FREQ_OVERRIDE, the per-cell
+ *          table is stored in the separate \c g_freq_override_tables pool,
+ *          indexed by \c override_table_idx.
  */
 typedef struct {
-    uint32_t       header_freq_hz;  /*!< Header slot frequency in Hz; 0 = absent. */
-    uint32_t       footer_freq_hz;  /*!< Footer slot frequency in Hz; 0 = absent. */
-    CellFreqMode_t cell_mode;       /*!< Cell-frequency assignment mode. */
-    union {
-        uint32_t static_freq_hz;                      /*!< \ref CELL_FREQ_STATIC. */
-        uint32_t hop_seed;                             /*!< \ref CELL_FREQ_HOP initial seed. */
-        uint32_t override[FREQ_MAX_CELLS_PER_PHASE];  /*!< \ref CELL_FREQ_OVERRIDE per-cell table. */
-    } cell;
+    uint32_t       header_freq_hz;      /*!< Header slot frequency in Hz; 0 = absent. */
+    uint32_t       footer_freq_hz;      /*!< Footer slot frequency in Hz; 0 = absent. */
+    CellFreqMode_t cell_mode;            /*!< Cell-frequency assignment mode. */
+    uint32_t       cell_freq_or_seed;    /*!< CELL_FREQ_STATIC: static frequency.
+                                          *   CELL_FREQ_HOP: LFSR seed (CM0+ advances).
+                                          *   CELL_FREQ_OVERRIDE: unused (see override_table_idx). */
+    uint8_t        override_table_idx;  /*!< CELL_FREQ_OVERRIDE: index into
+                                          *   g_freq_override_tables pool. 0xFF = unassigned. */
+    uint8_t        _pad[3];             /*!< Alignment pad — do not use. */
 } PhaseFrequency_t;
 
 /*!
- * \brief   Complete Frequency Resolver shared memory region (~980 bytes).
+ * \brief   Complete Frequency Resolver shared memory region.
  *
  * \details Written by CM4 at boot and on topology changes. CM0+ reads it
  *          synchronously from the Frequency Resolver on every slot boundary.
  *          Placed in SRAM2 at a fixed linker-assigned address.
+ *
+ *          Per-phase struct is 20 bytes (override tables are split into
+ *          a separate pool — see \c g_freq_override_tables).
+ *          Total: 20 phases x 20 bytes = 400 bytes.
  */
 typedef struct {
     PhaseFrequency_t phases[FREQ_MAX_PHASES];  /*!< Indexed by phase_index. */
@@ -228,13 +258,14 @@ typedef struct {
  * Expected symbol offsets within the SHARED_APP section
  * (natural alignment, declaration order — verify in the .map file):
  *
- *   Symbol                  Offset   Size  Owner
- *   g_alarm_b_request       +0x000   12 B  CM4 → CM0+
- *   g_compliance_status     +0x00C   16 B  CM0+ → CM4
- *   g_cm4_heartbeat         +0x01C    4 B  CM4 → CM0+
- *   g_emergency_alert_slot  +0x020   12 B  CM0+ → CM4
- *   g_freq_resolver_state   +0x02C  980 B  CM4 → CM0+
- *   (total: 1024 B; ~3072 B remain reserved for future buffers)
+ *   Symbol                       Offset   Size   Owner
+ *   g_alarm_b_request            +0x000   12 B   CM4 -> CM0+
+ *   g_compliance_status          +0x00C   16 B   CM0+ -> CM4
+ *   g_cm4_heartbeat              +0x01C    4 B   CM4 -> CM0+
+ *   g_emergency_alert_slot       +0x020   12 B   CM0+ -> CM4
+ *   g_freq_resolver_state        +0x02C  400 B   CM4 -> CM0+
+ *   g_freq_override_tables       +0x1BC  640 B   CM4 -> CM0+
+ *   (total: 1088 B; ~3008 B remain reserved for future buffers)
  * ========================================================================= */
 
 extern AlarmBRequest_t          g_alarm_b_request;      /*!< CM4 writes, CM0+ reads. */
@@ -242,6 +273,7 @@ extern ComplianceStatus_t       g_compliance_status;    /*!< CM0+ writes, CM4 re
 extern uint32_t                 g_cm4_heartbeat;        /*!< Incremented by CM4 on every wake. */
 extern EmergencyAlertSlot_t     g_emergency_alert_slot; /*!< CM0+ populates on CM4 liveness failure. */
 extern FrequencyResolverState_t g_freq_resolver_state;  /*!< CM4 writes at boot, CM0+ reads per slot. */
+extern uint32_t g_freq_override_tables[FREQ_MAX_OVERRIDE_TABLES][FREQ_MAX_CELLS_PER_PHASE]; /*!< CM4 writes, CM0+ reads per OVERRIDE cell. */
 
 /*!
  * \brief   Zero-initialise the entire SHARED_APP region.

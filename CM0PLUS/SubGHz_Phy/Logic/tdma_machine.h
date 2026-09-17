@@ -39,7 +39,7 @@
  *         absorbing accumulated clock drift since the last Frame Epoch correction.
  *         See CONTEXT.md — Guard Time.
  */
-#define GUARD_TIME_MS  5u
+#define GUARD_TIME_MS  50u
 #endif
 
 #ifndef TX_POWER_DBM
@@ -95,6 +95,20 @@ typedef struct {
      * \ref ComplianceEngine_ReportTxDone.
      */
     uint32_t (*RadioTimeOnAir)(void);
+
+    /*!
+     * Block until the RTC reaches the given absolute millisecond value.
+     *
+     * \details Used when the node woke early (guard-time look-ahead applied an
+     *          Rx prediction that turned out to be Tx) and must delay
+     *          transmission to the nominal slot start. May be NULL — in that
+     *          case the delay is skipped (the TX proceeds at the current time).
+     *          In production, implement as a busy-wait or low-power wait on
+     *          \c GetRtcMs. In unit tests, advance the simulated RTC.
+     *
+     * \param abs_rtc_ms  Absolute RTC time to wait until (ms-since-midnight).
+     */
+    void     (*WaitUntilMs)(uint32_t abs_rtc_ms);
 } TdmaPlatform_t;
 
 /* =========================================================================
@@ -144,12 +158,15 @@ FrameCursor_t TdmaMachine_GetCursor(void);
  *
  * \param   sync_phase_idx  Phase index from \c SyncPayload_t.sync_phase_index.
  * \param   sync_cell_idx   Cell index from \c SyncPayload_t.sync_cell_index.
- * \param   slot_start_ms   Nominal start of the received cell in the new RTC
- *                          domain (= \c get_rtc_snapshot ms value on Packet 1).
+ * \param   rtc_now_ms      Live RTC readback (\c get_rtc_snapshot ms value,
+ *                          taken right after Packet 1's \c rtc_set) in the new
+ *                          RTC domain. Expected to coincide with the nominal
+ *                          start of the received cell, but is a hardware
+ *                          snapshot, not a value computed from the schedule.
  */
 void TdmaMachine_BootstrapFromSync(uint8_t  sync_phase_idx,
                                     uint8_t  sync_cell_idx,
-                                    uint32_t slot_start_ms);
+                                    uint32_t rtc_now_ms);
 
 /*!
  * \brief   Return \c true if the RTC integrity checkpoint detected an

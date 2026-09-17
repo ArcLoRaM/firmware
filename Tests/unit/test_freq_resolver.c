@@ -17,8 +17,8 @@ void tearDown(void) {}
 
 void test_static_mode_returns_static_freq_for_cell_zero(void)
 {
-    s_state.phases[0].cell_mode           = CELL_FREQ_STATIC;
-    s_state.phases[0].cell.static_freq_hz = 868100000u;
+    s_state.phases[0].cell_mode          = CELL_FREQ_STATIC;
+    s_state.phases[0].cell_freq_or_seed = 868100000u;
     FrequencyResolver_Init(&s_state);
 
     FrameCursor_t c = { .phase_index = 0u, .cell_index = 0u, .slot_index = 0u };
@@ -27,8 +27,8 @@ void test_static_mode_returns_static_freq_for_cell_zero(void)
 
 void test_static_mode_is_same_for_all_cell_indices(void)
 {
-    s_state.phases[0].cell_mode           = CELL_FREQ_STATIC;
-    s_state.phases[0].cell.static_freq_hz = 868300000u;
+    s_state.phases[0].cell_mode          = CELL_FREQ_STATIC;
+    s_state.phases[0].cell_freq_or_seed = 868300000u;
     FrequencyResolver_Init(&s_state);
 
     FrameCursor_t c0 = { .phase_index = 0u, .cell_index = 0u,  .slot_index = 0u };
@@ -43,10 +43,11 @@ void test_static_mode_is_same_for_all_cell_indices(void)
 
 void test_override_mode_returns_correct_per_cell_freq(void)
 {
-    s_state.phases[0].cell_mode              = CELL_FREQ_OVERRIDE;
-    s_state.phases[0].cell.override[0]       = 868100000u;
-    s_state.phases[0].cell.override[1]       = 868300000u;
-    s_state.phases[0].cell.override[2]       = 868500000u;
+    s_state.phases[0].cell_mode           = CELL_FREQ_OVERRIDE;
+    s_state.phases[0].override_table_idx = 0u;
+    g_freq_override_tables[0][0]          = 868100000u;
+    g_freq_override_tables[0][1]          = 868300000u;
+    g_freq_override_tables[0][2]          = 868500000u;
     FrequencyResolver_Init(&s_state);
 
     FrameCursor_t c0 = { .phase_index = 0u, .cell_index = 0u, .slot_index = 0u };
@@ -59,9 +60,10 @@ void test_override_mode_returns_correct_per_cell_freq(void)
 
 void test_override_mode_different_cells_return_different_freqs(void)
 {
-    s_state.phases[0].cell_mode        = CELL_FREQ_OVERRIDE;
-    s_state.phases[0].cell.override[0] = 869525000u;
-    s_state.phases[0].cell.override[1] = 869725000u;
+    s_state.phases[0].cell_mode           = CELL_FREQ_OVERRIDE;
+    s_state.phases[0].override_table_idx = 1u;
+    g_freq_override_tables[1][0]          = 869525000u;
+    g_freq_override_tables[1][1]          = 869725000u;
     FrequencyResolver_Init(&s_state);
 
     FrameCursor_t c0 = { .phase_index = 0u, .cell_index = 0u, .slot_index = 0u };
@@ -77,7 +79,7 @@ void test_header_pos_returns_header_freq(void)
 {
     s_state.phases[0].header_freq_hz    = 867100000u;
     s_state.phases[0].cell_mode         = CELL_FREQ_STATIC;
-    s_state.phases[0].cell.static_freq_hz = 868100000u;
+    s_state.phases[0].cell_freq_or_seed = 868100000u;
     FrequencyResolver_Init(&s_state);
 
     FrameCursor_t c = { .phase_index = 0u, .cell_index = 0u, .slot_index = 0u };
@@ -88,7 +90,7 @@ void test_footer_pos_returns_footer_freq(void)
 {
     s_state.phases[0].footer_freq_hz    = 869100000u;
     s_state.phases[0].cell_mode         = CELL_FREQ_STATIC;
-    s_state.phases[0].cell.static_freq_hz = 868100000u;
+    s_state.phases[0].cell_freq_or_seed = 868100000u;
     FrequencyResolver_Init(&s_state);
 
     FrameCursor_t c = { .phase_index = 0u, .cell_index = 0u, .slot_index = 0u };
@@ -99,8 +101,9 @@ void test_header_footer_are_independent_of_cell_mode(void)
 {
     s_state.phases[1].header_freq_hz    = 867500000u;
     s_state.phases[1].footer_freq_hz    = 869500000u;
-    s_state.phases[1].cell_mode         = CELL_FREQ_OVERRIDE;
-    s_state.phases[1].cell.override[0]  = 868500000u;
+    s_state.phases[1].cell_mode           = CELL_FREQ_OVERRIDE;
+    s_state.phases[1].override_table_idx = 2u;
+    g_freq_override_tables[2][0]          = 868500000u;
     FrequencyResolver_Init(&s_state);
 
     FrameCursor_t c = { .phase_index = 1u, .cell_index = 0u, .slot_index = 0u };
@@ -125,7 +128,7 @@ void test_absent_footer_returns_zero(void)
 
 void test_static_zero_returns_fallback(void)
 {
-    /* static_freq_hz left at 0 — simulates uninitialised SRAM2 (CM4 not yet written) */
+    /* cell_freq_or_seed left at 0 — simulates uninitialised SRAM2 (CM4 not yet written) */
     s_state.phases[0].cell_mode = CELL_FREQ_STATIC;
     FrequencyResolver_Init(&s_state);
 
@@ -138,7 +141,7 @@ void test_static_zero_returns_fallback(void)
 void test_hop_mode_returns_zero_while_deferred(void)
 {
     s_state.phases[0].cell_mode        = CELL_FREQ_HOP;
-    s_state.phases[0].cell.hop_seed    = 0xDEADBEEFu;
+    s_state.phases[0].cell_freq_or_seed = 0xDEADBEEFu;
     FrequencyResolver_Init(&s_state);
 
     FrameCursor_t c = { .phase_index = 0u, .cell_index = 0u, .slot_index = 0u };

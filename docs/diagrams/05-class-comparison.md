@@ -47,7 +47,7 @@ flowchart LR
 
 ## Sync Phase Behavior
 
-How each class behaves during the Sync Phase (`DIRECTION_MAC_PHASE`):
+How each class behaves during the Sync Phase (`DIRECTION_MAC_CELL`):
 
 ```mermaid
 flowchart LR
@@ -65,7 +65,9 @@ flowchart LR
 
     subgraph sync_c3["C3 in Sync Phase"]
         direction TB
-        s3_all["All cells → TX<br/><i>Originates Sync payload</i><br/><i>from own RTC snapshot</i>"]
+        s3_cell0["Cell 0 → TX<br/><i>Originates Sync payload</i><br/><i>from own RTC snapshot</i>"]
+        s3_celln["Cells 1+ → Skip<br/><i>Already transmitted</i>"]
+        s3_cell0 --> s3_celln
     end
 ```
 
@@ -73,9 +75,10 @@ flowchart LR
 
 | Direction Mode | C1 Decision | C2 Decision | C3 Decision |
 |----------------|-------------|-------------|-------------|
-| `DIRECTION_MAC_PHASE` | Always RX | Cell 0: RX; Cells 1+: TX if epoch | Always TX |
 | `DIRECTION_CELL_SKIP` | hop-count mod-3 eligibility | hop-count mod-3 eligibility | eff_hop=3, mod-3 eligibility |
-| `DIRECTION_MAC_CELL` | Always RX | TX if cell < K and budget > 0 | TX if cell < K (no budget check) |
+| `DIRECTION_MAC_CELL` (Mesh_Beacon) | Always RX | TX if cell < K and budget > 0 | TX if cell < K (no budget check) |
+| `DIRECTION_MAC_CELL` (Sync) | All cells: RX | Cell 0: RX; Cells 1+: TX if epoch received | Cell 0: TX; Cells 1+: Skip |
+| `DIRECTION_MAC_PHASE` | *unused* | *unused* | *unused* |
 
 ## Link-Time Polymorphism
 

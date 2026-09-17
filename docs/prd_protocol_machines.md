@@ -17,7 +17,7 @@ Implement five protocol machines as self-contained C modules: four on CM0+, one 
 5. As a C1 or C2 node, I want the MAC State Machine to manage my state transitions (Scanning to Synchronized to Paired) entirely within CM0+ so that state changes happen atomically in the cooperative task loop without cross-core latency.
 6. As a C3 gateway (SyncAnchor), I want to boot directly into `Active` state with no three-packet sync acquisition required. Note: C3 will eventually run a GPS-based (or equivalent) external sync sequence — that acquisition is deferred, but the state machine must leave a hook for it.
 7. As a C3 gateway, I want the MAC State Machine to bypass `BeaconTxBudget` and transmit in every eligible Mesh_Beacon cell unconditionally so that downstream C2 nodes always have an anchor signal.
-8. As a C2 relay participating in CT Sync, I want the MAC State Machine to alternate between participation cycles and audit cycles so that I can measure my own drift without self-interference.
+8. As a C2 relay participating in CT Sync, I want the MAC State Machine to use the three-tier per-occurrence dispatch (Rx Cell 0, relay Cells 1+ if epoch received with acceptable error) so that I can measure my drift against the incoming epoch and relay it in a single Sync Phase occurrence. (Audit cycle alternation is deferred — part of the pure CT model.)
 9. As a C1 or C2 node in `Scanning`, I want continuous wide-RX mode with no TX so that I do not violate duty-cycle rules before acquiring a frame epoch.
 10. As any node, I want the Frequency Resolver to produce `freq_hz` for every slot (header, cells, footer) by reading `FrequencyResolverState` from shared memory so that CM4 can update channel assignments without touching CM0+ code.
 11. As any node, I want the Frequency Resolver to support three cell-frequency modes (STATIC, HOP, OVERRIDE) so that different phases can use fixed channels, frequency hopping, or per-cell channel tables.
@@ -65,7 +65,7 @@ Registers `CFG_SEQ_Task_TdmaSlotWake`. RTC Alarm A ISR fires, wakes core from St
 5. If TX: ComplianceEngine_RequestChannel() -> GRANTED / skip
 6. Execute radio action (Radio.Send / Radio.SetRx / Radio.Sleep)
 7. Advance FrameCursor
-8. next_alarm = slot_start + slot_active_ms + gap_after_ms[slot_index]
+8. next_alarm = slot_start + slot_active_ms + gap_slots_ms[slot_index] - (next_slot_is_rx() ? GUARD_TIME_MS : 0)
 9. Program RTC Alarm A (absolute RTC time)
 -> return -> UTIL_SEQ_Run() -> UTIL_LPM -> Stop2
 ```
@@ -91,7 +91,7 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *p, uint32_t preamble_timestam
 void MAC_OnBeaconReceived(const BeaconPayload_t *b);
 ```
 
-`CellEligibilityMask` and `phase_tx_flag` pre-computed and written to shared memory inside these callbacks — always ready before TDMA reads them at slot boundary.
+`CellEligibilityMask` pre-computed and written to shared memory inside these callbacks — always ready before TDMA reads them at slot boundary. (`phase_tx_flag` is retained in shared memory but currently unused — see `DIRECTION_MAC_PHASE` in `CONTEXT.md`.)
 
 C3 external sync hook (GPS/equivalent, deferred):
 
@@ -105,7 +105,7 @@ void MAC_OnExternalSyncAcquired(const FrameEpoch_t *e);
 uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor, SlotPosition_t pos);
 ```
 
-No UTIL_SEQ task, no UTIL_TIMER. Called synchronously from TDMA task. CM0+-local LFSR for `CELL_FREQ_HOP` mode. `FrequencyResolverState` ~980 bytes in SRAM2 (`MAX_PHASES=7`, `MAX_CELLS_PER_PHASE=32`).
+No UTIL_SEQ task, no UTIL_TIMER. Called synchronously from TDMA task. CM0+-local LFSR for `CELL_FREQ_HOP` mode. `FrequencyResolverState` 400 bytes + override pool 640 bytes = 1040 bytes in SRAM2 (`MAX_PHASES=20`, `MAX_CELLS_PER_PHASE=32`, `MAX_OVERRIDE_TABLES=5`). Override tables are split out of the per-phase struct into a separate pool — only phases using `CELL_FREQ_OVERRIDE` consume entries.
 
 ### Compliance Engine — synchronous hooks, shared-memory output
 
@@ -153,8 +153,8 @@ TDMA task priority lower than MbMux radio command tasks.
 
 - `AlarmBRequest` — pending flag + BCD RTC time fields
 - `CellEligibilityMask` (uint8_t, 3-bit)
-- `phase_tx_flag` (uint8_t)
-- `FrequencyResolverState` (~980 bytes)
+- `phase_tx_flag` (uint8_t) — retained, currently unused (`DIRECTION_MAC_PHASE` not used by any phase)
+- `FrequencyResolverState` (400 bytes, 20 phases x 20 bytes) + `g_freq_override_tables` pool (640 bytes, 5 x 32 cells x 4 bytes)
 - `ComplianceStatus` (12 bytes)
 - `RoutingState` — array of RouteEntry
 - `MeshUplinkQueue`, `MeshDownlinkQueue`, `ClusterQueue` — 3-tier priority TX queues

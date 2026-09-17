@@ -20,6 +20,7 @@
 #include "tdma_table.h"
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 /* =========================================================================
  * Constants
@@ -45,6 +46,7 @@ static uint8_t               s_hop_count;
 static CellEligibilityMask_t s_cell_elig_ul;
 static CellEligibilityMask_t s_cell_elig_dl;
 static PhaseTxFlag_t         s_phase_tx_flag;
+static bool                   s_epoch_received_this_phase;
 static uint8_t               s_last_phase_idx;
 static MAC_Hooks_t           s_hooks;
 
@@ -86,6 +88,7 @@ void MAC_Init(const MAC_Hooks_t *hooks)
     s_cell_elig_ul     = 0x00u;
     s_cell_elig_dl     = 0x00u;
     s_phase_tx_flag    = 0u;
+    s_epoch_received_this_phase = false;
     s_last_phase_idx   = 0xFFu;
     if (hooks != NULL) {
         s_hooks = *hooks;
@@ -107,6 +110,7 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
 
     if (cursor->phase_index != s_last_phase_idx) {
         s_last_phase_idx = cursor->phase_index;
+        s_epoch_received_this_phase = false;
         if (phase->type == PHASE_TYPE_SYNC) {
             s_phase_tx_flag = 0u;  /* C1 always RX in sync */
         }
@@ -187,7 +191,8 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
         uint32_t error = u32_abs_diff(preamble_timestamp_ms, expected_arrival);
 
         if (error < SYNC_PARTICIPATE_THRESHOLD_MS) {
-            /* C1 receives; no relay action needed */
+            /* C1 receives valid epoch; no relay action needed */
+            s_epoch_received_this_phase = true;
         } else if (error < SYNC_RESYNC_THRESHOLD_MS) {
             /* Tier 2: SSR correction. */
             if (s_hooks.rtc_align_subsecond != NULL) {
@@ -229,6 +234,9 @@ ClockState_t          MAC_GetClockState(void)                   { return s_clock
 CellEligibilityMask_t MAC_GetCellEligibilityMask_Uplink(void)   { return s_cell_elig_ul; }
 CellEligibilityMask_t MAC_GetCellEligibilityMask_Downlink(void) { return s_cell_elig_dl; }
 PhaseTxFlag_t         MAC_GetPhaseTxFlag(void)                  { return s_phase_tx_flag; }
+bool                  MAC_GetEpochReceivedThisPhase(void)        { return s_epoch_received_this_phase; }
+uint8_t               MAC_GetHopCount(void)                      { return s_hop_count; }
+uint8_t               MAC_GetBeaconTxBudget(void)                 { return 0u; }
 uint32_t              MAC_GetSyncPhaseMs(void)                  { return s_sync_phase_ms; }
 uint32_t              MAC_GetSyncPhaseEpochMs(void)             { return 0u; }  /* C1 never relays */
 void MAC_GetSyncPhaseDate(uint8_t *day, uint8_t *month, uint8_t *year)

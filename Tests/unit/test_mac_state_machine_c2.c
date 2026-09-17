@@ -40,11 +40,11 @@ static void stub_get_rtc_snapshot(uint32_t *ms,
 }
 
 static void stub_sync_bootstrapped(uint8_t phase_idx, uint8_t cell_idx,
-                                    uint32_t slot_start_ms)
+                                    uint32_t rtc_now_ms)
 {
     s_sync_bootstrapped_phase_idx  = phase_idx;
     s_sync_bootstrapped_cell_idx   = cell_idx;
-    s_sync_bootstrapped_slot_start = slot_start_ms;
+    s_sync_bootstrapped_slot_start = rtc_now_ms;
     s_sync_bootstrapped_calls++;
 }
 
@@ -435,6 +435,107 @@ void test_c2_beacon_tx_budget_resets_on_hop_change(void)
     TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&nc0, &s_beacon_phase));
 }
 
+/* ------- Beacon Tx at cell 3+ (relative to beacon reception) -------------- */
+
+void test_c2_beacon_tx_at_cell_3_after_beacon_received(void)
+{
+    sync_mac();
+    BeaconPayload_t b = {.hop_count = 1u, .node_id = 42u, .route_cost = 100u};
+    MAC_OnBeaconReceived(&b);  /* budget = K = 2 */
+
+    /* Consume budget at cells 0 and 1 */
+    FrameCursor_t c0 = {.phase_index = 5u, .cell_index = 0u, .slot_index = 0u};
+    FrameCursor_t c1 = {.phase_index = 5u, .cell_index = 1u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c0, &s_beacon_phase);
+    MAC_OnSlotOpportunity(&c1, &s_beacon_phase);
+
+    /* Cell 2: budget exhausted → Rx */
+    FrameCursor_t c2 = {.phase_index = 5u, .cell_index = 2u, .slot_index = 0u};
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c2, &s_beacon_phase));
+
+    /* Receive new beacon at cell 3 with different hop → structural change → budget reset */
+    BeaconPayload_t b2 = {.hop_count = 5u, .node_id = 42u, .route_cost = 100u};
+    MAC_OnBeaconReceived(&b2);
+
+    /* Cell 3: budget > 0 → Tx (old code would fail: 3 < 2 is false) */
+    FrameCursor_t c3 = {.phase_index = 5u, .cell_index = 3u, .slot_index = 0u};
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c3, &s_beacon_phase));
+
+    /* Cell 4: budget > 0 → Tx */
+    FrameCursor_t c4 = {.phase_index = 5u, .cell_index = 4u, .slot_index = 0u};
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c4, &s_beacon_phase));
+
+    /* Cell 5: budget exhausted → Rx */
+    FrameCursor_t c5 = {.phase_index = 5u, .cell_index = 5u, .slot_index = 0u};
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c5, &s_beacon_phase));
+}
+
+void test_c2_beacon_tx_budget_getter(void)
+{
+    sync_mac();
+    /* After init + sync_mac, no beacon received → budget = 0 */
+    TEST_ASSERT_EQUAL(0u, MAC_GetBeaconTxBudget());
+
+    BeaconPayload_t b = {.hop_count = 1u, .node_id = 42u, .route_cost = 100u};
+    MAC_OnBeaconReceived(&b);
+    TEST_ASSERT_EQUAL(BEACON_K_TX_CELLS, MAC_GetBeaconTxBudget());
+
+    /* Consume one budget */
+    FrameCursor_t c0 = {.phase_index = 5u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c0, &s_beacon_phase);
+    TEST_ASSERT_EQUAL(BEACON_K_TX_CELLS - 1u, MAC_GetBeaconTxBudget());
+}
+
+/* ------- Epoch Received flag --------------------------------------------- */
+
+void test_c2_epoch_received_false_after_init(void)
+{
+    TEST_ASSERT_FALSE(MAC_GetEpochReceivedThisPhase());
+}
+
+void test_c2_epoch_received_true_after_tier1(void)
+{
+    sync_mac();
+    /* WARM state: receive a Tier 1 sync packet (error=0 < 8ms) */
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 0u);
+    MAC_OnSyncPacketReceived(&p, 0u);
+    TEST_ASSERT_TRUE(MAC_GetEpochReceivedThisPhase());
+}
+
+void test_c2_epoch_received_resets_on_phase_entry(void)
+{
+    sync_mac();
+
+    /* First slot opportunity at phase 0 — triggers phase entry */
+    FrameCursor_t c0 = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c0, TdmaTable_GetPhase(0u));
+
+    /* Receive Tier 1 — epoch received = true */
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 0u);
+    MAC_OnSyncPacketReceived(&p, 0u);
+    TEST_ASSERT_TRUE(MAC_GetEpochReceivedThisPhase());
+
+    /* Phase entry to a different phase resets the flag */
+    FrameCursor_t c1 = {.phase_index = 1u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c1, &s_other_phase);
+    TEST_ASSERT_FALSE(MAC_GetEpochReceivedThisPhase());
+}
+
+void test_c2_hop_count_zero_after_init(void)
+{
+    TEST_ASSERT_EQUAL(0u, MAC_GetHopCount());
+}
+
+void test_c2_hop_count_set_after_beacon(void)
+{
+    sync_mac();
+    BeaconPayload_t b = {.hop_count = 3u, .node_id = 7u, .route_cost = 50u};
+    MAC_OnBeaconReceived(&b);
+    TEST_ASSERT_EQUAL(4u, MAC_GetHopCount());
+}
+
 /* ------- main ------------------------------------------------------------- */
 
 int main(void)
@@ -467,5 +568,18 @@ int main(void)
     RUN_TEST(test_c2_beacon_tx_budget_set_on_first_beacon);
     RUN_TEST(test_c2_beacon_tx_budget_decrements_on_tx);
     RUN_TEST(test_c2_beacon_tx_budget_resets_on_hop_change);
+
+/* ------- Beacon Tx at cell 3+ ------------------------------------------- */
+
+    RUN_TEST(test_c2_beacon_tx_at_cell_3_after_beacon_received);
+    RUN_TEST(test_c2_beacon_tx_budget_getter);
+
+/* ------- Epoch Received flag --------------------------------------------- */
+
+    RUN_TEST(test_c2_epoch_received_false_after_init);
+    RUN_TEST(test_c2_epoch_received_true_after_tier1);
+    RUN_TEST(test_c2_epoch_received_resets_on_phase_entry);
+    RUN_TEST(test_c2_hop_count_zero_after_init);
+    RUN_TEST(test_c2_hop_count_set_after_beacon);
     return UNITY_END();
 }

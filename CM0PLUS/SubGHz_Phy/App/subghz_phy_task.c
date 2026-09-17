@@ -228,6 +228,40 @@ static void mac_hook_rtc_align_sub(uint32_t preamble_timestamp_ms,
     }
 }
 
+/* Atomic RTC snapshot hook: called at Sync Phase entry (C3/C2 TX epoch
+ * capture) and right after mac_hook_rtc_set (C2/C1 Packet 1 path) to read
+ * back the new RTC domain. HAL_RTC_GetTime must precede HAL_RTC_GetDate -
+ * it unlocks the calendar shadow registers (see sys_app.c SystemApp_Init). */
+static void mac_hook_get_rtc_snapshot(uint32_t *ms,
+                                       uint8_t  *day, uint8_t *month, uint8_t *year)
+{
+    RTC_TimeTypeDef t = {0};
+    RTC_DateTypeDef d = {0};
+
+    hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+    HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BCD);
+    HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BCD);
+
+    *ms    = (uint32_t)UTIL_TIMER_GetCurrentTime();
+    *day   = d.Date;
+    *month = d.Month;
+    *year  = d.Year;
+}
+
+/* Packet 1 hook: re-anchor the TDMA Machine's FrameCursor and alarm chain
+ * to the cell the Sync packet was actually received in, in the RTC domain
+ * mac_hook_rtc_set just switched to. */
+static void mac_hook_sync_bootstrapped(uint8_t  sync_phase_idx,
+                                        uint8_t  sync_cell_idx,
+                                        uint32_t rtc_now_ms)
+{
+    APP_LOG(TS_OFF, VLEVEL_M,
+            "MAC: sync_bootstrapped phase=%u cell=%u rtc_now=%u ms\r\n",
+            (unsigned)sync_phase_idx, (unsigned)sync_cell_idx,
+            (unsigned)rtc_now_ms);
+    TdmaMachine_BootstrapFromSync(sync_phase_idx, sync_cell_idx, rtc_now_ms);
+}
+
 static void mac_hook_sync_locked(void)
 {
     APP_LOG(TS_OFF, VLEVEL_M, "MAC: CLOCK_WARM — sync locked\r\n");
@@ -241,6 +275,8 @@ static void mac_hook_sync_lost(void)
 static const MAC_Hooks_t s_mac_hooks = {
     .rtc_set             = mac_hook_rtc_set,
     .rtc_align_subsecond = mac_hook_rtc_align_sub,
+    .get_rtc_snapshot    = mac_hook_get_rtc_snapshot,
+    .sync_bootstrapped   = mac_hook_sync_bootstrapped,
     .sync_locked         = mac_hook_sync_locked,
     .sync_lost           = mac_hook_sync_lost,
 };

@@ -100,9 +100,9 @@ static void init_all(void)
     s_mac_snapshot_ms   = 0u;
 
     s_freq_state.phases[0].cell_mode           = CELL_FREQ_STATIC;
-    s_freq_state.phases[0].cell.static_freq_hz = 868100000u;
+    s_freq_state.phases[0].cell_freq_or_seed = 868100000u;
     s_freq_state.phases[1].cell_mode           = CELL_FREQ_STATIC;
-    s_freq_state.phases[1].cell.static_freq_hz = 868100000u;
+    s_freq_state.phases[1].cell_freq_or_seed = 868100000u;
 
     FrequencyResolver_Init(&s_freq_state);
     ComplianceEngine_Init(&s_comp_status, comp_get_tick);
@@ -126,9 +126,9 @@ void tearDown(void) {}
 void test_2sync_bootstrap_mid_cell_alarm(void)
 {
     /* Receive at cell 1 of Sync0 (slot_start=3000).
-     * One step forward → alarm = 3000 + 3000 = 6000 (cell 2 of Sync0). */
+     * nominal = 3000 + 3000 = 6000, guard applied */
     TdmaMachine_BootstrapFromSync(0u, 1u, 3000u);
-    TEST_ASSERT_EQUAL(6000u, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(6000u - GUARD_TIME_MS, s_alarm_programmed);
     TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().phase_index);
     TEST_ASSERT_EQUAL(2u, TdmaMachine_GetCursor().cell_index);
 }
@@ -140,11 +140,11 @@ void test_2sync_bootstrap_mid_cell_alarm(void)
 void test_2sync_bootstrap_last_cell_alarm_at_sync1_start(void)
 {
     /* Receive at cell 2 (last cell) of Sync0, slot_start=6000.
-     * Correct:  alarm = 6000 + 3000 = 9000  (Sync1, same frame).
+     * nominal = 6000 + 3000 = 9000 (Sync1, same frame), guard applied.
      * Wrong A:  Frame_Epoch + frame_duration = 0 + 18000 = 18000.
      * Wrong B:  slot_start  + frame_duration = 6000 + 18000 = 24000. */
     TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
-    TEST_ASSERT_EQUAL(SYNC1_START_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(SYNC1_START_MS - GUARD_TIME_MS, s_alarm_programmed);
 }
 
 void test_2sync_bootstrap_last_cell_cursor_at_sync1(void)
@@ -162,7 +162,7 @@ void test_2sync_bootstrap_last_cell_cursor_at_sync1(void)
 
 void test_2sync_slot_task_after_bootstrap_advances_within_sync1(void)
 {
-    /* Bootstrap at last cell of Sync0.  Alarm fires at 9000 (Sync1 cell 0).
+    /* Bootstrap at last cell of Sync0.  Alarm fires at 9000-GUARD (Sync1 cell 0).
      * One SlotTask call must advance cursor to Sync1 cell 1. */
     TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
 

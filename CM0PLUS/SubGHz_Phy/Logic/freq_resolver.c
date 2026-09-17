@@ -44,7 +44,7 @@ uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor, SlotPosition_t p
     case SLOT_POS_CELL:
         switch (pf->cell_mode) {
         case CELL_FREQ_STATIC: {
-            uint32_t freq = pf->cell.static_freq_hz;
+            uint32_t freq = pf->cell_freq_or_seed;
             if (freq == 0u) {
 #if !defined(NDEBUG) && !defined(HOST_TEST)
                 assert(0); /* CM4 has not populated g_freq_resolver_state yet */
@@ -58,7 +58,10 @@ uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor, SlotPosition_t p
             return 0u;  /* deferred */
 
         case CELL_FREQ_OVERRIDE:
-            return pf->cell.override[cursor->cell_index];
+            if (pf->override_table_idx >= FREQ_MAX_OVERRIDE_TABLES) {
+                return 0u;  /* unassigned */
+            }
+            return g_freq_override_tables[pf->override_table_idx][cursor->cell_index];
 
         default:
             return 0u;

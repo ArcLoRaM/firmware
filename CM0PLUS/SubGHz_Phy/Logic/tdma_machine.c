@@ -121,6 +121,18 @@ static void advance_cursor(const Phase_t *phase)
         break;
 
     default:
+        /* Unreachable under correct operation — s_slot_pos only ever holds a
+         * SlotPosition_t value written by enter_phase/advance_to_next_phase/
+         * TdmaMachine_BootstrapFromSync. Getting here means the static has
+         * been corrupted (bit-flip, stray write). A field node must not
+         * crash on this, so flag it via the existing cursor-suspect signal
+         * (drives MAC re-acquisition on the next checkpoint, see
+         * TdmaMachine_SlotTask Step 2) and fall back to a safe phase
+         * boundary instead of looping forever on garbage state. */
+        s_cursor_suspect = true;
+        APP_LOG(TS_ON, VLEVEL_M,
+                "TDMA: advance_cursor corrupt s_slot_pos=%u\r\n",
+                (unsigned)s_slot_pos);
         advance_to_next_phase();
         break;
     }
@@ -160,13 +172,58 @@ static uint32_t u32_abs_diff(uint32_t a, uint32_t b)
 }
 
 /* Determine whether the next slot opportunity will be RX (for guard-time
-   look-ahead).  Only handles DIRECTION_MAC_PHASE; other modes default false. */
+   look-ahead).  Guard is applied when the next slot is deterministically Rx
+   or when its role is uncertain (conservative Rx default).  Guard is withheld
+   only when the next slot is deterministically Tx. */
 static bool next_slot_is_rx(const Phase_t *phase)
 {
-    if (phase->direction_mode == DIRECTION_MAC_PHASE) {
+    switch (phase->direction_mode) {
+
+    case DIRECTION_MAC_PHASE:
         return (MAC_GetPhaseTxFlag() == 0u);
+
+    case DIRECTION_MAC_CELL:
+        if (phase->type == PHASE_TYPE_SYNC) {
+#if   NODE_CLASS == NODE_CLASS_C1
+            return true;               /* C1 always Rx in Sync */
+#elif NODE_CLASS == NODE_CLASS_C3
+            return false;              /* C3: cell 0 Tx, cells 1+ Skip — not Rx */
+#else  /* C2 */
+            if (s_cursor.cell_index == 0u) {
+                return true;           /* cell 0 always Rx */
+            }
+            return !MAC_GetEpochReceivedThisPhase();
+#endif
+        }
+        /* Mesh_Beacon: prediction depends on node class */
+#if   NODE_CLASS == NODE_CLASS_C3
+        return false;              /* C3 always Tx in beacon → no guard */
+#elif NODE_CLASS == NODE_CLASS_C1
+        return true;               /* C1 always Rx in beacon → guard */
+#else  /* C2 */
+        return (MAC_GetBeaconTxBudget() == 0u);  /* budget > 0 → Tx → no guard */
+#endif
+
+    case DIRECTION_CELL_SKIP: {
+        uint8_t cell_idx = (uint8_t)s_cursor.cell_index;
+        CellEligibilityMask_t mask;
+        if (phase->type == PHASE_TYPE_MESH_DOWNLINK) {
+            mask = MAC_GetCellEligibilityMask_Downlink();
+        } else {
+            mask = MAC_GetCellEligibilityMask_Uplink();
+        }
+        uint8_t residue = (uint8_t)(cell_idx % 3u);
+        if (!((mask >> residue) & 1u)) {
+            return false;              /* ineligible → Skip → no guard */
+        }
+        /* Eligible: Tx if residue matches hop_count, else Rx */
+        uint8_t hop = MAC_GetHopCount();
+        return (residue != (hop % 3u));
     }
-    return false;  /* conservative: no guard time for other modes */
+
+    default:
+        return true;  /* conservative: apply guard when uncertain */
+    }
 }
 
 /* =========================================================================
@@ -259,6 +316,11 @@ void TdmaMachine_SlotTask(void)
 
     /* ---- Step 8: radio action ---- */
     if (decision == SLOT_TX) {
+        /* If we woke early (guard applied) and MAC decided Tx, delay to
+         * nominal slot start before transmitting. */
+        if (s_platform.WaitUntilMs != NULL && now_ms < s_slot_start_ms) {
+            s_platform.WaitUntilMs(s_slot_start_ms);
+        }
         ComplianceResult_t result =
             ComplianceEngine_RequestChannel(freq_hz,
                                             phase->slot_active_ms,
@@ -306,24 +368,27 @@ void TdmaMachine_SlotTask(void)
 
 void TdmaMachine_BootstrapFromSync(uint8_t  sync_phase_idx,
                                     uint8_t  sync_cell_idx,
-                                    uint32_t slot_start_ms)
+                                    uint32_t rtc_now_ms)
 {
     s_cursor.phase_index = sync_phase_idx;
     s_cursor.cell_index  = sync_cell_idx;
     s_cursor.slot_index  = 0u;
     s_slot_idx           = 0u;
     s_slot_pos           = SLOT_POS_CELL;
-    s_slot_start_ms      = slot_start_ms;
+    s_slot_start_ms      = rtc_now_ms;
     s_cursor_suspect     = false;
 
     const Phase_t *phase = TdmaTable_GetPhase(sync_phase_idx);
     if (phase != NULL) {
-        uint32_t next_ms = slot_start_ms + phase->slot_active_ms
+        uint32_t next_ms = rtc_now_ms + phase->slot_active_ms
                            + phase->gap_slots_ms[s_slot_idx];
         advance_cursor(phase);
         s_slot_start_ms    = next_ms;
-        s_expected_wake_ms = next_ms;
-        s_platform.ProgramAlarmA(next_ms);
+
+        /* Apply guard: the next slot will be Rx (acquisition packets 2+),
+         * so wake early to open the window before nominal start. */
+        s_expected_wake_ms = next_ms - GUARD_TIME_MS;
+        s_platform.ProgramAlarmA(next_ms - GUARD_TIME_MS);
     }
 }
 

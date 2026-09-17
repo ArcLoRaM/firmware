@@ -25,7 +25,7 @@
 static const Phase_t s_sync0 = {
     .type             = PHASE_TYPE_SYNC,
     .participant_mask = PARTICIPANT_C2 | PARTICIPANT_C3,
-    .direction_mode   = DIRECTION_MAC_PHASE,
+    .direction_mode   = DIRECTION_MAC_CELL,
     .cell_count       = 3u,
     .slot_count       = 1u,
     .slot_active_ms   = 2500u,
@@ -37,7 +37,7 @@ static const Phase_t s_sync0 = {
 static const Phase_t s_sync1 = {
     .type             = PHASE_TYPE_SYNC,
     .participant_mask = PARTICIPANT_C2 | PARTICIPANT_C3,
-    .direction_mode   = DIRECTION_MAC_PHASE,
+    .direction_mode   = DIRECTION_MAC_CELL,
     .cell_count       = 3u,
     .slot_count       = 1u,
     .slot_active_ms   = 2500u,

@@ -23,6 +23,8 @@ static uint8_t  s_last_sent_len;
 static uint32_t s_radio_set_rx_timeout;
 static int      s_radio_set_rx_calls;
 static int      s_radio_sleep_calls;
+static uint32_t s_wait_until_ms_target;
+static int      s_wait_until_ms_calls;
 
 static uint32_t stub_GetRtcMs(void)                          { return s_rtc_ms;                                      }
 static void     stub_ProgramAlarmA(uint32_t t)               { s_alarm_programmed = t; s_alarm_calls++;              }
@@ -38,6 +40,7 @@ static void     stub_RadioSend(const uint8_t *b, uint8_t l)
 static void     stub_RadioSetRx(uint32_t ms)                 { s_radio_set_rx_timeout = ms; s_radio_set_rx_calls++;  }
 static void     stub_RadioSleep(void)                        { s_radio_sleep_calls++;                                }
 static uint32_t stub_RadioTimeOnAir(void)                    { return 2500u; /* == slot_active_ms */                 }
+static void     stub_WaitUntilMs(uint32_t t)                  { s_wait_until_ms_target = t; s_wait_until_ms_calls++; s_rtc_ms = t; }
 
 static const TdmaPlatform_t k_platform = {
     .GetRtcMs       = stub_GetRtcMs,
@@ -47,6 +50,7 @@ static const TdmaPlatform_t k_platform = {
     .RadioSetRx     = stub_RadioSetRx,
     .RadioSleep     = stub_RadioSleep,
     .RadioTimeOnAir = stub_RadioTimeOnAir,
+    .WaitUntilMs    = stub_WaitUntilMs,
 };
 
 /* =========================================================================
@@ -97,13 +101,15 @@ static void init_all(void)
     s_radio_set_rx_timeout= 0u;
     s_radio_set_rx_calls  = 0;
     s_radio_sleep_calls   = 0;
+    s_wait_until_ms_target = 0u;
+    s_wait_until_ms_calls  = 0;
     memset(s_last_sent_buf, 0, sizeof(s_last_sent_buf));
     s_last_sent_len       = 0u;
     s_mac_snapshot_ms     = 0u;
 
     /* Static 868.1 MHz on Sync phase (phase 0, cell mode STATIC) */
     s_freq_state.phases[0].cell_mode           = CELL_FREQ_STATIC;
-    s_freq_state.phases[0].cell.static_freq_hz = 868100000u;
+    s_freq_state.phases[0].cell_freq_or_seed = 868100000u;
 
     FrequencyResolver_Init(&s_freq_state);
     ComplianceEngine_Init(&s_comp_status, comp_get_tick);
@@ -159,14 +165,14 @@ void test_slot_task_programs_alarm_nominal_for_tx_slot(void)
     TdmaMachine_SlotTask();
     /*
      * Cell 0 of Sync phase: always SLOT_RX for C2 (epoch not yet received).
-     * phase_tx_flag=0 (C2 reactive model) → next_slot_is_rx=true → guard applied.
+     * DIRECTION_MAC_CELL + epoch not received → next_slot_is_rx=true → guard.
      * next_alarm = 0 + 2500 + 500 - GUARD_TIME_MS = 2995.
      */
     TEST_ASSERT_EQUAL(SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
 }
 
 /* =========================================================================
- * Alarm timing — RX guard (MAC Scanning → phase_tx_flag=0)
+ * Alarm timing — RX guard (MAC Scanning → epoch not received)
  * ========================================================================= */
 
 void test_slot_task_rx_alarm_early_by_guard(void)
@@ -175,7 +181,7 @@ void test_slot_task_rx_alarm_early_by_guard(void)
     s_rtc_ms = 0u;
     TdmaMachine_SlotTask();
     /*
-     * Decision = RX.  DIRECTION_MAC_PHASE + phase_tx_flag=0 → next slot RX.
+     * Decision = RX.  DIRECTION_MAC_CELL + epoch not received → next slot Rx.
      * alarm = 0 + SLOT_STEP_MS - GUARD_TIME_MS = 3000 - 5 = 2995.
      */
     TEST_ASSERT_EQUAL(SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
@@ -326,9 +332,9 @@ void test_bootstrap_cursor_positioned_at_next_cell(void)
 
 void test_bootstrap_next_alarm_accounts_for_received_cell(void)
 {
-    /* slot_start=3000, slot_active=2500, gap=500 → alarm = 3000+2500+500 = 6000 */
+    /* slot_start=3000, slot_active=2500, gap=500 → nominal=6000, guard applied */
     TdmaMachine_BootstrapFromSync(0u, 1u, 3000u);
-    TEST_ASSERT_EQUAL(6000u, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(6000u - GUARD_TIME_MS, s_alarm_programmed);
 }
 
 void test_bootstrap_cell0_cursor_at_cell1(void)
@@ -341,9 +347,9 @@ void test_bootstrap_cell0_cursor_at_cell1(void)
 
 void test_bootstrap_cell0_alarm_one_step(void)
 {
-    /* Receive at cell 0, slot_start=0 → alarm = 0 + slot_active_ms + gap = 3000. */
+    /* Receive at cell 0, slot_start=0 → nominal = SLOT_STEP_MS, guard applied */
     TdmaMachine_BootstrapFromSync(0u, 0u, 0u);
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
 }
 
 void test_bootstrap_last_cell_cursor_wraps(void)
@@ -358,10 +364,9 @@ void test_bootstrap_last_cell_cursor_wraps(void)
 void test_bootstrap_last_cell_alarm_one_step(void)
 {
     /* Receive at cell 2, slot_start=6000.
-     * Correct: alarm = 6000 + 3000 = 9000 (next frame cell-0 start).
-     * Wrong "full frame": slot_start + frame_duration = 6000 + 9000 = 15000. */
+     * nominal = 6000 + 3000 = 9000, guard applied */
     TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
-    TEST_ASSERT_EQUAL(6000u + SLOT_STEP_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(6000u + SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
 }
 
 void test_sync_tx_payload_fields_match_cursor(void)
@@ -390,6 +395,72 @@ void test_sync_tx_payload_fields_match_cursor(void)
 }
 
 /* =========================================================================
+ * State-aware guard: no guard when epoch received (next slot is Tx)
+ * ========================================================================= */
+
+void test_no_guard_when_epoch_received(void)
+{
+    sync_mac();
+    s_rtc_ms = 0u;
+    TdmaMachine_SlotTask();   /* cell 0 → RX, epoch not received → guard */
+
+    /* Arm epoch: receive Tier 1 sync packet in cell-0 RX window */
+    SyncPayload_t arm;
+    memset(&arm, 0, sizeof(arm));
+    arm.sync_phase_index             = 0u;
+    arm.ms_since_midnight_sync_phase = 0u;
+    arm.sync_cell_index              = 0u;
+    MAC_OnSyncPacketReceived(&arm, 0u);  /* error=0 → Tier 1 → epoch armed */
+
+    step_slot();   /* cell 1 → TX (epoch received) */
+    /*
+     * Alarm for cell 2: epoch received → next slot is Tx → no guard.
+     * alarm = 2 × SLOT_STEP_MS = 6000 (nominal, no guard subtraction).
+     */
+    TEST_ASSERT_EQUAL(2u * SLOT_STEP_MS, s_alarm_programmed);
+}
+
+/* =========================================================================
+ * TX delayed to nominal when woke early (guard applied + MAC decides Tx)
+ * ========================================================================= */
+
+void test_tx_delayed_to_nominal_when_woke_early(void)
+{
+    sync_mac();
+    s_rtc_ms = 0u;
+    TdmaMachine_SlotTask();   /* cell 0 → RX, alarm = SLOT_STEP_MS - GUARD */
+
+    /* Arm epoch */
+    SyncPayload_t arm;
+    memset(&arm, 0, sizeof(arm));
+    arm.sync_phase_index             = 0u;
+    arm.ms_since_midnight_sync_phase = 0u;
+    arm.sync_cell_index              = 0u;
+    MAC_OnSyncPacketReceived(&arm, 0u);
+
+    step_slot();   /* cell 1: woke early (guard), MAC decides Tx */
+    /*
+     * WaitUntilMs must be called with nominal slot start (3000).
+     * The stub advances s_rtc_ms to 3000.
+     */
+    TEST_ASSERT_EQUAL(1, s_wait_until_ms_calls);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS, s_wait_until_ms_target);
+    TEST_ASSERT_EQUAL(1, s_radio_send_calls);
+}
+
+/* =========================================================================
+ * Bootstrap applies guard time on first alarm
+ * ========================================================================= */
+
+void test_bootstrap_applies_guard_on_alarm(void)
+{
+    /* After receiving Packet 1 at cell 0 (slot_start=0), the next alarm must
+     * subtract guard: alarm = SLOT_STEP_MS - GUARD_TIME_MS. */
+    TdmaMachine_BootstrapFromSync(0u, 0u, 0u);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
+}
+
+/* =========================================================================
  * main
  * ========================================================================= */
 
@@ -415,5 +486,16 @@ int main(void)
     RUN_TEST(test_bootstrap_last_cell_cursor_wraps);
     RUN_TEST(test_bootstrap_last_cell_alarm_one_step);
     RUN_TEST(test_sync_tx_payload_fields_match_cursor);
+
+/* ------- State-aware guard ----------------------------------------------- */
+
+    RUN_TEST(test_no_guard_when_epoch_received);
+
+/* ------- TX delay to nominal -------------------------------------------- */
+
+    RUN_TEST(test_tx_delayed_to_nominal_when_woke_early);
+/* ------- Bootstrap guard ----------------------------------------------- */
+
+    RUN_TEST(test_bootstrap_applies_guard_on_alarm);
     return UNITY_END();
 }

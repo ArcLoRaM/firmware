@@ -30,6 +30,7 @@
 #define MAC_STATE_MACHINE_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "protocol_types.h"
 #include "mac_types.h"
 
@@ -126,16 +127,19 @@ typedef struct {
                               uint8_t  *day, uint8_t *month, uint8_t *year);
 
     /*!
-     * Packet 1 hook — called after the TDMA cursor has been re-anchored.
+     * Packet 1 hook — re-anchors the TDMA cursor and alarm chain.
      *
      * \param sync_phase_idx  Phase index from \c SyncPayload.sync_phase_index.
      * \param sync_cell_idx   Cell index from \c SyncPayload.sync_cell_index.
-     * \param slot_start_ms   Nominal start of the received cell in the new
-     *                        RTC domain (= \c get_rtc_snapshot ms value).
+     * \param rtc_now_ms      Live RTC readback (\c get_rtc_snapshot ms value)
+     *                        in the new RTC domain, taken right after
+     *                        \c rtc_set. Expected to coincide with the
+     *                        nominal start of the received cell, but is a
+     *                        hardware snapshot, not a schedule-derived value.
      */
     void (*sync_bootstrapped)(uint8_t  sync_phase_idx,
                                uint8_t  sync_cell_idx,
-                               uint32_t slot_start_ms);
+                               uint32_t rtc_now_ms);
 
     /*! Fired when ClockState transitions to CLOCK_WARM (2 consecutive good packets). */
     void (*sync_locked)(void);
@@ -256,6 +260,42 @@ CellEligibilityMask_t MAC_GetCellEligibilityMask_Downlink(void);
  * \retval  \ref PhaseTxFlag_t Current flag value.
  */
 PhaseTxFlag_t MAC_GetPhaseTxFlag(void);
+
+/*!
+ * \brief   Return whether the MAC has received a valid sync epoch in the
+ *          current Sync Phase occurrence.
+ *
+ * \details C2: true after a Tier 1 packet (error below
+ *          \ref SYNC_PARTICIPATE_THRESHOLD_MS) is received; reset to false
+ *          at Sync phase entry. C1 and C3: always false (C1 never relays,
+ *          C3 originates).
+ *
+ * \retval  bool true if epoch received this phase; false otherwise.
+ */
+bool MAC_GetEpochReceivedThisPhase(void);
+
+/*!
+ * \brief   Return the node's current mesh hop count.
+ *
+ * \details Set to \c peer.hop_count + 1 on first valid beacon reception.
+ *          Default 0 before any beacon is received. Used by the TDMA Machine
+ *          for guard-time look-ahead in \ref DIRECTION_CELL_SKIP phases.
+ *
+ * \retval  uint8_t Hop count (0 = no beacon received yet).
+ */
+uint8_t MAC_GetHopCount(void);
+
+/*!
+ * \brief   Return the remaining BeaconTxBudget.
+ *
+ * \details C2: counts down from \ref BEACON_K_TX_CELLS on each Tx; reset to K
+ *          when a structural beacon change is received. C1 and C3: always 0
+ *          (C1 never transmits beacons, C3 bypasses the budget). Used by the
+ *          TDMA Machine for guard-time look-ahead in Mesh_Beacon phases.
+ *
+ * \retval  uint8_t Remaining Tx budget.
+ */
+uint8_t MAC_GetBeaconTxBudget(void);
 
 /*!
  * \brief   Return the Sync Phase start time (binary ms) in the current RTC domain.

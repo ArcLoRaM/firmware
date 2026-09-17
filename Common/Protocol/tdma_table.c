@@ -30,7 +30,7 @@
 static const Phase_t s_sync_phase = {
     .type             = PHASE_TYPE_SYNC,
     .participant_mask = PARTICIPANT_C1 | PARTICIPANT_C2 | PARTICIPANT_C3,
-    .direction_mode   = DIRECTION_MAC_PHASE,
+    .direction_mode   = DIRECTION_MAC_CELL,
     .cell_count       = 3u,
     .slot_count       = 1u,
     .slot_active_ms   = 2500u,    /* SF12/BW125 Sync packet airtime (conservative) */
@@ -74,4 +74,21 @@ uint32_t TdmaTable_PhaseStartOffset_ms( uint8_t phase_index )
         return 0u;
     }
     return s_phase_start_ms[phase_index];
+}
+
+bool TdmaTable_ValidateSyncSingleSlot_Of(const Phase_t * const *phases, uint8_t count)
+{
+    for (uint8_t i = 0u; i < count; i++) {
+        if (phases[i] != NULL
+            && phases[i]->type == PHASE_TYPE_SYNC
+            && phases[i]->slot_count != 1u) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TdmaTable_ValidateSyncSingleSlot(void)
+{
+    return TdmaTable_ValidateSyncSingleSlot_Of(s_table, TABLE_SIZE);
 }

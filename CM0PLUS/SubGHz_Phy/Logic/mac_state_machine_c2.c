@@ -147,7 +147,17 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
     }
 
     case DIRECTION_MAC_CELL: {
-        if (cursor->cell_index < BEACON_K_TX_CELLS && s_beacon_tx_budget > 0u) {
+        if (phase->type == PHASE_TYPE_SYNC) {
+            /* Sync reactive model: cell 0 always RX; cells 1+ TX only if
+             * epoch received in cell 0 this occurrence. */
+            if (cursor->cell_index == 0u) {
+                return SLOT_RX;
+            }
+            return s_epoch_received_this_phase ? SLOT_TX : SLOT_RX;
+        }
+        /* Mesh_Beacon: Tx in the next K cells after beacon reception
+         * (budget counts down from K; no absolute cell-index constraint) */
+        if (s_beacon_tx_budget > 0u) {
             s_beacon_tx_budget--;
             return SLOT_TX;
         }
@@ -162,13 +172,15 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
 void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
                                uint32_t             preamble_timestamp_ms)
 {
+    //duration of a cell in the sync phase, used to compute expected arrival time of the packet
     uint32_t per_cell = sync_per_cell_ms_for_phase(payload->sync_phase_index);
 
     /* ---- Packet 1: cold RTC set ----------------------------------------- */
     if (s_clock_state == CLOCK_COLD) {
         uint32_t target_ms = payload->ms_since_midnight_sync_phase
-                             + (uint32_t)payload->sync_cell_index * per_cell;
+                             + (uint32_t)payload->sync_cell_index * per_cell; //the sender claimed nominal start of cell time
 
+        //the hardware RTC calendar is now set so that,going forward, reading it should yield target_ms  (modulo the hook's own execution latency).
         if (s_hooks.rtc_set != NULL) {
             s_hooks.rtc_set(target_ms, payload->day, payload->month, payload->year);
         }
@@ -176,9 +188,11 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
         uint32_t rtc_now = 0u;
         if (s_hooks.get_rtc_snapshot != NULL) {
             uint8_t d, mo, y;
-            s_hooks.get_rtc_snapshot(&rtc_now, &d, &mo, &y);
+            s_hooks.get_rtc_snapshot(&rtc_now, &d, &mo, &y);//indepedent hardware read of the RTC in the new domain
         }
         s_sync_phase_ms    = rtc_now - (uint32_t)payload->sync_cell_index * per_cell;
+        // → derives "when did this Sync phase occurrenc start, in the new RTC domain" - the anchor later used to compute expected-arrival clock-error for Packets 2 and 3 of the synchronization process
+
         s_sync_consecutive = 0u;
         s_clock_state      = CLOCK_ACQUIRING;
 
@@ -254,7 +268,7 @@ void MAC_OnBeaconReceived(const BeaconPayload_t *beacon)
         (u32_abs_diff((uint32_t)new_cost, (uint32_t)s_route_cost) > ROUTE_COST_CHANGE_THRESHOLD);
 
     if (structural_change) {
-        s_beacon_tx_budget = 2u;
+        s_beacon_tx_budget = BEACON_K_TX_CELLS;
         s_first_beacon     = 0u;
     }
 
@@ -281,6 +295,9 @@ ClockState_t          MAC_GetClockState(void)                   { return s_clock
 CellEligibilityMask_t MAC_GetCellEligibilityMask_Uplink(void)   { return s_cell_elig_ul;        }
 CellEligibilityMask_t MAC_GetCellEligibilityMask_Downlink(void) { return s_cell_elig_dl;        }
 PhaseTxFlag_t         MAC_GetPhaseTxFlag(void)                  { return s_phase_tx_flag;       }
+bool                  MAC_GetEpochReceivedThisPhase(void)        { return s_epoch_received_this_phase; }
+uint8_t               MAC_GetHopCount(void)                      { return s_hop_count; }
+uint8_t               MAC_GetBeaconTxBudget(void)                 { return s_beacon_tx_budget; }
 uint32_t              MAC_GetSyncPhaseMs(void)                  { return s_sync_phase_ms;       }
 uint32_t              MAC_GetSyncPhaseEpochMs(void)             { return s_sync_phase_epoch_ms; }
 void MAC_GetSyncPhaseDate(uint8_t *day, uint8_t *month, uint8_t *year)

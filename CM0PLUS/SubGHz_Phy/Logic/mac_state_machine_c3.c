@@ -93,7 +93,12 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
         return SLOT_TX;  /* C3: always TX every cell of Sync phase */
 
     case DIRECTION_MAC_CELL:
-        return (cursor->cell_index < BEACON_K_TX_CELLS) ? SLOT_TX : SLOT_RX;
+        if (phase->type == PHASE_TYPE_SYNC) {
+            /* C3 originates sync in cell 0; skips cells 1+ (already sent) */
+            return (cursor->cell_index == 0u) ? SLOT_TX : SLOT_SKIP;
+        }
+        /* Mesh_Beacon: C3 always Tx (bypasses BeaconTxBudget) */
+        return SLOT_TX;
 
     case DIRECTION_CELL_SKIP: {
         uint8_t  eff_hop = 3u;
@@ -136,6 +141,9 @@ ClockState_t          MAC_GetClockState(void)                   { return CLOCK_W
 CellEligibilityMask_t MAC_GetCellEligibilityMask_Uplink(void)   { return s_cell_elig_ul;       }
 CellEligibilityMask_t MAC_GetCellEligibilityMask_Downlink(void) { return s_cell_elig_dl;       }
 PhaseTxFlag_t         MAC_GetPhaseTxFlag(void)                  { return s_phase_tx_flag;      }
+bool                  MAC_GetEpochReceivedThisPhase(void)        { return false;               }
+uint8_t               MAC_GetHopCount(void)                      { return s_hop_count;        }
+uint8_t               MAC_GetBeaconTxBudget(void)                 { return 0u;                }
 uint32_t              MAC_GetSyncPhaseMs(void)                  { return s_sync_phase_epoch_ms; }
 uint32_t              MAC_GetSyncPhaseEpochMs(void)             { return s_sync_phase_epoch_ms; }
 void MAC_GetSyncPhaseDate(uint8_t *day, uint8_t *month, uint8_t *year)

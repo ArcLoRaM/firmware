@@ -49,36 +49,70 @@ and each half of the window extension. Version 2 may split the interface into
 
 ### Extended Rx prediction
 
-`next_slot_is_rx()` is extended to cover all three DirectionModes:
+`next_slot_is_rx()` is extended to cover all three DirectionModes. The
+governing principle: guard time is applied when the next slot is
+deterministically Rx *or* when its role cannot be determined with certainty.
+Only when the next slot is deterministically Tx is guard withheld. In
+theory all cases are deterministic; the conservative Rx default is a safety
+net. When a node wakes early (guard applied) and the MAC then decides Tx,
+the TDMA Machine delays transmission until nominal slot start.
 
 | DirectionMode        | Prediction method                                                  |
 |----------------------|--------------------------------------------------------------------|
 | `DIRECTION_MAC_PHASE`  | Read `MAC_GetPhaseTxFlag()` (existing)                           |
 | `DIRECTION_CELL_SKIP`  | Compute from `CellEligibilityMask` (uplink or downlink mask based on `phase->type`) + `cell_index % 3` vs `hop_count % 3` |
-| `DIRECTION_MAC_CELL`   | `cell_index >= BEACON_K_TX_CELLS` → Rx; otherwise conservatively return false |
+| `DIRECTION_MAC_CELL`   | Phase-type-dependent (see below)                                  |
 
-The TDMA Machine owns the prediction (queries MAC via existing getters). The
-resolver is a pure value function with no Rx/Tx awareness.
+`DIRECTION_MAC_CELL` prediction per phase type:
+
+- **Mesh_Beacon**: prediction depends on node class. C3: always Tx → no
+  guard. C1: always Rx → guard. C2: `BeaconTxBudget > 0` (via
+  `MAC_GetBeaconTxBudget()`) → next cell is Tx → no guard; `== 0` → Rx →
+  guard. The budget counts down from K after a structural beacon change,
+  not from phase start, so the prediction is relative to beacon reception
+  not absolute cell index. When the deferred random Tx gate is
+  implemented, the prediction must switch to conservative Rx.
+- **Sync**: state-aware, consulting the MAC's Epoch Received flag
+  (`MAC_GetEpochReceivedThisPhase()` — a new getter). The flag is read at
+  alarm-programming time (end of current cell), so it always reflects the
+  latest MAC state:
+  - C1: always Rx → guard. Deterministic.
+  - C3: Cell 0 = Tx → no guard; Cells 1+ = Skip → no alarm. Deterministic.
+  - C2: the epoch may be received in any cell depending on hop depth
+    (Cell 0 for hop-1, Cell 1 for hop-2, Cell N for hop-(N+1)). Before the
+    epoch is received → Rx → guard. After the epoch is received (flag set)
+    → Tx → no guard. Because the flag is read after the current cell
+    completes, the prediction for the next cell is always deterministic.
+
+The TDMA Machine owns the prediction (queries MAC via getters). The
+resolver is a pure value function with no Rx/Tx awareness. The
+`MAC_GetEpochReceivedThisPhase()` getter is added to expose the MAC's
+epoch-received state for the Sync prediction.
 
 ### No phase-boundary special case
 
 Prediction inputs are stable across phase boundaries:
 
 - `MAC_GetPhaseTxFlag()` is effectively a compile-time constant per node class
-  (C1 = 0, C3 = 1, C2 = 0 for look-ahead purposes — C2 cell 0 is always Rx).
+  (C1 = 0, C3 = 1). Not used for Sync (which uses `DIRECTION_MAC_CELL`).
 - `CellEligibilityMask` depends on `hop_count` (stable across phases) and
   `cell_index` (from the advanced cursor). The uplink/downlink mask is selected
   via `phase->type`, which is available from the TDMA Table.
-- `BEACON_K_TX_CELLS` is a compile-time constant.
+- K is conserved across Mesh_Beacon phase occurrences, so it is never stale.
+- `MAC_GetEpochReceivedThisPhase()` is reset at Sync phase entry
+  (`MAC_OnSlotOpportunity` detects phase index change), so it is never
+  stale when consulted for the next cell's prediction.
 
 No boundary skip or fallback logic is needed.
 
 ### Tx node behaviour
 
 The Tx node always transmits at nominal time — no guard adjustment on the Tx
-side. The Rx guard must absorb bilateral drift (local + peer). In V1 this is
-covered by the fixed 5ms constant being sized for worst-case bilateral drift
-at the expected Sync correction cadence.
+side. If the node woke early (guard applied because the prediction was Rx or
+uncertain) and the MAC decides Tx, the TDMA Machine delays transmission
+until nominal slot start. The Rx guard must absorb bilateral drift (local +
+peer). In V1 this is covered by the fixed 5ms constant being sized for
+worst-case bilateral drift at the expected Sync correction cadence.
 
 ## Alternatives Considered
 

@@ -11,18 +11,40 @@
                 "CMAKE_C_COMPILER": "gcc",
                 "CMAKE_BUILD_TYPE": "Debug"
             }
+        },
+        {
+            "name": "host-linux",
+            "displayName": "Host (Linux GCC)",
+            "description": "Builds and runs tests on Linux using system GCC. Completely separate from the STM32 firmware build.",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
         }
     ],
     "buildPresets": [
         {
             "name": "host-mingw",
             "configurePreset": "host-mingw"
+        },
+        {
+            "name": "host-linux",
+            "configurePreset": "host-linux"
         }
     ],
     "testPresets": [
         {
             "name": "host-mingw",
             "configurePreset": "host-mingw",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "host-linux",
+            "configurePreset": "host-linux",
             "output": {
                 "outputOnFailure": true
             }
