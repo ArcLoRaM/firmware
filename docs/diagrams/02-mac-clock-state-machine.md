@@ -16,7 +16,9 @@ stateDiagram-v2
 
     CLOCK_ACQUIRING --> CLOCK_WARM : 2 consecutive good packets (error &lt; 8 ms)
 
-    CLOCK_WARM --> CLOCK_COLD : Tier 3 — drift ≥ 300 ms — sync lost
+    CLOCK_WARM --> CLOCK_COLD : Tier 3 — drift ≥ 100 ms — sync lost
+    CLOCK_WARM --> CLOCK_COLD : Sync Silence Timeout — no sync for 15 min
+    CLOCK_ACQUIRING --> CLOCK_COLD : Sync Silence Timeout — no sync for 15 min
 
     note right of CLOCK_COLD
         No sync received.
@@ -32,8 +34,8 @@ stateDiagram-v2
     note right of CLOCK_WARM
         Three-tier dispatch per Sync packet.
         Tier 1 (&lt; 8 ms): participate, store epoch.
-        Tier 2 (8–299 ms): SSR fine-tune only.
-        Tier 3 (≥ 300 ms): full re-anchor, sync lost.
+        Tier 2 (8–99 ms): SSR fine-tune only.
+        Tier 3 (≥ 100 ms): full re-anchor, sync lost.
     end note
 ```
 
@@ -77,6 +79,8 @@ flowchart LR
         COLD --> |"1st Sync pkt"| ACQ
         ACQ --> |"2 good pkts"| WARM
         WARM --> |"drift ≥ 300 ms"| COLD
+        WARM --> |"no sync 15 min"| COLD
+        ACQ --> |"no sync 15 min"| COLD
     end
 
     subgraph MAC["MacState_t"]
@@ -99,13 +103,14 @@ When a node is fully synchronised, each incoming Sync packet is classified by cl
 | Tier | Error Range | Action | Effect |
 |------|-------------|--------|--------|
 | **1** | < 8 ms | Participate | Store epoch for relay (C2 sets `s_epoch_received_this_phase = true`) |
-| **2** | 8–299 ms | SSR correction | `rtc_align_subsecond()` — fine-tune without relay |
-| **3** | ≥ 300 ms | Full re-anchor | `rtc_set()` → `trigger_sync_lost()` → back to SCANNING |
+| **2** | 8–99 ms | SSR correction | `rtc_align_subsecond()` — fine-tune without relay |
+| **3** | ≥ 100 ms | Full re-anchor | `rtc_set()` → `trigger_sync_lost()` → back to SCANNING |
 
 ## Key Thresholds
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `SYNC_PARTICIPATE_THRESHOLD_MS` | 8 ms | Below this: clock is good enough to participate |
-| `SYNC_RESYNC_THRESHOLD_MS` | 300 ms | Above this: clock has drifted too far, full re-sync |
-| `SYNC_LOCK_THRESHOLD_MS` | 16 ms | CT preamble capture margin (0.5 x T_S at SF12/BW125) |
+| `SYNC_PARTICIPATE_THRESHOLD_MS` | 8 ms (0.25·T_S) | Below this: clock is good enough to participate |
+| `SYNC_RESYNC_THRESHOLD_MS` | 100 ms (3·T_S) | Above this: clock has drifted too far, full re-sync |
+| `SYNC_LOCK_THRESHOLD_MS` | 16 ms (0.5·T_S) | CT drift budget for pure CT model (deferred); not used in current relay model |
+| `SYNC_SILENCE_TIMEOUT_MS` | 15 min (provisioned) | Wall-clock timeout with no Sync packet received → `CLOCK_COLD`. Decoupled from TDMA table. See ADR-0013. |

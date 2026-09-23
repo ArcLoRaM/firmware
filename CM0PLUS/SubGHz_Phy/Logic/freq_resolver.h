@@ -58,10 +58,10 @@ void FrequencyResolver_Init(const FrequencyResolverState_t *state);
  *          caller must not invoke Radio.SetChannel(0).
  *
  * \param[in] cursor  Live position of the TDMA Machine within the TDMA Table.
- * \param[in] pos     Slot position within the phase (header / cell / footer).
+ *                    The \c slot_pos field selects header / cell / footer.
  *
  * \return  Frequency in Hz, or 0 if the slot is absent or state is not set.
  */
-uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor, SlotPosition_t pos);
+uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor);
 
 #endif /* FREQ_RESOLVER_H */

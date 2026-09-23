@@ -40,11 +40,18 @@
 
 #ifndef SYNC_LOCK_THRESHOLD_MS
 /*!
- * Maximum preamble offset error that still counts as a valid Sync lock.
+ * \brief   CT drift budget for the deferred pure CT sync model.
  *
- * \remark 0.5 × T_S at SF12/BW125 ≈ 16 ms — provides ~6× margin against
- *         the 3 × T_S preamble-locking failure ceiling (~100 ms).
- *         See CONTEXT.md — CT Sync Propagation Model.
+ * \details 0.5 × T_S at SF12/BW125 ≈ 16 ms, where T_S = 2^SF / BW is the LoRa
+ *          symbol duration. This is the maximum inter-node drift tolerance
+ *          for the pure CT model, providing ~6× margin against the 3 × T_S
+ *          preamble-locking failure ceiling (~100 ms). See Liao et al., IEEE
+ *          Access 2017, and CONTEXT.md — CT Sync Propagation Model.
+ *
+ *          Not used by the current three-tier relay implementation, which
+ *          uses \ref SYNC_PARTICIPATE_THRESHOLD_MS for acquisition confirmation
+ *          and the SYNC_LOCKED signal. Will govern the acquisition threshold
+ *          when the pure CT model is implemented.
  */
 #define SYNC_LOCK_THRESHOLD_MS  16u
 #endif
@@ -96,7 +103,7 @@ typedef struct {
                     uint8_t  day, uint8_t month, uint8_t year);
 
     /*!
-     * Tier 2 drift correction hook — CLOCK_WARM, 8ms ≤ error < 300ms.
+     * Tier 2 drift correction hook — CLOCK_WARM, 8ms ≤ error < 100ms.
      *
      * \details Applies HAL_RTCEx_SetSynchroShift without a full calendar
      *          re-anchor. Must not block. Called only from

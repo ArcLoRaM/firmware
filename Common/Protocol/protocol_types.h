@@ -165,6 +165,9 @@ typedef struct {
     SlotKind_t kind;         /*!< Scheduled or contention access. */
     uint32_t   bitmap[3];    /*!< Per-class bitmaps [C1, C2, C3]; ignored when
                                *  \c kind == \ref SLOT_CONTENTION. */
+    uint32_t   gap_after_ms; /*!< Sleep gap after this anchor slot before the next
+                              *  slot/phase. 0 = none. For a header: gap before
+                              *  cell 0. For a footer: gap before the next phase. */
 } AnchorSlot_t;
 
 /*!
@@ -181,7 +184,10 @@ typedef struct {
     uint8_t         cell_count;       /*!< Cell repetitions in this Phase (0–32). */
     uint8_t         slot_count;       /*!< Slots per Cell (1–16). */
     uint32_t        slot_active_ms;   /*!< Worst-case duration of one Slot exchange. */
-    uint16_t        gap_slots_ms[16]; /*!< Network-wide sleep gap after slot i. */
+    uint16_t        gap_after_slot_ms; /*!< Network-wide sleep gap after every slot
+                                        *   within a cell. When the current slot is
+                                        *   the last in the cell, this gap precedes
+                                        *   the next cell (or footer/phase). */
     AnchorSlot_t    header;           /*!< Optional header slot (absent if duration_ms==0). */
     AnchorSlot_t    footer;           /*!< Optional footer slot (absent if duration_ms==0). */
 } Phase_t;
@@ -196,9 +202,11 @@ typedef struct {
  * \details Advances each Slot; resets to {0,0,0} at Frame end.
  */
 typedef struct {
-    uint8_t  phase_index;  /*!< Index into the TDMA Table phase array. */
-    uint16_t cell_index;   /*!< Current Cell within the Phase (0-based). */
-    uint8_t  slot_index;   /*!< Current Slot within the Cell (0-based). */
+    uint8_t         phase_index;  /*!< Index into the TDMA Table phase array. */
+    uint16_t        cell_index;   /*!< Current Cell within the Phase (0-based). */
+    uint8_t         slot_index;   /*!< Current Slot within the Cell (0-based). */
+    SlotPosition_t  slot_pos;     /*!< Header, cell, or footer — selects the timing
+                                   *  formula and the MAC decision path. */
 } FrameCursor_t;
 
 /* =========================================================================

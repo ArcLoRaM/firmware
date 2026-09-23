@@ -62,7 +62,7 @@ static const MAC_Hooks_t k_hooks = {
 /* ------- helpers ---------------------------------------------------------- */
 
 /*
- * Stub TDMA table: PHASE_TYPE_SYNC, slot_active_ms=2500, gap_slots_ms[0]=500
+ * Stub TDMA table: PHASE_TYPE_SYNC, slot_active_ms=2500, gap_after_slot_ms=500
  * Per-cell step = 3000 ms.
  */
 static void make_sync_pkt(SyncPayload_t *p, uint8_t cell, uint32_t ms_midnight)

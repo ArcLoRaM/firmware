@@ -102,7 +102,7 @@ void MAC_OnExternalSyncAcquired(const FrameEpoch_t *e);
 ### Frequency Resolver — pure function
 
 ```c
-uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor, SlotPosition_t pos);
+uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor);
 ```
 
 No UTIL_SEQ task, no UTIL_TIMER. Called synchronously from TDMA task. CM0+-local LFSR for `CELL_FREQ_HOP` mode. `FrequencyResolverState` 400 bytes + override pool 640 bytes = 1040 bytes in SRAM2 (`MAX_PHASES=20`, `MAX_CELLS_PER_PHASE=32`, `MAX_OVERRIDE_TABLES=5`). Override tables are split out of the per-phase struct into a separate pool — only phases using `CELL_FREQ_OVERRIDE` consume entries.

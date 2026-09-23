@@ -20,16 +20,26 @@
 #ifndef TDMA_TABLE_H
 #define TDMA_TABLE_H
 
+#include <stdint.h>
 #include <stdbool.h>
 #include "protocol_types.h"
 
 /* =========================================================================
  * Accessor interface
  *
- * The TDMA Table is a const array in flash. These three functions are the
+ * The TDMA Table is a const array in flash. These functions are the
  * only interface the TDMA Machine uses — it never touches the underlying
  * array directly, keeping the table swappable at link time.
  * ========================================================================= */
+
+/*!
+ * \brief   Compute phase start offsets from the phase definitions.
+ *
+ * \details Call once at boot, before \c TdmaMachine_Init, so that
+ *          \ref TdmaTable_PhaseStartOffset_ms returns correct values.
+ *          Eliminates the need for a hand-calculated parallel array.
+ */
+void TdmaTable_Init( void );
 
 /*!
  * \brief   Return a pointer to the Phase at the given index.
@@ -49,12 +59,50 @@ const Phase_t *TdmaTable_GetPhase( uint8_t phase_index );
 uint8_t TdmaTable_PhaseCount( void );
 
 /*!
+ * \brief   Compute the total duration in milliseconds of a single phase.
+ *
+ * \details Sums the header (if present), all cells, and the footer
+ *          (if present):
+ *          - Header: \c header.duration_ms + \c header.gap_after_ms
+ *          - Cells: \c cell_count * per_cell, where
+ *            \c per_cell = \c slot_count * (\c slot_active_ms +
+ *            \c gap_after_slot_ms)
+ *          - Footer: \c footer.duration_ms + \c footer.gap_after_ms
+ *
+ *          Absent anchors (duration_ms == 0) contribute nothing; their
+ *          gap_after_ms is ignored.
+ *
+ * \param   [in]  p - Phase descriptor. Must not be NULL.
+ *
+ * \retval  uint32_t Total phase duration in milliseconds.
+ */
+static inline uint32_t TdmaTable_PhaseDuration_ms( const Phase_t *p )
+{
+    uint32_t d = 0u;
+
+    if ( p->header.duration_ms > 0u ) {
+        d += p->header.duration_ms + p->header.gap_after_ms;
+    }
+
+    uint32_t per_cell = (uint32_t)p->slot_count
+                      * ( p->slot_active_ms + p->gap_after_slot_ms );
+    d += (uint32_t)p->cell_count * per_cell;
+
+    if ( p->footer.duration_ms > 0u ) {
+        d += p->footer.duration_ms + p->footer.gap_after_ms;
+    }
+
+    return d;
+}
+
+/*!
  * \brief   Return the precomputed millisecond offset of a Phase from the
  *          start of the Frame.
  *
  * \details Used by the TDMA Machine to jump the \ref FrameCursor_t directly
  *          to the next active Phase during long inter-phase sleep gaps,
  *          avoiding slot-by-slot iteration through excluded Phases.
+ *          Offsets are computed by \ref TdmaTable_Init at boot.
  *
  * \param   [in]  phase_index - Zero-based index into the TDMA Table.
  *
@@ -62,38 +110,5 @@ uint8_t TdmaTable_PhaseCount( void );
  *          \c phase_index >= \ref TdmaTable_PhaseCount().
  */
 uint32_t TdmaTable_PhaseStartOffset_ms( uint8_t phase_index );
-
-/*!
- * \brief   Validate the "Sync cells are single-slot" structural invariant
- *          against an explicit phase array.
- *
- * \details \c SyncPayload_t carries no field identifying which slot within
- *          a cell a packet was received in — \c sync_cell_index is the only
- *          position field on the wire. \c TdmaMachine_BootstrapFromSync
- *          therefore always re-anchors to slot 0 of the received cell,
- *          which is only correct if every \ref PHASE_TYPE_SYNC phase has
- *          \c slot_count == 1. Takes an explicit array (rather than reading
- *          the module-static table) so it can be unit-tested against a
- *          deliberately malformed table without touching the real one.
- *
- * \param   [in] phases - Array of phase pointers to check. A \c NULL entry
- *                        is skipped.
- * \param   [in] count  - Number of entries in \c phases.
- *
- * \retval  bool \c true if every \c PHASE_TYPE_SYNC entry has
- *          \c slot_count == 1 (or none are present); \c false otherwise.
- */
-bool TdmaTable_ValidateSyncSingleSlot_Of(const Phase_t * const *phases, uint8_t count);
-
-/*!
- * \brief   Validate the "Sync cells are single-slot" invariant against the
- *          linked TDMA Table.
- *
- * \details Call once at boot, before \c TdmaMachine_Init, so a malformed
- *          table is caught before any Sync packet can be processed.
- *
- * \retval  bool See \ref TdmaTable_ValidateSyncSingleSlot_Of.
- */
-bool TdmaTable_ValidateSyncSingleSlot(void);
 
 #endif /* TDMA_TABLE_H */

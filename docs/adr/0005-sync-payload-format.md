@@ -63,6 +63,6 @@ leap years). `HAL_RTC_DST_Add1Hour` handles the complexity natively (24 calls =
 Phase to straddle midnight and the cell offset to push past 00:00:00).
 
 SSR sub-second correction: ongoing drift beyond `SYNC_PARTICIPATE_THRESHOLD_MS`
-but below `SYNC_RESYNC_THRESHOLD_MS` (8ms–300ms) is corrected via
+but below `SYNC_RESYNC_THRESHOLD_MS` (8ms–100ms) is corrected via
 `HAL_RTCEx_SetSynchroShift` without a full RTC reset (three-tier dispatch;
 see CONTEXT.md Sync Algorithm).

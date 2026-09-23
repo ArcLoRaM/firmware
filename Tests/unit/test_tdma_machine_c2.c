@@ -154,6 +154,14 @@ void test_init_sets_cursor_zero(void)
     TEST_ASSERT_EQUAL(0u, c.slot_index);
 }
 
+void test_init_sets_cursor_slot_pos_cell(void)
+{
+    /* Sync stub table has no header (duration_ms=0), so the cursor starts
+     * at SLOT_POS_CELL, not SLOT_POS_HEADER. */
+    FrameCursor_t c = TdmaMachine_GetCursor();
+    TEST_ASSERT_EQUAL(SLOT_POS_CELL, c.slot_pos);
+}
+
 /* =========================================================================
  * Alarm timing — nominal TX path (MAC Synchronized, phase_tx_flag=1)
  * ========================================================================= */
@@ -166,9 +174,9 @@ void test_slot_task_programs_alarm_nominal_for_tx_slot(void)
     /*
      * Cell 0 of Sync phase: always SLOT_RX for C2 (epoch not yet received).
      * DIRECTION_MAC_CELL + epoch not received → next_slot_is_rx=true → guard.
-     * next_alarm = 0 + 2500 + 500 - GUARD_TIME_MS = 2995.
+     * next_alarm = 0 + 2500 + 500 - MAX_GUARD_TIME_MS = 2995.
      */
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 /* =========================================================================
@@ -182,18 +190,18 @@ void test_slot_task_rx_alarm_early_by_guard(void)
     TdmaMachine_SlotTask();
     /*
      * Decision = RX.  DIRECTION_MAC_CELL + epoch not received → next slot Rx.
-     * alarm = 0 + SLOT_STEP_MS - GUARD_TIME_MS = 3000 - 5 = 2995.
+     * alarm = 0 + SLOT_STEP_MS - MAX_GUARD_TIME_MS = 3000 - 5 = 2995.
      */
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 void test_slot_task_rx_sets_correct_radio_timeout(void)
 {
     s_rtc_ms = 0u;
     TdmaMachine_SlotTask();
-    /* RadioSetRx(slot_active_ms + 2×GUARD_TIME_MS) = 2500 + 10 = 2510 */
+    /* RadioSetRx(slot_active_ms + 2×MAX_GUARD_TIME_MS) = 2500 + 10 = 2510 */
     TEST_ASSERT_EQUAL(1, s_radio_set_rx_calls);
-    TEST_ASSERT_EQUAL(SLOT_ACTIVE_MS + 2u * GUARD_TIME_MS, s_radio_set_rx_timeout);
+    TEST_ASSERT_EQUAL(SLOT_ACTIVE_MS + 2u * MAX_GUARD_TIME_MS, s_radio_set_rx_timeout);
 }
 
 /* =========================================================================
@@ -334,7 +342,7 @@ void test_bootstrap_next_alarm_accounts_for_received_cell(void)
 {
     /* slot_start=3000, slot_active=2500, gap=500 → nominal=6000, guard applied */
     TdmaMachine_BootstrapFromSync(0u, 1u, 3000u);
-    TEST_ASSERT_EQUAL(6000u - GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(6000u - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 void test_bootstrap_cell0_cursor_at_cell1(void)
@@ -349,7 +357,7 @@ void test_bootstrap_cell0_alarm_one_step(void)
 {
     /* Receive at cell 0, slot_start=0 → nominal = SLOT_STEP_MS, guard applied */
     TdmaMachine_BootstrapFromSync(0u, 0u, 0u);
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 void test_bootstrap_last_cell_cursor_wraps(void)
@@ -366,7 +374,7 @@ void test_bootstrap_last_cell_alarm_one_step(void)
     /* Receive at cell 2, slot_start=6000.
      * nominal = 6000 + 3000 = 9000, guard applied */
     TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
-    TEST_ASSERT_EQUAL(6000u + SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(6000u + SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 void test_sync_tx_payload_fields_match_cursor(void)
@@ -455,9 +463,9 @@ void test_tx_delayed_to_nominal_when_woke_early(void)
 void test_bootstrap_applies_guard_on_alarm(void)
 {
     /* After receiving Packet 1 at cell 0 (slot_start=0), the next alarm must
-     * subtract guard: alarm = SLOT_STEP_MS - GUARD_TIME_MS. */
+     * subtract guard: alarm = SLOT_STEP_MS - MAX_GUARD_TIME_MS. */
     TdmaMachine_BootstrapFromSync(0u, 0u, 0u);
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS - GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 /* =========================================================================
@@ -468,6 +476,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_init_sets_cursor_zero);
+    RUN_TEST(test_init_sets_cursor_slot_pos_cell);
     RUN_TEST(test_slot_task_programs_alarm_nominal_for_tx_slot);
     RUN_TEST(test_slot_task_rx_alarm_early_by_guard);
     RUN_TEST(test_slot_task_rx_sets_correct_radio_timeout);

@@ -26,7 +26,7 @@ void FrequencyResolver_Init(const FrequencyResolverState_t *state)
     s_state = state;
 }
 
-uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor, SlotPosition_t pos)
+uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor)
 {
     if (s_state == NULL) {
         return 0u;
@@ -34,7 +34,7 @@ uint32_t FrequencyResolver_GetFreq(const FrameCursor_t *cursor, SlotPosition_t p
 
     const PhaseFrequency_t *pf = &s_state->phases[cursor->phase_index];
 
-    switch (pos) {
+    switch (cursor->slot_pos) {
     case SLOT_POS_HEADER:
         return pf->header_freq_hz;
 

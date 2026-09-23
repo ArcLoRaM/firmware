@@ -48,7 +48,6 @@
 
 static TdmaPlatform_t  s_platform;
 static FrameCursor_t   s_cursor;
-static SlotPosition_t  s_slot_pos;
 static uint8_t         s_slot_idx;      /* slot within the current cell */
 static uint32_t        s_slot_start_ms; /* nominal start of the current slot */
 static uint32_t        s_expected_wake_ms;
@@ -65,7 +64,7 @@ static void enter_phase(uint8_t phase_idx)
     s_cursor.cell_index  = 0u;
     s_cursor.slot_index  = 0u;
     s_slot_idx           = 0u;
-    s_slot_pos = (p != NULL && p->header.duration_ms > 0u)
+    s_cursor.slot_pos = (p != NULL && p->header.duration_ms > 0u)
                  ? SLOT_POS_HEADER : SLOT_POS_CELL;
 }
 
@@ -79,7 +78,7 @@ static void advance_to_next_phase(void)
         s_cursor.slot_index  = 0u;
         s_slot_idx           = 0u;
         const Phase_t *p0 = TdmaTable_GetPhase(0u);
-        s_slot_pos = (p0 != NULL && p0->header.duration_ms > 0u)
+        s_cursor.slot_pos = (p0 != NULL && p0->header.duration_ms > 0u)
                      ? SLOT_POS_HEADER : SLOT_POS_CELL;
     } else {
         enter_phase(next);
@@ -88,9 +87,9 @@ static void advance_to_next_phase(void)
 
 static void advance_cursor(const Phase_t *phase)
 {
-    switch (s_slot_pos) {
+    switch (s_cursor.slot_pos) {
     case SLOT_POS_HEADER:
-        s_slot_pos = SLOT_POS_CELL;
+        s_cursor.slot_pos = SLOT_POS_CELL;
         s_cursor.cell_index = 0u;
         s_cursor.slot_index = 0u;
         s_slot_idx          = 0u;
@@ -109,7 +108,7 @@ static void advance_cursor(const Phase_t *phase)
         } else {
             /* Last cell, last slot — move to footer or next phase */
             if (phase->footer.duration_ms > 0u) {
-                s_slot_pos = SLOT_POS_FOOTER;
+                s_cursor.slot_pos = SLOT_POS_FOOTER;
             } else {
                 advance_to_next_phase();
             }
@@ -121,7 +120,7 @@ static void advance_cursor(const Phase_t *phase)
         break;
 
     default:
-        /* Unreachable under correct operation — s_slot_pos only ever holds a
+        /* Unreachable under correct operation — s_cursor.slot_pos only ever holds a
          * SlotPosition_t value written by enter_phase/advance_to_next_phase/
          * TdmaMachine_BootstrapFromSync. Getting here means the static has
          * been corrupted (bit-flip, stray write). A field node must not
@@ -131,8 +130,8 @@ static void advance_cursor(const Phase_t *phase)
          * boundary instead of looping forever on garbage state. */
         s_cursor_suspect = true;
         APP_LOG(TS_ON, VLEVEL_M,
-                "TDMA: advance_cursor corrupt s_slot_pos=%u\r\n",
-                (unsigned)s_slot_pos);
+                "TDMA: advance_cursor corrupt s_cursor.slot_pos=%u\r\n",
+                (unsigned)s_cursor.slot_pos);
         advance_to_next_phase();
         break;
     }
@@ -158,7 +157,7 @@ static bool skip_to_participating_phase(void)
     s_cursor.cell_index  = 0u;
     s_cursor.slot_index  = 0u;
     s_slot_idx           = 0u;
-    s_slot_pos           = SLOT_POS_CELL;
+    s_cursor.slot_pos      = SLOT_POS_CELL;
     return false;
 }
 
@@ -232,6 +231,7 @@ static bool next_slot_is_rx(const Phase_t *phase)
 
 void TdmaMachine_Init(const TdmaPlatform_t *platform)
 {
+    TdmaTable_Init();
     s_platform          = *platform;
     s_cursor.phase_index = 0u;
     s_cursor.cell_index  = 0u;
@@ -242,7 +242,7 @@ void TdmaMachine_Init(const TdmaPlatform_t *platform)
     s_cursor_suspect     = false;
 
     const Phase_t *p0 = TdmaTable_GetPhase(0u);
-    s_slot_pos = (p0 != NULL && p0->header.duration_ms > 0u)
+    s_cursor.slot_pos = (p0 != NULL && p0->header.duration_ms > 0u)
                  ? SLOT_POS_HEADER : SLOT_POS_CELL;
 }
 
@@ -296,7 +296,7 @@ void TdmaMachine_SlotTask(void)
         skip_to_participating_phase();
 
         /* Program alarm at the start of the skipped-over phase duration */
-        alarm_ms = s_slot_start_ms + phase->slot_active_ms + phase->gap_slots_ms[0];
+        alarm_ms = s_slot_start_ms + phase->slot_active_ms + phase->gap_after_slot_ms;
         s_slot_start_ms    = alarm_ms;
         s_expected_wake_ms = alarm_ms;
         s_platform.ProgramAlarmA(alarm_ms);
@@ -305,7 +305,7 @@ void TdmaMachine_SlotTask(void)
     }
 
     /* ---- Step 5-6: frequency and channel ---- */
-    freq_hz = FrequencyResolver_GetFreq(&s_cursor, s_slot_pos);
+    freq_hz = FrequencyResolver_GetFreq(&s_cursor);
     s_platform.RadioSetChannel(freq_hz);
 
     /* ---- Step 7: MAC decision ---- */
@@ -340,7 +340,7 @@ void TdmaMachine_SlotTask(void)
         }
         /* On non-GRANTED: fall through to alarm programming without TX */
     } else if (decision == SLOT_RX) {
-        s_platform.RadioSetRx(phase->slot_active_ms + 2u * GUARD_TIME_MS);
+        s_platform.RadioSetRx(phase->slot_active_ms + 2u * GuardTimeResolver_GetGuardMs());
     } else {
         s_platform.RadioSleep();
     }
@@ -350,7 +350,7 @@ void TdmaMachine_SlotTask(void)
     advance_cursor(phase);
 
     next_start_ms   = s_slot_start_ms + phase->slot_active_ms
-                      + phase->gap_slots_ms[prev_slot_idx];
+                      + phase->gap_after_slot_ms;
     s_slot_start_ms = next_start_ms;
 
     /* Guard-time look-ahead: if next slot will be RX, wake early */
@@ -358,7 +358,7 @@ void TdmaMachine_SlotTask(void)
     {
         const Phase_t *next_phase = TdmaTable_GetPhase(s_cursor.phase_index);
         if (next_phase != NULL && next_slot_is_rx(next_phase)) {
-            alarm_ms -= GUARD_TIME_MS;
+            alarm_ms -= GuardTimeResolver_GetGuardMs();
         }
     }
 
@@ -374,21 +374,21 @@ void TdmaMachine_BootstrapFromSync(uint8_t  sync_phase_idx,
     s_cursor.cell_index  = sync_cell_idx;
     s_cursor.slot_index  = 0u;
     s_slot_idx           = 0u;
-    s_slot_pos           = SLOT_POS_CELL;
+    s_cursor.slot_pos     = SLOT_POS_CELL;
     s_slot_start_ms      = rtc_now_ms;
     s_cursor_suspect     = false;
 
     const Phase_t *phase = TdmaTable_GetPhase(sync_phase_idx);
     if (phase != NULL) {
         uint32_t next_ms = rtc_now_ms + phase->slot_active_ms
-                           + phase->gap_slots_ms[s_slot_idx];
+                           + phase->gap_after_slot_ms;
         advance_cursor(phase);
         s_slot_start_ms    = next_ms;
 
         /* Apply guard: the next slot will be Rx (acquisition packets 2+),
          * so wake early to open the window before nominal start. */
-        s_expected_wake_ms = next_ms - GUARD_TIME_MS;
-        s_platform.ProgramAlarmA(next_ms - GUARD_TIME_MS);
+        s_expected_wake_ms = next_ms - GuardTimeResolver_GetGuardMs();
+        s_platform.ProgramAlarmA(next_ms - GuardTimeResolver_GetGuardMs());
     }
 }
 

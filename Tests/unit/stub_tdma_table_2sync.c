@@ -29,7 +29,7 @@ static const Phase_t s_sync0 = {
     .cell_count       = 3u,
     .slot_count       = 1u,
     .slot_active_ms   = 2500u,
-    .gap_slots_ms     = { 500u },
+    .gap_after_slot_ms = 500u,
     .header           = { .duration_ms = 0u },
     .footer           = { .duration_ms = 0u },
 };
@@ -41,7 +41,7 @@ static const Phase_t s_sync1 = {
     .cell_count       = 3u,
     .slot_count       = 1u,
     .slot_active_ms   = 2500u,
-    .gap_slots_ms     = { 500u },
+    .gap_after_slot_ms = 500u,
     .header           = { .duration_ms = 0u },
     .footer           = { .duration_ms = 0u },
 };
@@ -53,10 +53,16 @@ static const Phase_t * const s_table[] = {
 
 #define TABLE_SIZE  ( (uint8_t)( sizeof(s_table) / sizeof(s_table[0]) ) )
 
-static const uint32_t s_phase_start_ms[] = {
-    0u,     /* Sync0 starts at frame epoch */
-    9000u,  /* Sync1 starts after Sync0's 3 cells × 3000 ms */
-};
+static uint32_t s_phase_start_ms[2];
+
+void TdmaTable_Init( void )
+{
+    s_phase_start_ms[0] = 0u;
+    for ( uint8_t i = 1u; i < TABLE_SIZE; i++ ) {
+        s_phase_start_ms[i] = s_phase_start_ms[i - 1u]
+            + TdmaTable_PhaseDuration_ms( s_table[i - 1u] );
+    }
+}
 
 const Phase_t *TdmaTable_GetPhase( uint8_t phase_index )
 {

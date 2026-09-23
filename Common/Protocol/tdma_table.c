@@ -34,7 +34,7 @@ static const Phase_t s_sync_phase = {
     .cell_count       = 3u,
     .slot_count       = 1u,
     .slot_active_ms   = 2500u,    /* SF12/BW125 Sync packet airtime (conservative) */
-    .gap_slots_ms     = { 500u }, /* Inter-cell guard gap; remaining entries = 0 */
+    .gap_after_slot_ms = 500u,  /* Inter-cell guard gap */
     .header           = { .duration_ms = 0u },
     .footer           = { .duration_ms = 0u },
 };
@@ -45,15 +45,21 @@ static const Phase_t * const s_table[] = {
 
 #define TABLE_SIZE  ( (uint8_t)( sizeof(s_table) / sizeof(s_table[0]) ) )
 
-/* Precomputed ms offsets from Frame start, one entry per Phase.
- * Phase 0 always starts at 0 ms. */
-static const uint32_t s_phase_start_ms[] = {
-    0u,
-};
+/* Phase start offsets, computed by TdmaTable_Init at boot. */
+static uint32_t s_phase_start_ms[1];
 
 /* =========================================================================
  * Accessor implementations
  * ========================================================================= */
+
+void TdmaTable_Init( void )
+{
+    s_phase_start_ms[0] = 0u;
+    for ( uint8_t i = 1u; i < TABLE_SIZE; i++ ) {
+        s_phase_start_ms[i] = s_phase_start_ms[i - 1u]
+            + TdmaTable_PhaseDuration_ms( s_table[i - 1u] );
+    }
+}
 
 const Phase_t *TdmaTable_GetPhase( uint8_t phase_index )
 {
@@ -74,21 +80,4 @@ uint32_t TdmaTable_PhaseStartOffset_ms( uint8_t phase_index )
         return 0u;
     }
     return s_phase_start_ms[phase_index];
-}
-
-bool TdmaTable_ValidateSyncSingleSlot_Of(const Phase_t * const *phases, uint8_t count)
-{
-    for (uint8_t i = 0u; i < count; i++) {
-        if (phases[i] != NULL
-            && phases[i]->type == PHASE_TYPE_SYNC
-            && phases[i]->slot_count != 1u) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool TdmaTable_ValidateSyncSingleSlot(void)
-{
-    return TdmaTable_ValidateSyncSingleSlot_Of(s_table, TABLE_SIZE);
 }

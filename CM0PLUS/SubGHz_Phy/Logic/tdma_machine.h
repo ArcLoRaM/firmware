@@ -25,22 +25,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "protocol_types.h"
+#include "guard_time_resolver.h"
 
 /* =========================================================================
  * Constants
  * ========================================================================= */
-
-#ifndef GUARD_TIME_MS
-/*!
- * RX window guard margin in milliseconds.
- *
- * \remark The TDMA Machine opens the receive window GUARD_TIME_MS before the
- *         nominal slot start and holds it GUARD_TIME_MS beyond the nominal end,
- *         absorbing accumulated clock drift since the last Frame Epoch correction.
- *         See CONTEXT.md — Guard Time.
- */
-#define GUARD_TIME_MS  50u
-#endif
 
 #ifndef TX_POWER_DBM
 /*!

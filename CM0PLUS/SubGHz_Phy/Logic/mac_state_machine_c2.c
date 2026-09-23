@@ -18,6 +18,7 @@
  */
 #include "mac_state_machine.h"
 #include "tdma_table.h"
+#include "guard_time_resolver.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -28,10 +29,6 @@
 
 #ifndef SYNC_PARTICIPATE_THRESHOLD_MS
 #define SYNC_PARTICIPATE_THRESHOLD_MS  8u
-#endif
-
-#ifndef SYNC_RESYNC_THRESHOLD_MS
-#define SYNC_RESYNC_THRESHOLD_MS  300u
 #endif
 
 /* =========================================================================
@@ -65,7 +62,7 @@ static uint32_t sync_per_cell_ms_for_phase(uint8_t phase_idx)
 {
     const Phase_t *p = TdmaTable_GetPhase(phase_idx);
     return (p != NULL && p->type == PHASE_TYPE_SYNC)
-           ? (p->slot_active_ms + p->gap_slots_ms[0]) : 0u;
+           ? (p->slot_active_ms + p->gap_after_slot_ms) : 0u;
 }
 
 static uint32_t u32_abs_diff(uint32_t a, uint32_t b)
@@ -244,7 +241,7 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
             }
 
         } else {
-            /* Tier 3: drift ≥ 300 ms — full re-anchor via rtc_set */
+            /* Tier 3: drift ≥ MAX_GUARD_TIME_MS — full re-anchor via rtc_set */
             uint32_t target_ms = payload->ms_since_midnight_sync_phase
                                  + (uint32_t)payload->sync_cell_index * per_cell;
             if (s_hooks.rtc_set != NULL) {

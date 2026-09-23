@@ -128,7 +128,7 @@ void test_2sync_bootstrap_mid_cell_alarm(void)
     /* Receive at cell 1 of Sync0 (slot_start=3000).
      * nominal = 3000 + 3000 = 6000, guard applied */
     TdmaMachine_BootstrapFromSync(0u, 1u, 3000u);
-    TEST_ASSERT_EQUAL(6000u - GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(6000u - MAX_GUARD_TIME_MS, s_alarm_programmed);
     TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().phase_index);
     TEST_ASSERT_EQUAL(2u, TdmaMachine_GetCursor().cell_index);
 }
@@ -144,7 +144,7 @@ void test_2sync_bootstrap_last_cell_alarm_at_sync1_start(void)
      * Wrong A:  Frame_Epoch + frame_duration = 0 + 18000 = 18000.
      * Wrong B:  slot_start  + frame_duration = 6000 + 18000 = 24000. */
     TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
-    TEST_ASSERT_EQUAL(SYNC1_START_MS - GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(SYNC1_START_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 void test_2sync_bootstrap_last_cell_cursor_at_sync1(void)

@@ -39,7 +39,7 @@ flowchart TD
     ADVANCE["Step 9: Advance Cursor<br/><code>advance_cursor(phase)</code>"]
     ADVANCE --> NEXT["Step 10: Compute next slot start<br/><code>slot_start + slot_active + gap</code>"]
     NEXT --> GUARD{"Step 11: Guard Look-ahead<br/>Next slot is RX?"}
-    GUARD -- "Yes" --> EARLY["Subtract GUARD_TIME_MS (5 ms)"]
+    GUARD -- "Yes" --> EARLY["Subtract guard_ms<br/><code>GuardTimeResolver_GetGuardMs()</code><br/>(100 ms, V1 constant)"]
     GUARD -- "No" --> PROGRAM
     EARLY --> PROGRAM
 
@@ -68,5 +68,5 @@ flowchart LR
 
 | Constant | Value | Used In |
 |----------|-------|---------|
-| `GUARD_TIME_MS` | 5 ms | RX slots wake early to catch preamble |
+| `MAX_GUARD_TIME_MS` | 100 ms | RX slots wake early to catch preamble; also Tier 3 drift threshold |
 | `TX_POWER_DBM` | 14 dBm | Compliance Engine power check |

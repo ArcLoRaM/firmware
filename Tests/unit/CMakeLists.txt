@@ -101,6 +101,7 @@ add_unity_test(test_tdma_machine_c2
     ../../CM0PLUS/SubGHz_Phy/Logic/mac_state_machine_c2.c
     ../../CM0PLUS/SubGHz_Phy/Logic/freq_resolver.c
     ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/guard_time_resolver.c
     ../../Common/Protocol/tdma_table.c
     ../../Common/SharedMemory/shared_mem.c
 )
@@ -112,6 +113,7 @@ add_unity_test(test_tdma_machine_c1
     ../../CM0PLUS/SubGHz_Phy/Logic/mac_state_machine_c1.c
     ../../CM0PLUS/SubGHz_Phy/Logic/freq_resolver.c
     ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/guard_time_resolver.c
     ../../Common/Protocol/tdma_table.c
     ../../Common/SharedMemory/shared_mem.c
 )
@@ -124,6 +126,7 @@ add_unity_test(test_tdma_machine_c2_2sync
     ../../CM0PLUS/SubGHz_Phy/Logic/mac_state_machine_c2.c
     ../../CM0PLUS/SubGHz_Phy/Logic/freq_resolver.c
     ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/guard_time_resolver.c
     ../../Common/SharedMemory/shared_mem.c
 )
 target_compile_definitions(test_tdma_machine_c2_2sync PRIVATE NODE_CLASS=2)

@@ -38,7 +38,7 @@ static const MAC_Hooks_t k_hooks = {
 /* ------- helpers ---------------------------------------------------------- */
 
 /*
- * Stub TDMA table: PHASE_TYPE_SYNC, slot_active_ms=2500, gap_slots_ms[0]=500
+ * Stub TDMA table: PHASE_TYPE_SYNC, slot_active_ms=2500, gap_after_slot_ms=500
  * Per-cell step = 3000 ms. Drive to CLOCK_WARM.
  */
 static void three_sync_packets(void)
@@ -150,12 +150,12 @@ void test_c1_sync_pkt3_large_error_stays_acquiring(void)
     TEST_ASSERT_EQUAL(0, s_sync_locked_calls);
 }
 
-/* ------- SYNC_LOST (Tier 3: error ≥ 300 ms) ------------------------------- */
+/* ------- SYNC_LOST (Tier 3: error >= MAX_GUARD_TIME_MS) --------------------- */
 
 void test_c1_sync_lost_resets_to_cold(void)
 {
     three_sync_packets();
-    /* cell=0, ms_midnight=0, expected_arrival=0, preamble=400 → error=400 ≥ 300ms → Tier 3 */
+    /* cell=0, ms_midnight=0, expected_arrival=0, preamble=400 -> error=400 >= 100ms -> Tier 3 */
     SyncPayload_t p;
     memset(&p, 0, sizeof(p));
     p.sync_cell_index              = 0u;
