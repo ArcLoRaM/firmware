@@ -41,3 +41,27 @@ All subsecond arithmetic must use `PREDIV_S = 4095` literally or via the `RTC_PR
 macro. The formula `(PREDIV_A+1) × (PREDIV_S+1) = 32768` must be verified manually
 if either constant is ever changed — there is no longer a compile-time algebraic coupling
 to enforce it.
+
+### SSR bit-width constraint for `HAL_RTCEx_SetSynchroShift`
+In `RTC_BINARY_NONE` (BCD) mode the SSR counts down from `PREDIV_S` to 0.
+AN4759 requires `SS[15] = 0` before initiating a shift operation, to prevent
+overflow across the second boundary. With `PREDIV_S = 4095` (0x0FFF), the SSR
+never exceeds bit 11, so `SS[15]` is always 0 and the guard is trivially
+satisfied. If `PREDIV_S` is ever increased to `>= 0x8000` (32768), a runtime
+`SS[15]` check must be added before every `HAL_RTCEx_SetSynchroShift` call.
+The current code relies on this invariant and does not perform the check.
+
+### Sync cell spacing constraint for `HAL_RTCEx_SetSynchroShift`
+`HAL_RTCEx_SetSynchroShift` busy-polls `SHPF` (Shift Pending Flag) until the
+previous shift is absorbed by the hardware at the next RTC second boundary
+(1 Hz). If two Tier 2 corrections are triggered within the same RTC second,
+the second call blocks the `UTIL_SEQ` task loop until the next second
+boundary, potentially causing the node to miss its next TDMA slot.
+
+To prevent this, every `PHASE_TYPE_SYNC` phase in the TDMA Table must satisfy:
+
+    per_cell = slot_count * (slot_active_ms + gap_after_slot_ms) >= 1000 ms
+
+This guarantees that no two sync receptions that could trigger Tier 2
+correction fall within the same RTC second. The constraint is validated
+by `test_sync_phase_per_cell_ge_1000ms` in `test_tdma_table.c`.

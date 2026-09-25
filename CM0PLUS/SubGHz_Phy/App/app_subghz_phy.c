@@ -24,7 +24,6 @@
 #include "stm32_seq.h"
 
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
 #include "subghz_phy_task.h"
 #ifdef USING_NUCLEO
 #include "gpio.h"
@@ -34,7 +33,7 @@
 
 /* External variables ---------------------------------------------------------*/
 /* USER CODE BEGIN EV */
-extern volatile uint32_t g_stop2_count;
+
 /* USER CODE END EV */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -104,9 +103,6 @@ void MX_SubGHz_Phy_Process(void)
 static void LedToggle_Cb(void *arg)
 {
   HAL_GPIO_TogglePin(LED_BLINK_CM0_Port, LED_BLINK_CM0_Pin);
-  char buf[56];
-  snprintf(buf, sizeof(buf), "Hello Celium from CM0PLUS | STOP2 count: %lu\r\n", g_stop2_count);
-  APP_LOG(TS_ON, VLEVEL_H, buf);
 
 }
 #endif

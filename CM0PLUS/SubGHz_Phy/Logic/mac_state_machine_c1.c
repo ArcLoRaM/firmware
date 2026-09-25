@@ -19,6 +19,7 @@
 #include "mac_state_machine.h"
 #include "tdma_table.h"
 #include "guard_time_resolver.h"
+#include "arclog.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -39,6 +40,7 @@ static MacState_t            s_mac_state;
 static ClockState_t          s_clock_state;
 static uint8_t               s_sync_consecutive;
 static uint32_t              s_sync_phase_ms;
+static uint32_t              s_last_sync_received_ms;
 static uint8_t               s_hop_count;
 static CellEligibilityMask_t s_cell_elig_ul;
 static CellEligibilityMask_t s_cell_elig_dl;
@@ -63,10 +65,67 @@ static uint32_t u32_abs_diff(uint32_t a, uint32_t b)
     return (a >= b) ? (a - b) : (b - a);
 }
 
-static void trigger_sync_lost(void)
+/* Single transition points: every ClockState / MacState change is logged. */
+static void set_clock_state(ClockState_t to, const char *why)
 {
-    s_clock_state      = CLOCK_COLD;
-    s_mac_state        = MAC_STATE_SCANNING;
+    if (to == s_clock_state) return;
+    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "CLK", "from=%s to=%s why=%s",
+           ArcLog_ClockName(s_clock_state), ArcLog_ClockName(to), why);
+    s_clock_state = to;
+}
+
+static void set_mac_state(MacState_t to, const char *why)
+{
+    if (to == s_mac_state) return;
+    ARCLOG(ARCLOG_MOD_MAC, VLEVEL_L, "MAC_ST", "from=%s to=%s why=%s",
+           ArcLog_MacStateName(s_mac_state), ArcLog_MacStateName(to), why);
+    s_mac_state = to;
+}
+
+/* One line per received Sync packet: the raw datum for drift analysis.
+ * act = set (COLD RTC set) | good / bad (ACQUIRING check) | t1 / t2 / t3 (WARM tier). */
+static void log_sync_rx(const SyncPayload_t *p, uint32_t stamp_ms,
+                        uint32_t expected_ms, const char *act)
+{
+    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "SYNC_RX",
+           "ph=%u ce=%u ep=%u st=%u exp=%u err=%d clk=%s act=%s",
+           (unsigned)p->sync_phase_index, (unsigned)p->sync_cell_index,
+           (unsigned)p->ms_since_midnight_sync_phase,
+           (unsigned)stamp_ms, (unsigned)expected_ms,
+           (int)(int32_t)(stamp_ms - expected_ms),
+           ArcLog_ClockName(s_clock_state), act);
+}
+
+/* Set the RTC so that the new domain reads target_ms at the PreambleStamp
+ * instant. The hook runs from RxDone, about one airtime after the stamp, so
+ * the time elapsed since the stamp is carried over; without it the new
+ * domain would lag the sender by the airtime, while every later
+ * stamp-to-expected comparison would still read zero error. Returns the
+ * elapsed ms (0 when the stamp is older than SYNC_STAMP_MAX_AGE_MS, which
+ * means it is unusable). */
+static uint32_t rtc_set_at_stamp(const SyncPayload_t *p, uint32_t target_ms,
+                                 uint32_t stamp_ms)
+{
+    uint32_t age_ms = 0u;
+    if (s_hooks.get_rtc_snapshot != NULL) {
+        uint32_t now_ms = 0u;
+        uint8_t  d, mo, y;
+        s_hooks.get_rtc_snapshot(&now_ms, &d, &mo, &y);
+        age_ms = (now_ms + MS_PER_DAY - stamp_ms) % MS_PER_DAY;  /* midnight-safe */
+        if (age_ms > SYNC_STAMP_MAX_AGE_MS) {
+            age_ms = 0u;
+        }
+    }
+    if (s_hooks.rtc_set != NULL) {
+        s_hooks.rtc_set((target_ms + age_ms) % MS_PER_DAY, p->day, p->month, p->year);
+    }
+    return age_ms;
+}
+
+static void trigger_sync_lost(const char *why)
+{
+    set_clock_state(CLOCK_COLD, why);
+    set_mac_state(MAC_STATE_SCANNING, why);
     s_sync_consecutive = 0u;
     if (s_hooks.sync_lost != NULL) s_hooks.sync_lost();
 }
@@ -81,6 +140,7 @@ void MAC_Init(const MAC_Hooks_t *hooks)
     s_clock_state      = CLOCK_COLD;
     s_sync_consecutive = 0u;
     s_sync_phase_ms    = 0u;
+    s_last_sync_received_ms = 0u;
     s_hop_count        = 0u;
     s_cell_elig_ul     = 0x00u;
     s_cell_elig_dl     = 0x00u;
@@ -90,12 +150,10 @@ void MAC_Init(const MAC_Hooks_t *hooks)
     if (hooks != NULL) {
         s_hooks = *hooks;
     } else {
-        s_hooks.rtc_set           = NULL;
-        s_hooks.get_rtc_snapshot  = NULL;
-        s_hooks.sync_bootstrapped = NULL;
-        s_hooks.sync_locked       = NULL;
-        s_hooks.sync_lost         = NULL;
+        s_hooks = (MAC_Hooks_t){0};
     }
+    ARCLOG(ARCLOG_MOD_MAC, VLEVEL_L, "MAC_INIT", "cls=C1 st=%s clk=%s",
+           ArcLog_MacStateName(s_mac_state), ArcLog_ClockName(s_clock_state));
 }
 
 SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
@@ -139,27 +197,43 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
 {
     uint32_t per_cell = sync_per_cell_ms_for_phase(payload->sync_phase_index);
 
+    /* A phase index that is not a Sync phase cannot anchor the FrameCursor
+     * (TdmaMachine_BootstrapFromSync would have no phase to start from):
+     * corrupt or foreign packet. It is not evidence of sync either. */
+    if (per_cell == 0u) {
+        ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "SYNC_REJ", "ph=%u ce=%u",
+               (unsigned)payload->sync_phase_index,
+               (unsigned)payload->sync_cell_index);
+        return;
+    }
+
+    /* Any received sync packet (any tier) resets the silence timer. */
+    s_last_sync_received_ms = preamble_timestamp_ms;
+
     if (s_clock_state == CLOCK_COLD) {
         uint32_t target_ms = payload->ms_since_midnight_sync_phase
                              + (uint32_t)payload->sync_cell_index * per_cell;
 
-        if (s_hooks.rtc_set != NULL) {
-            s_hooks.rtc_set(target_ms, payload->day, payload->month, payload->year);
-        }
+        /* The new RTC domain reads target_ms at the stamp instant. */
+        (void)rtc_set_at_stamp(payload, target_ms, preamble_timestamp_ms);
 
         uint32_t rtc_now = 0u;
         if (s_hooks.get_rtc_snapshot != NULL) {
             uint8_t d, mo, y;
-            s_hooks.get_rtc_snapshot(&rtc_now, &d, &mo, &y);
+            s_hooks.get_rtc_snapshot(&rtc_now, &d, &mo, &y);  /* new domain */
         }
-        s_sync_phase_ms    = rtc_now - (uint32_t)payload->sync_cell_index * per_cell;
+        /* Sync phase start in the new domain: the anchor for the expected
+         * arrival of Packets 2 and 3. */
+        s_sync_phase_ms    = target_ms - (uint32_t)payload->sync_cell_index * per_cell;
+        log_sync_rx(payload, preamble_timestamp_ms, target_ms, "set");
         s_sync_consecutive = 0u;
-        s_clock_state      = CLOCK_ACQUIRING;
+        set_clock_state(CLOCK_ACQUIRING, "rtc_set");
+        s_last_sync_received_ms = rtc_now;  /* new RTC domain after re-anchor */
 
         if (s_hooks.sync_bootstrapped != NULL) {
             s_hooks.sync_bootstrapped(payload->sync_phase_index,
                                        payload->sync_cell_index,
-                                       rtc_now);
+                                       target_ms);
         }
         return;
     }
@@ -168,12 +242,15 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
         uint32_t expected_ms = (uint32_t)payload->sync_cell_index * per_cell;
         uint32_t elapsed_ms  = preamble_timestamp_ms - s_sync_phase_ms;
         uint32_t clock_error = u32_abs_diff(elapsed_ms, expected_ms);
+        bool     good        = (clock_error < SYNC_PARTICIPATE_THRESHOLD_MS);
 
-        if (clock_error < SYNC_PARTICIPATE_THRESHOLD_MS) {
+        log_sync_rx(payload, preamble_timestamp_ms, s_sync_phase_ms + expected_ms,
+                    good ? "good" : "bad");
+        if (good) {
             s_sync_consecutive++;
             if (s_sync_consecutive >= 2u) {
-                s_clock_state = CLOCK_WARM;
-                s_mac_state   = MAC_STATE_SYNCHRONIZED;
+                set_clock_state(CLOCK_WARM, "lock");
+                set_mac_state(MAC_STATE_SYNCHRONIZED, "lock");
                 if (s_hooks.sync_locked != NULL) s_hooks.sync_locked();
             }
         } else {
@@ -187,6 +264,10 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
                                     + (uint32_t)payload->sync_cell_index * per_cell;
         uint32_t error = u32_abs_diff(preamble_timestamp_ms, expected_arrival);
 
+        log_sync_rx(payload, preamble_timestamp_ms, expected_arrival,
+                    (error < SYNC_PARTICIPATE_THRESHOLD_MS) ? "t1"
+                    : (error < SYNC_RESYNC_THRESHOLD_MS)    ? "t2" : "t3");
+
         if (error < SYNC_PARTICIPATE_THRESHOLD_MS) {
             /* C1 receives valid epoch; no relay action needed */
             s_epoch_received_this_phase = true;
@@ -196,12 +277,8 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
                 s_hooks.rtc_align_subsecond(preamble_timestamp_ms, expected_arrival);
             }
         } else {
-            uint32_t target_ms = payload->ms_since_midnight_sync_phase
-                                 + (uint32_t)payload->sync_cell_index * per_cell;
-            if (s_hooks.rtc_set != NULL) {
-                s_hooks.rtc_set(target_ms, payload->day, payload->month, payload->year);
-            }
-            trigger_sync_lost();
+            (void)rtc_set_at_stamp(payload, expected_arrival, preamble_timestamp_ms);
+            trigger_sync_lost("tier3");
         }
     }
 }
@@ -217,13 +294,34 @@ void MAC_OnBeaconReceived(const BeaconPayload_t *beacon)
                               | (1u << ((s_hop_count + 1u) % 3u)));
 
     if (s_mac_state == MAC_STATE_SYNCHRONIZED) {
-        s_mac_state = MAC_STATE_PAIRED;
+        set_mac_state(MAC_STATE_PAIRED, "beacon");
     }
 }
 
 void MAC_OnExternalSyncAcquired(const FrameEpoch_t *epoch)
 {
     (void)epoch;
+}
+
+void MAC_CheckSyncTimeout(uint32_t rtc_now_ms)
+{
+    if (s_clock_state == CLOCK_WARM || s_clock_state == CLOCK_ACQUIRING) {
+        if (rtc_now_ms >= s_last_sync_received_ms &&
+            (rtc_now_ms - s_last_sync_received_ms) >= SYNC_SILENCE_TIMEOUT_MS) {
+            ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "SYNC_SILENCE", "last=%u now=%u",
+                   (unsigned)s_last_sync_received_ms, (unsigned)rtc_now_ms);
+            trigger_sync_lost("silence");
+        }
+    }
+}
+
+void MAC_OnCursorSuspect(void)
+{
+    /* The TDMA cursor no longer matches the RTC, so the schedule position is
+     * unknown: drop to re-acquisition. The RTC is left untouched; the next
+     * received Sync packet sets it through the CLOCK_COLD path. */
+    if (s_clock_state == CLOCK_COLD) return;
+    trigger_sync_lost("suspect");
 }
 
 MacState_t            MAC_GetState(void)                        { return s_mac_state;    }
@@ -234,6 +332,7 @@ PhaseTxFlag_t         MAC_GetPhaseTxFlag(void)                  { return s_phase
 bool                  MAC_GetEpochReceivedThisPhase(void)        { return s_epoch_received_this_phase; }
 uint8_t               MAC_GetHopCount(void)                      { return s_hop_count; }
 uint8_t               MAC_GetBeaconTxBudget(void)                 { return 0u; }
+uint8_t               MAC_GetSyncTxBudget(void)                   { return 0u; }
 uint32_t              MAC_GetSyncPhaseMs(void)                  { return s_sync_phase_ms; }
 uint32_t              MAC_GetSyncPhaseEpochMs(void)             { return 0u; }  /* C1 never relays */
 void MAC_GetSyncPhaseDate(uint8_t *day, uint8_t *month, uint8_t *year)

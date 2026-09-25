@@ -37,6 +37,17 @@
 #define FREQ_FALLBACK_HZ  868300000u
 #endif
 
+#ifndef SCAN_FREQ_HZ
+/*!
+ * Discovery channel: C1/C2 listen here continuously while \c CLOCK_COLD,
+ * before the FrameCursor (and so any per-cell frequency) is known.
+ *
+ * \remark Must match the frequency the SyncAnchor transmits Sync packets
+ *         on: the 868.3 MHz Sync-phase default written by CM4 at boot.
+ */
+#define SCAN_FREQ_HZ  868300000u
+#endif
+
 /*!
  * \brief   Inject the shared-memory region the Frequency Resolver reads from.
  *

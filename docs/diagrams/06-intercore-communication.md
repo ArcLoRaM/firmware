@@ -56,7 +56,7 @@ Single multiplexed Application Signal Channel. At most one signal per CM0+ wake.
 | Signal | Trigger | CM4 Action |
 |--------|---------|------------|
 | `SYNC_LOCKED` | Clock reached CLOCK_WARM | Write AlarmBRequest if not pending |
-| `SYNC_LOST` | Drift ≥ 300 ms, back to COLD | Record sync miss count |
+| `SYNC_LOST` | Drift ≥ 100 ms, back to COLD | Record sync miss count |
 | `RX_READY` | Packet reception complete | Read from phase-specific RX buffer |
 | `TX_NO_ACK` | TX slot without ACK | Update peer failure counter |
 | `ACK_RECEIVED` | TX slot with ACK | Dequeue delivered payload |

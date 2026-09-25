@@ -91,9 +91,6 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-    APP_PRINTF("IS IT WORKIN?\r\n");
-    APP_PRINTF("IS IT WORKIN 2---\r\n");
-
   while (1)
   {
     /* USER CODE END WHILE */

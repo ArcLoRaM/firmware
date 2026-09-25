@@ -19,7 +19,7 @@ table structure, creating a maintenance coupling between two unrelated concerns.
 **B. Wall-clock silence timeout (chosen).** Measure elapsed wall-clock time since
 the last received Sync packet of any tier. Degrade after 15 minutes of silence.
 Table-independent. Any received Sync packet (Tier 1, 2, or 3) resets the timer.
-Tier 3 (received packet with error >= 300 ms) remains immediate, as before.
+Tier 3 (received packet with error >= `SYNC_RESYNC_THRESHOLD_MS` = `MAX_GUARD_TIME_MS` = 100 ms) remains immediate, as before.
 
 ## Consequences
 

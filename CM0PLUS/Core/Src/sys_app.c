@@ -35,6 +35,7 @@
 
 /* USER CODE BEGIN Includes */
 #include "stm32_lpm_if.h"
+#include "arclog.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -52,6 +53,8 @@ extern volatile uint32_t g_stop2_count;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/* One STOP2_WAKES summary line every N CM0+ wakes (same as CM4). */
+#define STOP2_WAKE_REPORT_EVERY  64u
 #define FLASH_IF_BUFFER_SIZE 30
 /* USER CODE END PD */
 
@@ -118,19 +121,14 @@ void SystemApp_Init(void)
 void TimestampNow(uint8_t *buff, uint16_t *size)
 {
   /* USER CODE BEGIN TimestampNow_1 */
-
-
-   RTC_TimeTypeDef sTime = {0};
+  /* ArcLog timestamp "YYMMDDTHHMMSS.ssss " from the shared RTC (see arclog.h). */
+  RTC_TimeTypeDef sTime = {0};
   RTC_DateTypeDef sDate = {0};
   HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
   HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN); /* mandatory: unlocks shadow registers */
-  uint32_t ms = ((uint32_t)(4095U - sTime.SubSeconds) * 1000U) / 4096U;
-  char tmp[16];
-  snprintf(tmp, sizeof(tmp), "%02u:%02u:%02u:%03u 0>", sTime.Hours, sTime.Minutes, sTime.Seconds, ms);
-  memcpy(buff, tmp, 15);
-  *size = 15;
-  
-  
+  *size = ArcLog_FormatTimestamp(buff, sDate.Year, sDate.Month, sDate.Date,
+                                 sTime.Hours, sTime.Minutes, sTime.Seconds,
+                                 sTime.SubSeconds, RTC_PREDIV_S);
   /* USER CODE END TimestampNow_1 */
 }
 
@@ -197,6 +195,10 @@ void UTIL_SEQ_PostIdle(void)
   {
     g_stop2_flag = 0;
     g_stop2_count++;
+    if ((g_stop2_count % STOP2_WAKE_REPORT_EVERY) == 0u)
+    {
+      ARCLOG(ARCLOG_MOD_POWER, VLEVEL_M, "STOP2_WAKES", "n=%u", (unsigned)g_stop2_count);
+    }
   }
 }
 /* USER CODE END EF */

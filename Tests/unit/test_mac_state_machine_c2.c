@@ -1,6 +1,7 @@
 #include "unity.h"
 #include "mac_state_machine.h"
 #include "tdma_table.h"
+#include "arclog_capture.h"
 #include <string.h>
 
 /* ------- hook stubs ------------------------------------------------------- */
@@ -107,6 +108,15 @@ static const Phase_t s_other_phase = {
     .slot_active_ms = 2500u,
 };
 
+static const Phase_t s_sync_phase_6 = {
+    .type              = PHASE_TYPE_SYNC,
+    .direction_mode    = DIRECTION_MAC_CELL,
+    .cell_count        = 6u,
+    .slot_count        = 1u,
+    .slot_active_ms    = 2500u,
+    .gap_after_slot_ms = 500u,
+};
+
 void setUp(void)
 {
     s_rtc_set_calls             = 0;
@@ -122,6 +132,7 @@ void setUp(void)
     s_snapshot_month = 0x01u;
     s_snapshot_year  = 0x24u;
     MAC_Init(&k_hooks);
+    ArcLog_CaptureReset();
 }
 
 void tearDown(void) {}
@@ -486,6 +497,131 @@ void test_c2_beacon_tx_budget_getter(void)
     TEST_ASSERT_EQUAL(BEACON_K_TX_CELLS - 1u, MAC_GetBeaconTxBudget());
 }
 
+/* ------- Sync TX Budget (issue 29 - C2 only) ------------------------------ */
+
+void test_c2_sync_tx_budget_limits_to_3_per_occurrence(void)
+{
+    sync_mac();
+    /* Enter a 6-cell sync phase at cell 0 */
+    FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);  /* cell 0 = RX, phase entry */
+
+    /* Receive epoch at cell 0 - Tier 1 */
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 0u);
+    MAC_OnSyncPacketReceived(&p, 0u);
+
+    /* Cells 1-3: SLOT_TX (budget = 3) */
+    for (uint8_t cell = 1u; cell <= 3u; cell++) {
+        FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
+        TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c, &s_sync_phase_6));
+    }
+    /* Cells 4-5: SLOT_RX (budget exhausted) */
+    for (uint8_t cell = 4u; cell <= 5u; cell++) {
+        FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
+        TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, &s_sync_phase_6));
+    }
+}
+
+void test_c2_sync_tx_budget_resets_on_next_occurrence(void)
+{
+    sync_mac();
+    /* First occurrence: exhaust budget in 6-cell phase */
+    FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);
+
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 0u);
+    MAC_OnSyncPacketReceived(&p, 0u);
+
+    for (uint8_t cell = 1u; cell <= 5u; cell++) {
+        FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
+        MAC_OnSlotOpportunity(&c, &s_sync_phase_6);
+    }
+
+    /* Second occurrence: enter a different phase, then re-enter sync phase */
+    FrameCursor_t co = {.phase_index = 11u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&co, &s_other_phase);
+
+    FrameCursor_t c0b = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c0b, &s_sync_phase_6);  /* phase entry → budget reset */
+
+    /* Receive epoch again */
+    make_sync_pkt(&p, 0u, 0u);
+    MAC_OnSyncPacketReceived(&p, 0u);
+
+    /* Budget should be restored: cells 1-3 TX, cell 4 RX */
+    for (uint8_t cell = 1u; cell <= 3u; cell++) {
+        FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
+        TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c, &s_sync_phase_6));
+    }
+    FrameCursor_t c4 = {.phase_index = 10u, .cell_index = 4u, .slot_index = 0u};
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c4, &s_sync_phase_6));
+}
+
+void test_c2_sync_tx_budget_getter_after_init(void)
+{
+    TEST_ASSERT_EQUAL(SYNC_TX_BUDGET, MAC_GetSyncTxBudget());
+}
+
+void test_c2_sync_tx_budget_getter_decrements_on_tx(void)
+{
+    sync_mac();
+    FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);
+
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 0u);
+    MAC_OnSyncPacketReceived(&p, 0u);
+
+    FrameCursor_t c1 = {.phase_index = 10u, .cell_index = 1u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c1, &s_sync_phase_6);
+    TEST_ASSERT_EQUAL(SYNC_TX_BUDGET - 1u, MAC_GetSyncTxBudget());
+
+    FrameCursor_t c2 = {.phase_index = 10u, .cell_index = 2u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c2, &s_sync_phase_6);
+    TEST_ASSERT_EQUAL(SYNC_TX_BUDGET - 2u, MAC_GetSyncTxBudget());
+}
+
+void test_c2_sync_tx_budget_getter_zero_after_exhaustion(void)
+{
+    sync_mac();
+    FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);
+
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 0u);
+    MAC_OnSyncPacketReceived(&p, 0u);
+
+    for (uint8_t cell = 1u; cell <= 3u; cell++) {
+        FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
+        MAC_OnSlotOpportunity(&c, &s_sync_phase_6);
+    }
+    TEST_ASSERT_EQUAL(0u, MAC_GetSyncTxBudget());
+}
+
+void test_c2_sync_tx_budget_getter_resets_on_phase_entry(void)
+{
+    sync_mac();
+    FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);
+
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 0u);
+    MAC_OnSyncPacketReceived(&p, 0u);
+
+    for (uint8_t cell = 1u; cell <= 3u; cell++) {
+        FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
+        MAC_OnSlotOpportunity(&c, &s_sync_phase_6);
+    }
+    TEST_ASSERT_EQUAL(0u, MAC_GetSyncTxBudget());
+
+    /* Phase entry to a different phase resets the budget */
+    FrameCursor_t co = {.phase_index = 11u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&co, &s_other_phase);
+    TEST_ASSERT_EQUAL(SYNC_TX_BUDGET, MAC_GetSyncTxBudget());
+}
+
 /* ------- Epoch Received flag --------------------------------------------- */
 
 void test_c2_epoch_received_false_after_init(void)
@@ -536,7 +672,281 @@ void test_c2_hop_count_set_after_beacon(void)
     TEST_ASSERT_EQUAL(4u, MAC_GetHopCount());
 }
 
+/* ------- Sync silence timeout (ADR-0013) -------------------------------- */
+
+/*
+ * sync_mac() drives to CLOCK_WARM with the last preamble at 6000 ms.
+ * s_last_sync_received_ms = 6000 after acquisition.
+ * 14 min = 840000 ms, 15 min = 900000 ms = SYNC_SILENCE_TIMEOUT_MS.
+ */
+
+void test_c2_warm_14min_silence_no_degradation(void)
+{
+    sync_mac();
+    MAC_CheckSyncTimeout(6000u + 840000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+}
+
+void test_c2_warm_15min_silence_degrades_to_cold(void)
+{
+    sync_mac();
+    MAC_CheckSyncTimeout(6000u + 900000u);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+}
+
+void test_c2_acquiring_15min_silence_degrades_to_cold(void)
+{
+    /* P1 only — CLOCK_ACQUIRING, last_sync = 0 */
+    SyncPayload_t p;
+    s_snapshot_ms = 0u;
+    make_sync_pkt(&p, 0u, 0u);
+    MAC_OnSyncPacketReceived(&p, 0u);
+    TEST_ASSERT_EQUAL(CLOCK_ACQUIRING, MAC_GetClockState());
+
+    MAC_CheckSyncTimeout(900000u);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+}
+
+void test_c2_cold_timeout_is_noop(void)
+{
+    MAC_CheckSyncTimeout(900000u);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+}
+
+void test_c2_sync_at_14min_resets_timer(void)
+{
+    sync_mac();  /* CLOCK_WARM, last_sync = 6000 */
+
+    /* 14 min: no degradation */
+    MAC_CheckSyncTimeout(6000u + 840000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+
+    /* Receive Tier 1 sync at 14 min — resets timer to 846000 */
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 846000u);
+    MAC_OnSyncPacketReceived(&p, 846000u);  /* error=0 → Tier 1 */
+
+    /* 15 min from original start (906000): only 1 min after reset → no degradation */
+    MAC_CheckSyncTimeout(906000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+}
+
+void test_c2_tier2_resets_silence_timer(void)
+{
+    sync_mac();  /* CLOCK_WARM, last_sync = 6000 */
+
+    /* Tier 2 packet (error 50 ms) at 14 min — stays WARM, resets timer */
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 846000u);
+    MAC_OnSyncPacketReceived(&p, 846050u);  /* error=50 → Tier 2 */
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+
+    /* 14 min from Tier 2 reset: no degradation */
+    MAC_CheckSyncTimeout(846050u + 840000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+
+    /* 15 min from Tier 2 reset: degradation */
+    MAC_CheckSyncTimeout(846050u + 900000u);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+}
+
+void test_c2_tier3_resets_silence_timer(void)
+{
+    sync_mac();  /* CLOCK_WARM, last_sync = 6000 */
+
+    /* Tier 3 packet at 14 min — immediate degradation to COLD */
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 846000u);
+    MAC_OnSyncPacketReceived(&p, 846400u);  /* error=400 ≥ 300ms → Tier 3 */
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+
+    /* Re-acquire from the Tier 3 moment */
+    s_snapshot_ms = 846400u;
+    make_sync_pkt(&p, 0u, 846400u);
+    MAC_OnSyncPacketReceived(&p, 846400u);  /* P1 → ACQUIRING */
+    make_sync_pkt(&p, 1u, 846400u);  MAC_OnSyncPacketReceived(&p, 849400u);  /* P2 */
+    make_sync_pkt(&p, 2u, 846400u);  MAC_OnSyncPacketReceived(&p, 852400u);  /* P3 → WARM */
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+
+    /* 14 min from re-acquisition: no degradation */
+    MAC_CheckSyncTimeout(852400u + 840000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+
+    /* 15 min from re-acquisition: degradation */
+    MAC_CheckSyncTimeout(852400u + 900000u);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(2, s_sync_lost_calls);
+}
+
+void test_c2_tier3_immediate_degradation_unchanged(void)
+{
+    sync_mac();
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, 0u);
+    MAC_OnSyncPacketReceived(&p, 400u);  /* error=400 ≥ 300ms → Tier 3 */
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+}
+
 /* ------- main ------------------------------------------------------------- */
+
+/* ------- ArcLog events ----------------------------------------------------
+ * The MAC's log lines are part of its contract: the host tool (tools/arclog)
+ * classifies and correlates them, so their names and keys are asserted here.
+ * ------------------------------------------------------------------------- */
+
+void test_c2_arclog_acquisition_sequence(void)
+{
+    sync_mac();
+
+    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=0 ep=0 st=0 exp=0 err=0 clk=COLD act=set");
+    TEST_ASSERT_ARCLOG("CLK from=COLD to=ACQ why=rtc_set");
+    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=1 ep=0 st=3000 exp=3000 err=0 clk=ACQ act=good");
+    TEST_ASSERT_ARCLOG("CLK from=ACQ to=WARM why=lock");
+    TEST_ASSERT_ARCLOG("MAC_ST from=SCAN to=SYNC why=lock");
+    /* Header: core, module, verbosity letter, sequence number. */
+    TEST_ASSERT_EQUAL_STRING_LEN("4Y L #", ArcLog_CaptureLine((uint32_t)ArcLog_CaptureFind("CLK from=ACQ")), 6);
+}
+
+void test_c2_arclog_warm_tiers(void)
+{
+    SyncPayload_t p;
+    sync_mac();
+    ArcLog_CaptureReset();
+
+    make_sync_pkt(&p, 1u, 30000u);
+    MAC_OnSyncPacketReceived(&p, 33004u);            /* err 4 ms  -> tier 1 */
+    MAC_OnSyncPacketReceived(&p, 33050u);            /* err 50 ms -> tier 2 */
+    MAC_OnSyncPacketReceived(&p, 33500u);            /* err 500   -> tier 3 */
+
+    TEST_ASSERT_ARCLOG("exp=33000 err=4 clk=WARM act=t1");
+    TEST_ASSERT_ARCLOG("exp=33000 err=50 clk=WARM act=t2");
+    TEST_ASSERT_ARCLOG("exp=33000 err=500 clk=WARM act=t3");
+    TEST_ASSERT_ARCLOG("CLK from=WARM to=COLD why=tier3");
+    TEST_ASSERT_ARCLOG("MAC_ST from=SYNC to=SCAN why=tier3");
+}
+
+void test_c2_arclog_signed_error(void)
+{
+    SyncPayload_t p;
+    sync_mac();
+    ArcLog_CaptureReset();
+
+    make_sync_pkt(&p, 1u, 30000u);
+    MAC_OnSyncPacketReceived(&p, 32995u);            /* 5 ms early */
+    TEST_ASSERT_ARCLOG("st=32995 exp=33000 err=-5 clk=WARM act=t1");
+}
+
+void test_c2_arclog_silence(void)
+{
+    sync_mac();
+    ArcLog_CaptureReset();
+
+    MAC_CheckSyncTimeout(6000u + SYNC_SILENCE_TIMEOUT_MS);
+    TEST_ASSERT_ARCLOG("SYNC_SILENCE last=6000");
+    TEST_ASSERT_ARCLOG("CLK from=WARM to=COLD why=silence");
+}
+
+/* ------- PreambleStamp age carry -----------------------------------------
+ * The MAC runs at RxDone, ~one airtime after the PreambleStamp. rtc_set must
+ * add the time elapsed since the stamp, so that the new RTC domain reads the
+ * sender's nominal cell start at the stamp instant.
+ * ------------------------------------------------------------------------- */
+
+void test_c2_cold_rtc_set_carries_time_since_stamp(void)
+{
+    SyncPayload_t p;
+    make_sync_pkt(&p, 1u, 30000u);        /* nominal cell start 33000 */
+    s_snapshot_ms = 50991u;               /* RxDone: 991 ms after the stamp */
+    MAC_OnSyncPacketReceived(&p, 50000u);
+
+    TEST_ASSERT_EQUAL(33991u, s_rtc_set_target_ms);
+    TEST_ASSERT_EQUAL(30000u, MAC_GetSyncPhaseMs());
+}
+
+void test_c2_cold_stale_stamp_is_not_carried(void)
+{
+    SyncPayload_t p;
+    make_sync_pkt(&p, 1u, 30000u);
+    s_snapshot_ms = 50000u + SYNC_STAMP_MAX_AGE_MS + 1u;
+    MAC_OnSyncPacketReceived(&p, 50000u);
+
+    TEST_ASSERT_EQUAL(33000u, s_rtc_set_target_ms);
+}
+
+void test_c2_tier3_rtc_set_carries_time_since_stamp(void)
+{
+    SyncPayload_t p;
+    sync_mac();
+    make_sync_pkt(&p, 1u, 30000u);        /* expected arrival 33000 */
+    s_snapshot_ms = 34491u;               /* RxDone 991 ms after the stamp */
+    MAC_OnSyncPacketReceived(&p, 33500u); /* 500 ms late -> tier 3 */
+
+    TEST_ASSERT_EQUAL(33991u, s_rtc_set_target_ms);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+}
+
+void test_c2_cold_rtc_set_carry_wraps_at_midnight(void)
+{
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, MS_PER_DAY - 500u);  /* nominal 23:59:59.500 */
+    s_snapshot_ms = 400u;                      /* old domain wrapped */
+    MAC_OnSyncPacketReceived(&p, MS_PER_DAY - 600u);
+
+    TEST_ASSERT_EQUAL(500u, s_rtc_set_target_ms);  /* 1000 ms later, wrapped */
+}
+
+/* ------- Cursor suspect --------------------------------------------------- */
+
+void test_c2_cursor_suspect_drops_to_cold_without_rtc_write(void)
+{
+    sync_mac();
+    int rtc_sets = s_rtc_set_calls;
+
+    MAC_OnCursorSuspect();
+
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
+    TEST_ASSERT_EQUAL(rtc_sets, s_rtc_set_calls);
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+    TEST_ASSERT_ARCLOG("CLK from=WARM to=COLD why=suspect");
+}
+
+void test_c2_cursor_suspect_in_cold_is_noop(void)
+{
+    MAC_OnCursorSuspect();
+
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_rtc_set_calls);
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+}
+
+/* A phase index that is not a Sync phase cannot anchor the FrameCursor:
+ * the packet is dropped before it touches the RTC or the ClockState, so a
+ * cold node keeps scanning instead of reaching ACQUIRING with no chain. */
+void test_c2_sync_pkt_with_non_sync_phase_is_rejected(void)
+{
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_phase_index = 0xFFu;
+    p.sync_cell_index  = 1u;
+    ArcLog_CaptureReset();
+
+    MAC_OnSyncPacketReceived(&p, 1000u);
+
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_rtc_set_calls);
+    TEST_ASSERT_ARCLOG("SYNC_REJ ph=255 ce=1");
+}
 
 int main(void)
 {
@@ -574,6 +984,15 @@ int main(void)
     RUN_TEST(test_c2_beacon_tx_at_cell_3_after_beacon_received);
     RUN_TEST(test_c2_beacon_tx_budget_getter);
 
+/* ------- Sync TX Budget (issue 29 - C2 only) ------------------------------ */
+
+    RUN_TEST(test_c2_sync_tx_budget_limits_to_3_per_occurrence);
+    RUN_TEST(test_c2_sync_tx_budget_resets_on_next_occurrence);
+    RUN_TEST(test_c2_sync_tx_budget_getter_after_init);
+    RUN_TEST(test_c2_sync_tx_budget_getter_decrements_on_tx);
+    RUN_TEST(test_c2_sync_tx_budget_getter_zero_after_exhaustion);
+    RUN_TEST(test_c2_sync_tx_budget_getter_resets_on_phase_entry);
+
 /* ------- Epoch Received flag --------------------------------------------- */
 
     RUN_TEST(test_c2_epoch_received_false_after_init);
@@ -581,5 +1000,27 @@ int main(void)
     RUN_TEST(test_c2_epoch_received_resets_on_phase_entry);
     RUN_TEST(test_c2_hop_count_zero_after_init);
     RUN_TEST(test_c2_hop_count_set_after_beacon);
+
+/* ------- Sync silence timeout (ADR-0013) -------------------------------- */
+
+    RUN_TEST(test_c2_warm_14min_silence_no_degradation);
+    RUN_TEST(test_c2_warm_15min_silence_degrades_to_cold);
+    RUN_TEST(test_c2_acquiring_15min_silence_degrades_to_cold);
+    RUN_TEST(test_c2_cold_timeout_is_noop);
+    RUN_TEST(test_c2_sync_at_14min_resets_timer);
+    RUN_TEST(test_c2_tier2_resets_silence_timer);
+    RUN_TEST(test_c2_tier3_resets_silence_timer);
+    RUN_TEST(test_c2_tier3_immediate_degradation_unchanged);
+    RUN_TEST(test_c2_arclog_acquisition_sequence);
+    RUN_TEST(test_c2_arclog_warm_tiers);
+    RUN_TEST(test_c2_arclog_signed_error);
+    RUN_TEST(test_c2_arclog_silence);
+    RUN_TEST(test_c2_cursor_suspect_drops_to_cold_without_rtc_write);
+    RUN_TEST(test_c2_cursor_suspect_in_cold_is_noop);
+    RUN_TEST(test_c2_cold_rtc_set_carries_time_since_stamp);
+    RUN_TEST(test_c2_cold_stale_stamp_is_not_carried);
+    RUN_TEST(test_c2_tier3_rtc_set_carries_time_since_stamp);
+    RUN_TEST(test_c2_cold_rtc_set_carry_wraps_at_midnight);
+    RUN_TEST(test_c2_sync_pkt_with_non_sync_phase_is_rejected);
     return UNITY_END();
 }

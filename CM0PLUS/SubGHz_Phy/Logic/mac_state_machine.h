@@ -68,12 +68,58 @@
 #define BEACON_K_TX_CELLS  2u
 #endif
 
+#ifndef SYNC_TX_BUDGET
+/*!
+ * \brief   Maximum sync transmissions per Sync Phase occurrence (C2 and C3).
+ *
+ * \details C2: after this many SLOT_TX returns in Sync cells 1+, the MAC
+ *          returns SLOT_RX for the remaining cells in the occurrence.
+ *          C3: transmits in the first SYNC_TX_BUDGET cells, then returns
+ *          SLOT_SKIP for the rest. Prevents unnecessary radio-on time on
+ *          large Sync phases while preserving enough relay coverage for
+ *          the sequential CT hop chain. Reset to this value at each Sync
+ *          Phase entry. C1 is unaffected (always Rx in Sync).
+ */
+#define SYNC_TX_BUDGET  3u
+#endif
+
 #ifndef ROUTE_COST_CHANGE_THRESHOLD
 /*!
  * Minimum absolute route_cost delta that counts as a structural routing
  * change and triggers a BeaconTxBudget reset to 2.
  */
 #define ROUTE_COST_CHANGE_THRESHOLD  100u
+#endif
+
+#ifndef SYNC_STAMP_MAX_AGE_MS
+/*!
+ * \brief   Maximum plausible age of a PreambleStamp when the Sync packet is
+ *          processed.
+ *
+ * \details The MAC processes a Sync packet at RxDone, about one airtime
+ *          (~1 s at SF12) after its PreambleStamp, and carries that elapsed
+ *          time into \c rtc_set. An older stamp cannot come from the packet
+ *          being processed, so it is ignored (no elapsed-time carry).
+ */
+#define SYNC_STAMP_MAX_AGE_MS  5000u
+#endif
+
+/*! Milliseconds per day: the wrap of the ms-since-midnight RTC domain. */
+#define MS_PER_DAY  86400000u
+
+#ifndef SYNC_SILENCE_TIMEOUT_MS
+/*!
+ * \brief   Wall-clock silence timeout for ClockState degradation.
+ *
+ * \details When no Sync packet of any tier is received for this duration,
+ *          the node degrades \ref ClockState to \ref CLOCK_COLD and fires
+ *          \c sync_lost. Measured in wall-clock time (RTC), not slot counts,
+ *          to decouple degradation from TDMA table structure. Any received
+ *          Sync packet (Tier 1, 2, or 3) resets the timer. See ADR-0013.
+ *
+ *          15 minutes (provisioned placeholder).
+ */
+#define SYNC_SILENCE_TIMEOUT_MS  900000u
 #endif
 
 /* =========================================================================
@@ -110,7 +156,7 @@ typedef struct {
      *          \ref MAC_OnSyncPacketReceived. Relay is suppressed for this
      *          sync occurrence regardless of the return path.
      *
-     * \param preamble_timestamp_ms  DIO1 ISR timestamp (GetTimerTicks domain).
+     * \param preamble_timestamp_ms  PreambleStamp (GetTimerTicks domain).
      * \param expected_offset_ms     ms_since_midnight_sync_phase +
      *                               sync_cell_index × per_cell_ms.
      */
@@ -136,17 +182,20 @@ typedef struct {
     /*!
      * Packet 1 hook — re-anchors the TDMA cursor and alarm chain.
      *
-     * \param sync_phase_idx  Phase index from \c SyncPayload.sync_phase_index.
-     * \param sync_cell_idx   Cell index from \c SyncPayload.sync_cell_index.
-     * \param rtc_now_ms      Live RTC readback (\c get_rtc_snapshot ms value)
-     *                        in the new RTC domain, taken right after
-     *                        \c rtc_set. Expected to coincide with the
-     *                        nominal start of the received cell, but is a
-     *                        hardware snapshot, not a schedule-derived value.
+     * \param sync_phase_idx   Phase index from \c SyncPayload.sync_phase_index.
+     * \param sync_cell_idx    Cell index from \c SyncPayload.sync_cell_index.
+     * \param nominal_start_ms  Schedule-derived nominal start of the received
+     *                          cell: \c ms_since_midnight_sync_phase +
+     *                          sync_cell_index * per_cell_ms. This is the same
+     *                          value passed to \c rtc_set. The hook must use
+     *                          this value (not a hardware readback) as the base
+     *                          for alarm programming so that all nodes wake at
+     *                          the same absolute slot boundary, not at
+     *                          \c target_ms + per-node execution latency.
      */
     void (*sync_bootstrapped)(uint8_t  sync_phase_idx,
                                uint8_t  sync_cell_idx,
-                               uint32_t rtc_now_ms);
+                               uint32_t nominal_start_ms);
 
     /*! Fired when ClockState transitions to CLOCK_WARM (2 consecutive good packets). */
     void (*sync_locked)(void);
@@ -200,11 +249,39 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
  *
  * \param   [in] payload              - Decoded SyncPayload from the received
  *                                      packet.
- * \param   [in] preamble_timestamp_ms - Millisecond timestamp captured in
- *                                      the DIO1 preamble ISR.
+ * \param   [in] preamble_timestamp_ms - PreambleStamp: RTC ms captured at
+ *                                      entry of the radio IRQ that signalled
+ *                                      IRQ_PREAMBLE_DETECTED (see CONTEXT.md
+ *                                      - PreambleStamp).
  */
 void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
                                uint32_t             preamble_timestamp_ms);
+
+/*!
+ * \brief   Check whether the sync silence timeout has expired.
+ *
+ * \details Called from the TDMA slot wake path on each wake. If no Sync
+ *          packet of any tier has been received for \ref SYNC_SILENCE_TIMEOUT_MS
+ *          and \ref ClockState is \ref CLOCK_WARM or \ref CLOCK_ACQUIRING,
+ *          degrades to \ref CLOCK_COLD and fires \c sync_lost.
+ *          \ref CLOCK_COLD is a no-op (already degraded). C3 is always a
+ *          no-op (always \ref CLOCK_WARM, never degrades). See ADR-0013.
+ *
+ * \param   [in] rtc_now_ms - Current RTC time in ms-since-midnight.
+ */
+void MAC_CheckSyncTimeout(uint32_t rtc_now_ms);
+
+/*!
+ * \brief   Called by the TDMA Machine when a slot wake lands far from the
+ *          expected wake time (cursor integrity checkpoint).
+ *
+ * \details The FrameCursor can no longer be trusted, so C1/C2 drop to
+ *          \ref CLOCK_COLD / \ref MAC_STATE_SCANNING and fire \c sync_lost.
+ *          The RTC is not written: the next received Sync packet re-anchors
+ *          it through the normal \ref CLOCK_COLD path. No-op when already
+ *          \ref CLOCK_COLD. C3 (SyncAnchor) ignores it.
+ */
+void MAC_OnCursorSuspect(void);
 
 /*!
  * \brief   Called by the CM0+ RxDone wrapper when a Beacon packet is decoded.
@@ -303,6 +380,20 @@ uint8_t MAC_GetHopCount(void);
  * \retval  uint8_t Remaining Tx budget.
  */
 uint8_t MAC_GetBeaconTxBudget(void);
+
+/*!
+ * \brief   Return the remaining sync TX budget for the current Sync Phase
+ *          occurrence.
+ *
+ * \details C2: counts down from \ref SYNC_TX_BUDGET on each sync relay TX;
+ *          reset to \ref SYNC_TX_BUDGET at Sync phase entry. C3: counts
+ *          down from \ref SYNC_TX_BUDGET on each sync TX; reset at phase
+ *          entry. C1: always 0 (never relays). Used by the TDMA Machine
+ *          for state-aware guard-time look-ahead in Sync phases.
+ *
+ * \retval  uint8_t Remaining sync TX budget.
+ */
+uint8_t MAC_GetSyncTxBudget(void);
 
 /*!
  * \brief   Return the Sync Phase start time (binary ms) in the current RTC domain.

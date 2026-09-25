@@ -1,7 +1,8 @@
 # ADR-0012 — Guard Time Resolver with Alarm Look-Ahead
 
 ## Status
-Accepted — 2026-06-25
+Accepted — 2026-06-25.
+The Rx window duration below (`slot_active_ms + 2 × guard`) is superseded by ADR-0015: the window now ends at the latest packet start derived from `MAX_GUARD_TIME_MS` and the packet's ToA. The alarm offset is unchanged.
 
 ## Context
 
@@ -140,3 +141,14 @@ separation principle.
 - Potential interface split: `alarm_advance_ms` and `rx_extension_ms` as
   separate return values
 - Per-node guard asymmetry between communicating nodes
+## Amendment — 2026-09-25
+
+Values and behaviour have moved since this ADR was accepted; the decision itself (resolver module, TDMA Machine owns the Rx prediction) is unchanged.
+
+- The guard constant is `MAX_GUARD_TIME_MS = 100` ms (`guard_time_resolver.h`), not `GUARD_TIME_MS = 5`.
+  It is 3·T_S at SF12/BW125, the LoRa preamble-locking ceiling, and is aliased as `SYNC_RESYNC_THRESHOLD_MS` (the Tier 3 threshold).
+- Sync prediction for C3: Tx in the first `SYNC_TX_BUDGET` (3) cells of each Sync Phase occurrence, Skip for the rest (see SyncTxBudget in `CONTEXT.md`), not "Cell 0 Tx, Cells 1+ Skip".
+- The Tx-side paragraph's "fixed 5ms constant" reads "fixed 100 ms constant".
+- The delay-to-nominal on an early Tx wake relies on `TdmaPlatform_t.WaitUntilMs`.
+  The CM0+ platform (`subghz_phy_task.c`) does not provide it yet, so on target a Tx after a guard-early wake currently goes out up to one guard early.
+  The ArcLog `SYNC_TX` event logs `plan` (nominal) and `send` (actual), which makes this measurable on the bench.

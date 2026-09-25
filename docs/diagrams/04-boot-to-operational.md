@@ -22,13 +22,12 @@ sequenceDiagram
         CM0->>CM0: FrequencyResolver_Init()
         CM0->>MAC: MAC_Init()<br/>state = SCANNING, clock = COLD
         CM0->>TDMA: TdmaMachine_Init()<br/>cursor = {0, 0, 0}
-        CM0->>CM0: UTIL_SEQ — arm first slot task
+        CM0->>TDMA: TdmaMachine_Start()
+        Note over TDMA: CLOCK_COLD: no alarm chain (ADR-0015)
+        TDMA->>Radio: RadioSetChannel(868.3 MHz) + RadioScan()
     end
 
-    Note over CM0,Radio: First RTC Alarm A fires
-    TDMA->>MAC: MAC_OnSlotOpportunity()
-    MAC-->>TDMA: SLOT_RX (SCANNING → always RX)
-    TDMA->>Radio: RadioSetRx()
+    Note over CM0,Radio: Scanning Rx: continuous, CM0+ in Stop2 until a radio IRQ.<br/>Re-armed after every reception while CLOCK_COLD.
 
     rect rgb(255, 248, 225)
         Note over Net,Radio: Packet 1 — Cold Bootstrap
@@ -38,8 +37,10 @@ sequenceDiagram
         MAC->>CM0: rtc_set() — set RTC calendar
         MAC->>CM0: get_rtc_snapshot() — read back RTC
         MAC->>TDMA: sync_bootstrapped()
-        TDMA->>TDMA: BootstrapFromSync()<br/>re-anchor cursor + program Alarm A
+        TDMA->>TDMA: BootstrapFromSync()<br/>re-anchor cursor + program Alarm A<br/>(alarm chain starts)
     end
+
+    Note over TDMA,Radio: Next cell: Alarm A fires guard early,<br/>RadioSetRx() until the latest packet start
 
     rect rgb(255, 248, 225)
         Note over Net,Radio: Packet 2 — Lock Check

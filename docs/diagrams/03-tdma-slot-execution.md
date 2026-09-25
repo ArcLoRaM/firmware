@@ -28,7 +28,7 @@ flowchart TD
     COMPLIANCE -- "GRANTED" --> SEND["Assemble SyncPayload<br/><code>RadioSend()</code><br/><code>ReportTxDone()</code>"]
     COMPLIANCE -- "RESTRICTED /<br/>POWER_TOO_HIGH" --> NO_TX["Skip TX<br/>(no transmission)"]
 
-    RX_PATH --> RX["Step 8b: Open RX Window<br/><code>RadioSetRx(slot_ms + 2×GUARD)</code>"]
+    RX_PATH --> RX["Step 8b: Open RX Window until latest packet start<br/><code>RadioSetRx(last - now, cap - now)</code><br/>last = slot end + MAX_GUARD - ToA, cap = slot end + MAX_GUARD"]
     SKIP_PATH --> SLEEP_RADIO["Step 8c: Radio Sleep"]
 
     SEND --> ADVANCE

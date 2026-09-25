@@ -24,6 +24,7 @@
  */
 #include "mac_state_machine.h"
 #include "tdma_table.h"
+#include "arclog.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -37,6 +38,7 @@ static CellEligibilityMask_t s_cell_elig_ul;
 static CellEligibilityMask_t s_cell_elig_dl;
 static PhaseTxFlag_t         s_phase_tx_flag;
 static uint8_t               s_last_phase_idx;
+static uint8_t               s_sync_tx_remaining;
 static uint32_t              s_sync_phase_epoch_ms;
 static uint8_t               s_sync_phase_day;
 static uint8_t               s_sync_phase_month;
@@ -55,6 +57,7 @@ void MAC_Init(const MAC_Hooks_t *hooks)
     s_cell_elig_dl         = 0x00u;
     s_phase_tx_flag        = 1u;
     s_last_phase_idx       = 0xFFu;
+    s_sync_tx_remaining    = SYNC_TX_BUDGET;
     s_sync_phase_epoch_ms  = 0u;
     s_sync_phase_day       = 0u;
     s_sync_phase_month     = 0u;
@@ -62,12 +65,10 @@ void MAC_Init(const MAC_Hooks_t *hooks)
     if (hooks != NULL) {
         s_hooks = *hooks;
     } else {
-        s_hooks.rtc_set           = NULL;
-        s_hooks.get_rtc_snapshot  = NULL;
-        s_hooks.sync_bootstrapped = NULL;
-        s_hooks.sync_locked       = NULL;
-        s_hooks.sync_lost         = NULL;
+        s_hooks = (MAC_Hooks_t){0};
     }
+    ARCLOG(ARCLOG_MOD_MAC, VLEVEL_L, "MAC_INIT", "cls=C3 st=%s clk=%s",
+           ArcLog_MacStateName(s_mac_state), ArcLog_ClockName(CLOCK_WARM));
 }
 
 SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
@@ -78,12 +79,16 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
         s_last_phase_idx = cursor->phase_index;
         if (phase->type == PHASE_TYPE_SYNC) {
             s_phase_tx_flag = 1u;
+            s_sync_tx_remaining = SYNC_TX_BUDGET;
             if (s_hooks.get_rtc_snapshot != NULL) {
                 s_hooks.get_rtc_snapshot(&s_sync_phase_epoch_ms,
                                           &s_sync_phase_day,
                                           &s_sync_phase_month,
                                           &s_sync_phase_year);
             }
+            ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "SYNC_EPOCH", "ph=%u ep=%u",
+                   (unsigned)cursor->phase_index,
+                   (unsigned)s_sync_phase_epoch_ms);
         }
     }
 
@@ -94,8 +99,13 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
 
     case DIRECTION_MAC_CELL:
         if (phase->type == PHASE_TYPE_SYNC) {
-            /* C3 originates sync in cell 0; skips cells 1+ (already sent) */
-            return (cursor->cell_index == 0u) ? SLOT_TX : SLOT_SKIP;
+            /* C3 originates sync in the first SYNC_TX_BUDGET cells,
+             * then skips the rest (already sent enough for relay coverage). */
+            if (s_sync_tx_remaining == 0u) {
+                return SLOT_SKIP;
+            }
+            s_sync_tx_remaining--;
+            return SLOT_TX;
         }
         /* Mesh_Beacon: C3 always Tx (bypasses BeaconTxBudget) */
         return SLOT_TX;
@@ -136,6 +146,17 @@ void MAC_OnExternalSyncAcquired(const FrameEpoch_t *epoch)
     (void)epoch;
 }
 
+void MAC_CheckSyncTimeout(uint32_t rtc_now_ms)
+{
+    (void)rtc_now_ms;
+}
+
+void MAC_OnCursorSuspect(void)
+{
+    /* SyncAnchor: the RTC is the time authority, there is nothing to
+     * re-acquire. The TDMA Machine logs the suspect wake itself. */
+}
+
 MacState_t            MAC_GetState(void)                        { return s_mac_state;          }
 ClockState_t          MAC_GetClockState(void)                   { return CLOCK_WARM;           }
 CellEligibilityMask_t MAC_GetCellEligibilityMask_Uplink(void)   { return s_cell_elig_ul;       }
@@ -144,6 +165,7 @@ PhaseTxFlag_t         MAC_GetPhaseTxFlag(void)                  { return s_phase
 bool                  MAC_GetEpochReceivedThisPhase(void)        { return false;               }
 uint8_t               MAC_GetHopCount(void)                      { return s_hop_count;        }
 uint8_t               MAC_GetBeaconTxBudget(void)                 { return 0u;                }
+uint8_t               MAC_GetSyncTxBudget(void)                   { return s_sync_tx_remaining; }
 uint32_t              MAC_GetSyncPhaseMs(void)                  { return s_sync_phase_epoch_ms; }
 uint32_t              MAC_GetSyncPhaseEpochMs(void)             { return s_sync_phase_epoch_ms; }
 void MAC_GetSyncPhaseDate(uint8_t *day, uint8_t *month, uint8_t *year)

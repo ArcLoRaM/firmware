@@ -20,10 +20,12 @@
 #include "subghz_phy_task.h"
 #include "utilities_def.h"
 #include "stm32_seq.h"
-#include "sys_app.h"          /* APP_LOG, TS_ON/TS_OFF, VLEVEL_M/VLEVEL_H */
+#include "arclog.h"          /* ARCLOG, VLEVEL_* */
+#include "app_version.h"      /* APP_VERSION_* */
 #include "stm32_timer.h"      /* UTIL_TIMER_GetCurrentTime */
 #include "radio.h"            /* Radio */
 #include "radio_def.h"        /* MODEM_LORA */
+#include "radio_driver.h"     /* SUBGRF_SetDioIrqParams, SUBGRF_GetIrqStatus, IRQ_* */
 #include "rtc.h"              /* hrtc */
 #include "main.h"             /* RTC_PREDIV_S */
 #include "tdma_machine.h"
@@ -35,42 +37,129 @@
 #include "tdma_table.h"       /* TdmaTable_PhaseCount */
 
 /* =========================================================================
- * Radio event callbacks — bridge radio ISR events to MAC layer
+ * Radio IRQ timestamps
+ *
+ * The radio IRQ handler (stm32wlxx_it.c, USER CODE SUBGHZ_Radio_IRQn 0) calls
+ * SubGhzPhyTask_OnRadioIrq() first thing, before HAL dispatch, so every stamp
+ * is the RTC at IRQ entry. RxDone arrives about one airtime after the packet
+ * started (~1 s at SF12 for a SyncPayload), so the Sync timestamp is the
+ * PREAMBLE_DETECTED IRQ (PreambleStamp). HEADER_VALID is stamped as a
+ * cross-check: it fires a fixed number of symbols after the preamble, so the
+ * spread of (hdr - pre) measures the preamble-detection jitter.
  * ========================================================================= */
 
-static RadioEvents_t s_radio_events;
+#ifndef PREAMBLE_DETECT_LATENCY_MS
+/* Constant delay between the sender's TX start and the PREAMBLE_DETECTED
+ * IRQ, subtracted from the PreambleStamp. 0 until measured on the bench
+ * (issue #17): tools/arclog sync-report estimates it from hdr - pre. */
+#define PREAMBLE_DETECT_LATENCY_MS  0u
+#endif
+
+/* Time the radio may take to raise PREAMBLE_DETECTED after a packet starts,
+ * added to a synced window's latest packet start to form the hardware Rx
+ * timeout. Detection happens within the programmed preamble, so its length
+ * (8 symbols x 32.768 ms at SF12/BW125 = 262 ms) is a safe upper bound. A
+ * packet detected in that margin but starting too late to fit is aborted by
+ * the cap. Recompute if the modem parameters change. */
+#define RX_PREAMBLE_DETECT_MARGIN_MS  262u
+
+/* Largest hardware Rx timeout: 24-bit count of 15.625 us steps. */
+#define RX_HW_TIMEOUT_MAX_MS  (0xFFFFFFu >> 6)
+
+static RadioEvents_t     s_radio_events;
+static UTIL_TIMER_Object_t s_rx_cap_timer;   /* synced-window hard end */
+static volatile uint32_t s_irq_stamp_ms;   /* RTC at entry of the latest radio IRQ */
+static volatile uint32_t s_pre_stamp_ms;   /* PREAMBLE_DETECTED of the current Rx */
+static volatile uint32_t s_hdr_stamp_ms;   /* HEADER_VALID of the current Rx      */
+static volatile bool     s_pre_valid;
+static volatile bool     s_hdr_valid;
+static uint8_t           s_last_tx_len;
+
+static uint32_t plat_radio_toa(uint8_t len);
+
+void SubGhzPhyTask_OnRadioIrq(void)
+{
+    uint32_t stamp = (uint32_t)UTIL_TIMER_GetCurrentTime();
+    uint16_t irq   = SUBGRF_GetIrqStatus();
+
+    /* Keep the latest detection: a false preamble detection on noise earlier
+     * in the window is superseded by the real packet's. */
+    s_irq_stamp_ms = stamp;
+    if ((irq & IRQ_PREAMBLE_DETECTED) != 0u) {
+        s_pre_stamp_ms = stamp;
+        s_pre_valid    = true;
+        s_hdr_valid    = false;
+    }
+    if ((irq & IRQ_HEADER_VALID) != 0u) {
+        s_hdr_stamp_ms = stamp;
+        s_hdr_valid    = true;
+    }
+}
+
+/* =========================================================================
+ * Radio event callbacks - bridge radio ISR events to the MAC layer
+ * ========================================================================= */
 
 static void on_tx_done(void)
 {
-    APP_LOG(TS_ON, VLEVEL_H, "Radio: TxDone\r\n");
+    uint32_t end = s_irq_stamp_ms;
+    uint32_t toa = plat_radio_toa(s_last_tx_len);
+    /* start = end - toa: when the radio actually began transmitting. */
+    ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_M, "TX_DONE", "sz=%u toa=%u end=%u start=%u",
+           (unsigned)s_last_tx_len, (unsigned)toa,
+           (unsigned)end, (unsigned)(end - toa));
 }
 
 static void on_tx_timeout(void)
 {
-    APP_LOG(TS_ON, VLEVEL_H, "Radio: TxTimeout\r\n");
+    ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_L, "TX_TIMEOUT", "");
 }
 
 static void on_rx_done(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr)
 {
-    APP_LOG(TS_ON, VLEVEL_H, "Radio: RxDone size=%u rssi=%d snr=%d\r\n",
-            (unsigned)size, (int)rssi, (int)snr);
+    uint32_t rxd = s_irq_stamp_ms;
+    uint32_t toa = plat_radio_toa((uint8_t)size);
+    uint32_t stamp;
+    const char *src;
+
+    UTIL_TIMER_Stop(&s_rx_cap_timer);
+    if (s_pre_valid) {
+        stamp = s_pre_stamp_ms - PREAMBLE_DETECT_LATENCY_MS;
+        src   = "pre";
+    } else {
+        /* No preamble IRQ seen: derive the TX start from the airtime. */
+        stamp = rxd - toa;
+        src   = "toa";
+    }
+
+    ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_M, "RX_DONE",
+           "sz=%u rssi=%d snr=%d pre=%u hdr=%u rxd=%u toa=%u st=%u src=%s",
+           (unsigned)size, (int)rssi, (int)snr,
+           (unsigned)(s_pre_valid ? s_pre_stamp_ms : 0u),
+           (unsigned)(s_hdr_valid ? s_hdr_stamp_ms : 0u),
+           (unsigned)rxd, (unsigned)toa, (unsigned)stamp, src);
 
     if (size == (uint16_t)sizeof(SyncPayload_t)) {
-        MAC_OnSyncPacketReceived((const SyncPayload_t *)payload,
-                                  (uint32_t)UTIL_TIMER_GetCurrentTime());
+        MAC_OnSyncPacketReceived((const SyncPayload_t *)payload, stamp);
     } else if (size == (uint16_t)sizeof(BeaconPayload_t)) {
         MAC_OnBeaconReceived((const BeaconPayload_t *)payload);
     }
+    TdmaMachine_OnRxEnd();
 }
 
 static void on_rx_timeout(void)
 {
-    APP_LOG(TS_ON, VLEVEL_H, "Radio: RxTimeout\r\n");
+    UTIL_TIMER_Stop(&s_rx_cap_timer);
+    ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_H, "RX_TIMEOUT", "pre=%u", (unsigned)s_pre_valid);
+    TdmaMachine_OnRxEnd();
 }
 
 static void on_rx_error(void)
 {
-    APP_LOG(TS_ON, VLEVEL_H, "Radio: RxError\r\n");
+    UTIL_TIMER_Stop(&s_rx_cap_timer);
+    ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_M, "RX_ERROR", "pre=%u hdr=%u",
+           (unsigned)s_pre_valid, (unsigned)s_hdr_valid);
+    TdmaMachine_OnRxEnd();
 }
 
 /* =========================================================================
@@ -126,21 +215,88 @@ static void plat_program_alarm_a(uint32_t abs_ms)
 }
 
 static void     plat_radio_set_channel(uint32_t hz)            { Radio.SetChannel(hz);              }
-static void     plat_radio_send(const uint8_t *b, uint8_t l)   { Radio.Send((uint8_t *)b, l);       }
-static void     plat_radio_set_rx(uint32_t tmo)                { Radio.Rx(tmo);                     }
+static void plat_radio_send(const uint8_t *b, uint8_t l)
+{
+    s_last_tx_len = l;
+    Radio.Send((uint8_t *)b, l);
+}
+
+/* Start a single-mode Rx with the radio's own window timer (steps of
+ * 15.625 us; 0 = no timeout). Radio.Rx() is bypassed: it can only bound the
+ * window with the driver's software RxTimeoutTimer, which is stopped by
+ * RxDone / errors only and so cuts a packet that is still arriving. The
+ * hardware timer instead stops on preamble detection, so a packet that
+ * started in time is always received in full. Preamble rather than header
+ * (SetRxConfig's default): Sync timing is anchored on the preamble, and the
+ * Sync packet will move to implicit header (issue #39 keeps the tradeoff).
+ * It is re-applied on every start rather than trusted to survive the radio's
+ * sleep between slots. The IRQ mask adds PREAMBLE_DETECTED and HEADER_VALID so the IRQ
+ * handler can stamp them; RadioIrqProcess handles both harmlessly (its
+ * preamble branch only acts in Rx duty-cycle mode, never used here). */
+static void radio_rx_start(uint32_t hw_timeout_steps)
+{
+    const uint16_t mask = IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR
+                        | IRQ_HEADER_ERROR | IRQ_PREAMBLE_DETECTED | IRQ_HEADER_VALID;
+    s_pre_valid = false;
+    s_hdr_valid = false;
+    SUBGRF_SetDioIrqParams(mask, mask, IRQ_RADIO_NONE, IRQ_RADIO_NONE);
+    SUBGRF_SetStopRxTimerOnPreambleDetect(true);
+    SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);  /* PA selection is ignored for Rx */
+    SUBGRF_SetRx(hw_timeout_steps);
+}
+
+/* Synced window: the hardware timeout is the latest packet start plus the
+ * time the radio needs to detect its preamble; the cap then aborts any
+ * reception still running at the slot's hard end (TdmaPlatform_t). */
+static void plat_radio_set_rx(uint32_t start_window_ms, uint32_t cap_ms)
+{
+    uint32_t tmo_ms = start_window_ms + RX_PREAMBLE_DETECT_MARGIN_MS;
+    if (tmo_ms > RX_HW_TIMEOUT_MAX_MS) {
+        tmo_ms = RX_HW_TIMEOUT_MAX_MS;
+    }
+    radio_rx_start(tmo_ms << 6);  /* 64 steps of 15.625 us per ms */
+    UTIL_TIMER_StartWithPeriod(&s_rx_cap_timer, cap_ms);
+}
+
+/* Scanning: listen until a reception ends; TdmaMachine_OnRxEnd re-arms. */
+static void plat_radio_scan(void)
+{
+    radio_rx_start(0u);
+}
+
+/* The slot's hard end passed with a reception still running: a false
+ * preamble detection, or a packet that started too late to end in time. */
+static void on_rx_cap(void *context)
+{
+    (void)context;
+    if (SUBGRF_GetOperatingMode() != MODE_RX) return;
+    ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_L, "RX_CAP", "pre=%u hdr=%u",
+           (unsigned)(s_pre_valid ? s_pre_stamp_ms : 0u),
+           (unsigned)(s_hdr_valid ? s_hdr_stamp_ms : 0u));
+    TdmaMachine_OnRxEnd();  /* puts the radio to sleep */
+}
+
+static void plat_cancel_alarm_a(void)
+{
+    hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+    HAL_RTC_DeactivateAlarm(&hrtc, RTC_ALARM_A);
+}
 static void     plat_radio_sleep(void)                         { Radio.Sleep();                     }
 
-/* ToA for SF12/BW125 Sync packet (11-byte SyncPayload, 8-symbol preamble).
- * Replace parameters once the radio is fully configured. */
-static uint32_t plat_radio_toa(void)
+/* Time on air of a len-byte packet with the modem configuration set in
+ * SubGhzPhyTask_Init (SF12 / BW125 / CR4-5 / 8-symbol preamble / explicit
+ * header / CRC on). The driver's formula is the reference for duty-cycle
+ * accounting and for deriving TX start (TX_DONE) and the RxDone fallback
+ * stamp. Keep the parameters in step with Radio.SetTxConfig/SetRxConfig. */
+static uint32_t plat_radio_toa(uint8_t len)
 {
     return Radio.TimeOnAir(MODEM_LORA,
                            0u,     /* BW 125 kHz  */
                            12u,    /* SF12        */
                            1u,     /* CR 4/5      */
                            8u,     /* preamble symbols */
-                           false,  /* variable length */
-                           11u,    /* SyncPayload = 11 bytes */
+                           false,  /* variable length (explicit header) */
+                           len,
                            true);  /* CRC on */
 }
 
@@ -154,6 +310,7 @@ static uint32_t plat_radio_toa(void)
 static void mac_hook_rtc_set(uint32_t target_ms,
                               uint8_t  day, uint8_t month, uint8_t year)
 {
+    uint32_t old_ms    = (uint32_t)UTIL_TIMER_GetCurrentTime();
     uint32_t target_s  = (target_ms / 1000u) % 86400u;
     uint32_t subsec_ms = target_ms % 1000u;
 
@@ -178,54 +335,59 @@ static void mac_hook_rtc_set(uint32_t target_ms,
     HAL_RTC_SetDate(&hrtc, &d, RTC_FORMAT_BCD);
     /* SSR = PREDIV_S (start of set_s) after SetTime */
 
-    APP_LOG(TS_OFF, VLEVEL_M,
-            "MAC: rtc_set %02u:%02u:%02u.%03u\r\n",
-            (unsigned)t.Hours, (unsigned)t.Minutes,
-            (unsigned)t.Seconds, (unsigned)subsec_ms);
-
     /* Sub-second alignment via SHIFTR.
      * ADD1S=1 advances calendar by 1 s and sets SSR = SUBFS, so
      * elapsed-in-second = (PREDIV_S − SUBFS)/(PREDIV_S+1) ≈ subsec_ms/1000. */
+    const char *shift = "none";
     if (subsec_ms > 0u && target_s > 0u) {
         hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+        shift = "busy";   /* a previous shift is still pending (SHPF) */
         if (!READ_BIT(hrtc.Instance->ICSR, RTC_ICSR_SHPF)) {
             uint32_t shift_ticks = (subsec_ms * (RTC_PREDIV_S + 1u)) / 1000u;
-            HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
-                                       (RTC_PREDIV_S + 1u) - shift_ticks);
+            shift = (HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
+                                                (RTC_PREDIV_S + 1u) - shift_ticks) == HAL_OK)
+                    ? "ok" : "fail";
         }
     }
+
+    /* d = jump applied to the local clock (new - old domain), in ms. */
+    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "RTC_SET",
+           "old=%u new=%u d=%d date=%02x%02x%02x shift=%s",
+           (unsigned)old_ms, (unsigned)target_ms,
+           (int)(int32_t)(target_ms - old_ms),
+           (unsigned)year, (unsigned)month, (unsigned)day, shift);
 }
 
-/* Tier 2 hook: apply SSR-only correction when CLOCK_WARM and 8ms ≤ error < 300ms.
+/* Tier 2 hook: apply SSR-only correction when CLOCK_WARM and
+ * SYNC_PARTICIPATE_THRESHOLD_MS (8 ms) <= error < SYNC_RESYNC_THRESHOLD_MS (100 ms).
  * Direction: error_ms > 0 → RTC fast → delay (ADD1S=0).
  *            error_ms < 0 → RTC slow → advance (ADD1S=1, SSR set to SUBFS). */
 static void mac_hook_rtc_align_sub(uint32_t preamble_timestamp_ms,
                                     uint32_t expected_offset_ms)
 {
     int32_t error_ms = (int32_t)preamble_timestamp_ms - (int32_t)expected_offset_ms;
-    APP_LOG(TS_OFF, VLEVEL_M,
-            "MAC: rtc_align_sub preamble=%u expected=%u err=%d ms\r\n",
-            (unsigned)preamble_timestamp_ms, (unsigned)expected_offset_ms,
-            (int)error_ms);
 
     if (error_ms == 0) return;
 
     hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
-    if (READ_BIT(hrtc.Instance->ICSR, RTC_ICSR_SHPF)) return;  /* shift pending */
-    if (hrtc.Instance->SSR & 0x8000u) return;                  /* SS[15] guard (AN4759) */
 
     uint32_t error_abs   = (error_ms < 0) ? (uint32_t)(-error_ms) : (uint32_t)(error_ms);
     uint32_t shift_ticks = (error_abs * (RTC_PREDIV_S + 1u)) / 1000u;
 
+    HAL_StatusTypeDef st;
     if (error_ms > 0) {
         /* RTC fast → delay: SUBFS added to SSR prescaler counter */
-        HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_RESET, shift_ticks);
+        st = HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_RESET, shift_ticks);
     } else {
         /* RTC slow → advance: ADD1S=1 sets SSR = SUBFS after +1 calendar second.
          * Advance = 1 − SUBFS/(PREDIV_S+1) = shift_ticks/(PREDIV_S+1)  (AN4759 §2.6) */
-        HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
-                                   (RTC_PREDIV_S + 1u) - shift_ticks);
+        st = HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
+                                        (RTC_PREDIV_S + 1u) - shift_ticks);
     }
+
+    /* err > 0: local clock was ahead and is delayed; ticks of 1/(PREDIV_S+1) s. */
+    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "RTC_SHIFT", "err=%d ticks=%u res=%s",
+           (int)error_ms, (unsigned)shift_ticks, (st == HAL_OK) ? "ok" : "fail");
 }
 
 /* Atomic RTC snapshot hook: called at Sync Phase entry (C3/C2 TX epoch
@@ -249,36 +411,28 @@ static void mac_hook_get_rtc_snapshot(uint32_t *ms,
 }
 
 /* Packet 1 hook: re-anchor the TDMA Machine's FrameCursor and alarm chain
- * to the cell the Sync packet was actually received in, in the RTC domain
- * mac_hook_rtc_set just switched to. */
+ * to the cell the Sync packet was actually received in. Uses the
+ * schedule-derived nominal cell start (not a hardware readback) as the
+ * alarm base so all nodes wake at the same absolute slot boundary. */
 static void mac_hook_sync_bootstrapped(uint8_t  sync_phase_idx,
                                         uint8_t  sync_cell_idx,
-                                        uint32_t rtc_now_ms)
+                                        uint32_t nominal_start_ms)
 {
-    APP_LOG(TS_OFF, VLEVEL_M,
-            "MAC: sync_bootstrapped phase=%u cell=%u rtc_now=%u ms\r\n",
-            (unsigned)sync_phase_idx, (unsigned)sync_cell_idx,
-            (unsigned)rtc_now_ms);
-    TdmaMachine_BootstrapFromSync(sync_phase_idx, sync_cell_idx, rtc_now_ms);
+    ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_M, "BOOTSTRAP", "ph=%u ce=%u nom=%u",
+           (unsigned)sync_phase_idx, (unsigned)sync_cell_idx,
+           (unsigned)nominal_start_ms);
+    TdmaMachine_BootstrapFromSync(sync_phase_idx, sync_cell_idx, nominal_start_ms);
 }
 
-static void mac_hook_sync_locked(void)
-{
-    APP_LOG(TS_OFF, VLEVEL_M, "MAC: CLOCK_WARM — sync locked\r\n");
-}
-
-static void mac_hook_sync_lost(void)
-{
-    APP_LOG(TS_OFF, VLEVEL_M, "MAC: CLOCK_COLD — sync lost\r\n");
-}
+/* ClockState transitions are logged by the MAC itself (CLK events). */
 
 static const MAC_Hooks_t s_mac_hooks = {
     .rtc_set             = mac_hook_rtc_set,
     .rtc_align_subsecond = mac_hook_rtc_align_sub,
     .get_rtc_snapshot    = mac_hook_get_rtc_snapshot,
     .sync_bootstrapped   = mac_hook_sync_bootstrapped,
-    .sync_locked         = mac_hook_sync_locked,
-    .sync_lost           = mac_hook_sync_lost,
+    .sync_locked         = NULL,
+    .sync_lost           = NULL,
 };
 
 /* =========================================================================
@@ -305,8 +459,9 @@ void SubGhzPhyTask_Init(void)
      *    this point, before the first TDMA slot fires. */
     SharedMem_Init();
 
-    APP_LOG(TS_OFF, VLEVEL_M,
-            "SubGhzPhyTask: init NODE_CLASS=%u\r\n", (unsigned)NODE_CLASS);
+    ARCLOG(ARCLOG_MOD_SYS, VLEVEL_ALWAYS, "BOOT", "cls=C%u fw=%u.%u.%u",
+           (unsigned)NODE_CLASS, (unsigned)APP_VERSION_MAIN,
+           (unsigned)APP_VERSION_SUB1, (unsigned)APP_VERSION_SUB2);
 
     /* 1. Radio — must be initialised before any UTIL_TIMER usage.
      *    TxTimeoutTimer and RxTimeoutTimer inside the radio driver are created
@@ -344,7 +499,7 @@ void SubGhzPhyTask_Init(void)
                       1u,    /* coderate: CR 4/5 */
                       0u,    /* bandwidthAfc (FSK only) */
                       8u,    /* preamble symbols */
-                      5u,    /* symbol timeout */
+                      0u,    /* symbol timeout: off, the window timer bounds Rx */
                       false, /* fixed length */
                       0u,    /* payload length (variable) */
                       true,  /* CRC on */
@@ -353,42 +508,40 @@ void SubGhzPhyTask_Init(void)
                       false, /* IQ not inverted */
                       false);/* single RX */
 
-    APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: Radio.Init done\r\n");
+    UTIL_TIMER_Create(&s_rx_cap_timer, 0xFFFFFFFFu, UTIL_TIMER_ONESHOT,
+                      on_rx_cap, NULL);
 
     /* 2. Compliance Engine — write results to g_compliance_status in SRAM2
      *    so CM4 can read duty-cycle state on every wake. */
     ComplianceEngine_Init(&g_compliance_status, HAL_GetTick);
-    APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: ComplianceEngine ready\r\n");
 
     /* 3. Frequency Resolver — reads g_freq_resolver_state from SRAM2.
      *    CM4 populates all phases with default 868.3 MHz CELL_FREQ_STATIC at boot. */
     FrequencyResolver_Init(&g_freq_resolver_state);
-    APP_LOG(TS_OFF, VLEVEL_M,
-            "SubGhzPhyTask: FrequencyResolver ready, phase_count=%u\r\n",
-            (unsigned)TdmaTable_PhaseCount());
 
     /* 4. MAC State Machine */
-    MAC_Init(&s_mac_hooks);
-    APP_LOG(TS_OFF, VLEVEL_M,
-            "SubGhzPhyTask: MAC_Init done, state=%u clock=%u\r\n",
-            (unsigned)MAC_GetState(), (unsigned)MAC_GetClockState());
+    MAC_Init(&s_mac_hooks);   /* logs MAC_INIT */
 
     /* 5. TDMA Machine */
     static const TdmaPlatform_t plat = {
         .GetRtcMs        = plat_get_rtc_ms,
         .ProgramAlarmA   = plat_program_alarm_a,
+        .CancelAlarmA    = plat_cancel_alarm_a,
         .RadioSetChannel = plat_radio_set_channel,
         .RadioSend       = plat_radio_send,
         .RadioSetRx      = plat_radio_set_rx,
+        .RadioScan       = plat_radio_scan,
         .RadioSleep      = plat_radio_sleep,
         .RadioTimeOnAir  = plat_radio_toa,
     };
     TdmaMachine_Init(&plat);
-    APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: TdmaMachine ready\r\n");
 
-    /* 6. Register slot task and arm first wakeup */
+    /* 6. Register the slot task. C1/C2 boot cold and scan (no alarm chain
+     *    until the first Sync packet); C3 runs its first slot now. */
     UTIL_SEQ_RegTask(1u << CFG_SEQ_Task_TdmaSlotWake, 0u, TdmaMachine_SlotTask);
-    UTIL_SEQ_SetTask(1u << CFG_SEQ_Task_TdmaSlotWake, CFG_SEQ_Prio_0);
-    APP_LOG(TS_OFF, VLEVEL_M, "SubGhzPhyTask: sequencer task armed\r\n");
-    
+    if (TdmaMachine_Start()) {
+        UTIL_SEQ_SetTask(1u << CFG_SEQ_Task_TdmaSlotWake, CFG_SEQ_Prio_0);
+    }
+    ARCLOG(ARCLOG_MOD_SYS, VLEVEL_L, "INIT_DONE", "phases=%u",
+           (unsigned)TdmaTable_PhaseCount());
 }

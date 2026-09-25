@@ -41,4 +41,14 @@
  */
 void SubGhzPhyTask_Init(void);
 
+/*!
+ * \brief   Radio IRQ entry hook: stamps the RTC for the pending radio IRQs.
+ *
+ * \details Must be called first thing in SUBGHZ_Radio_IRQHandler, before
+ *          HAL_SUBGHZ_IRQHandler clears the IRQ status. Records the RTC time
+ *          of the IRQ and, when set, of IRQ_PREAMBLE_DETECTED (PreambleStamp)
+ *          and IRQ_HEADER_VALID.
+ */
+void SubGhzPhyTask_OnRadioIrq(void);
+
 #endif /* SUBGHZ_PHY_TASK_H */

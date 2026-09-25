@@ -162,6 +162,9 @@ extern "C" {
 #define UTIL_ADV_TRACE_VSNPRINTF(...)              tiny_vsnprintf_like(__VA_ARGS__)      /*!< vsnprintf utilities interface to trace feature */
 
 /* USER CODE BEGIN EM */
+/* ArcLog timestamp "YYMMDDTHHMMSS.ssss " is 19 chars (ARCLOG_TIMESTAMP_LEN). */
+#undef  UTIL_ADV_TRACE_TMP_MAX_TIMESTMAP_SIZE
+#define UTIL_ADV_TRACE_TMP_MAX_TIMESTMAP_SIZE      (20U)
 
 /* USER CODE END EM */
 

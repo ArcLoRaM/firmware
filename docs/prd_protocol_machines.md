@@ -70,7 +70,7 @@ Registers `CFG_SEQ_Task_TdmaSlotWake`. RTC Alarm A ISR fires, wakes core from St
 -> return -> UTIL_SEQ_Run() -> UTIL_LPM -> Stop2
 ```
 
-**Guard Time on RX:** Alarm A programmed `GUARD_TIME_MS` early. RX timeout = `slot_active_ms + 2 x GUARD_TIME_MS`.
+**Guard Time on RX:** Alarm A programmed `GUARD_TIME_MS` early. The Rx window ends at the latest packet start, `slot end + MAX_GUARD_TIME_MS - ToA` (superseded the former `slot_active_ms + 2 x GUARD_TIME_MS`, see ADR-0015).
 
 **FrameCursor integrity (Story 21):** A cursor checkpoint (RTC timestamp) stored at every slot completion. On each Alarm A wake, the machine validates the delta is plausible. Implausible delta marks `CURSOR_SUSPECT` and initiates re-sync (`CLOCK_ACQUIRING`). Soft fallback — does not hard-reset sync state on small deviations.
 

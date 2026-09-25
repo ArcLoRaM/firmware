@@ -5,6 +5,7 @@
 #include "compliance_engine.h"
 #include "shared_mem.h"
 #include "tdma_table.h"
+#include "arclog_capture.h"
 #include <string.h>
 #include <stdint.h>
 
@@ -20,14 +21,19 @@ static int      s_channel_calls;
 static int      s_radio_send_calls;
 static uint8_t  s_last_sent_buf[32];
 static uint8_t  s_last_sent_len;
-static uint32_t s_radio_set_rx_timeout;
+static uint32_t s_rx_start_window_ms;
+static uint32_t s_rx_cap_ms;
 static int      s_radio_set_rx_calls;
+static int      s_radio_scan_calls;
+static int      s_cancel_alarm_calls;
+static uint32_t s_toa_ms;
 static int      s_radio_sleep_calls;
 static uint32_t s_wait_until_ms_target;
 static int      s_wait_until_ms_calls;
 
 static uint32_t stub_GetRtcMs(void)                          { return s_rtc_ms;                                      }
 static void     stub_ProgramAlarmA(uint32_t t)               { s_alarm_programmed = t; s_alarm_calls++;              }
+static void     stub_CancelAlarmA(void)                      { s_cancel_alarm_calls++;                               }
 static void     stub_RadioSetChannel(uint32_t f)             { s_channel_set = f; s_channel_calls++;                 }
 static void     stub_RadioSend(const uint8_t *b, uint8_t l)
 {
@@ -37,17 +43,25 @@ static void     stub_RadioSend(const uint8_t *b, uint8_t l)
     }
     s_radio_send_calls++;
 }
-static void     stub_RadioSetRx(uint32_t ms)                 { s_radio_set_rx_timeout = ms; s_radio_set_rx_calls++;  }
+static void     stub_RadioSetRx(uint32_t win, uint32_t cap)
+{
+    s_rx_start_window_ms = win;
+    s_rx_cap_ms          = cap;
+    s_radio_set_rx_calls++;
+}
+static void     stub_RadioScan(void)                         { s_radio_scan_calls++;                                 }
 static void     stub_RadioSleep(void)                        { s_radio_sleep_calls++;                                }
-static uint32_t stub_RadioTimeOnAir(void)                    { return 2500u; /* == slot_active_ms */                 }
+static uint32_t stub_RadioTimeOnAir(uint8_t len)             { (void)len; return s_toa_ms;                           }
 static void     stub_WaitUntilMs(uint32_t t)                  { s_wait_until_ms_target = t; s_wait_until_ms_calls++; s_rtc_ms = t; }
 
 static const TdmaPlatform_t k_platform = {
     .GetRtcMs       = stub_GetRtcMs,
     .ProgramAlarmA  = stub_ProgramAlarmA,
+    .CancelAlarmA   = stub_CancelAlarmA,
     .RadioSetChannel= stub_RadioSetChannel,
     .RadioSend      = stub_RadioSend,
     .RadioSetRx     = stub_RadioSetRx,
+    .RadioScan      = stub_RadioScan,
     .RadioSleep     = stub_RadioSleep,
     .RadioTimeOnAir = stub_RadioTimeOnAir,
     .WaitUntilMs    = stub_WaitUntilMs,
@@ -65,17 +79,24 @@ static uint32_t comp_get_tick(void) { return s_rtc_ms; }
 
 /* Snapshot stub: pretend RTC reads 0 after any rtc_set */
 static uint32_t s_mac_snapshot_ms;
+static int      s_mac_rtc_set_calls;
 static void stub_mac_rtc_set(uint32_t ms, uint8_t d, uint8_t mo, uint8_t y)
 {
     (void)ms; (void)d; (void)mo; (void)y;
     s_mac_snapshot_ms = ms;
+    s_mac_rtc_set_calls++;
 }
 static void stub_mac_get_rtc_snapshot(uint32_t *ms, uint8_t *d, uint8_t *mo, uint8_t *y)
 {
     *ms = s_mac_snapshot_ms; *d = 0x01u; *mo = 0x01u; *y = 0x24u;
 }
 
-static const MAC_Hooks_t k_mac_hooks = {
+static void stub_sync_bootstrapped(uint8_t phase_idx, uint8_t cell_idx, uint32_t rtc_now_ms)
+{
+    TdmaMachine_BootstrapFromSync(phase_idx, cell_idx, rtc_now_ms);
+}
+
+static MAC_Hooks_t s_mac_hooks = {
     .rtc_set           = stub_mac_rtc_set,
     .get_rtc_snapshot  = stub_mac_get_rtc_snapshot,
     .sync_bootstrapped = NULL,
@@ -87,6 +108,12 @@ static const MAC_Hooks_t k_mac_hooks = {
 #define SLOT_ACTIVE_MS   2500u
 #define GAP_MS            500u
 #define SLOT_STEP_MS     3000u   /* SLOT_ACTIVE_MS + GAP_MS */
+/* 10-byte SyncPayload at SF12/BW125/CR4-5, 8-symbol preamble (Radio.TimeOnAir) */
+#define SYNC_TOA_MS       991u
+/* Synced Rx window of a slot starting at 0: the latest packet start is
+ * slot end + max guard - ToA; the cap is slot end + max guard. */
+#define WIN_CAP_MS       (SLOT_ACTIVE_MS + MAX_GUARD_TIME_MS)
+#define WIN_LAST_MS      (WIN_CAP_MS - SYNC_TOA_MS)
 
 static void init_all(void)
 {
@@ -98,22 +125,31 @@ static void init_all(void)
     s_channel_set         = 0u;
     s_channel_calls       = 0;
     s_radio_send_calls    = 0;
-    s_radio_set_rx_timeout= 0u;
+    s_rx_start_window_ms  = 0u;
+    s_rx_cap_ms           = 0u;
     s_radio_set_rx_calls  = 0;
+    s_radio_scan_calls    = 0;
+    s_cancel_alarm_calls  = 0;
+    s_toa_ms              = SYNC_TOA_MS;
     s_radio_sleep_calls   = 0;
     s_wait_until_ms_target = 0u;
     s_wait_until_ms_calls  = 0;
     memset(s_last_sent_buf, 0, sizeof(s_last_sent_buf));
     s_last_sent_len       = 0u;
     s_mac_snapshot_ms     = 0u;
+    s_mac_rtc_set_calls   = 0;
+    s_mac_hooks.sync_bootstrapped = NULL;  /* default: no bootstrap hook */
+    ArcLog_CaptureReset();
 
-    /* Static 868.1 MHz on Sync phase (phase 0, cell mode STATIC) */
+    /* Static 868.1 MHz on both Sync phases (cell mode STATIC) */
     s_freq_state.phases[0].cell_mode           = CELL_FREQ_STATIC;
     s_freq_state.phases[0].cell_freq_or_seed = 868100000u;
+    s_freq_state.phases[1].cell_mode           = CELL_FREQ_STATIC;
+    s_freq_state.phases[1].cell_freq_or_seed = 868100000u;
 
     FrequencyResolver_Init(&s_freq_state);
     ComplianceEngine_Init(&s_comp_status, comp_get_tick);
-    MAC_Init(&k_mac_hooks);
+    MAC_Init(&s_mac_hooks);
     TdmaMachine_Init(&k_platform);
 }
 
@@ -130,6 +166,25 @@ static void sync_mac(void)
     MAC_OnSyncPacketReceived(&p, 3000u);
     p.sync_cell_index = 2u;
     MAC_OnSyncPacketReceived(&p, 6000u);
+}
+
+/* Packet 1 only: CLOCK_COLD -> CLOCK_ACQUIRING (MAC still Scanning, every
+ * slot Rx). No bootstrap hook, so the TDMA cursor stays at {0,0,0}. */
+static void acquire_mac(void)
+{
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    MAC_OnSyncPacketReceived(&p, 0u);
+}
+
+/* Run the alarm chain from the current RTC and cursor, as C3 does at boot.
+ * A cold MAC is first taken to CLOCK_ACQUIRING: the chain never runs cold. */
+static void start_chain(void)
+{
+    if (MAC_GetClockState() == CLOCK_COLD) {
+        acquire_mac();
+    }
+    TEST_ASSERT_TRUE(TdmaMachine_Start());
 }
 
 /* Call SlotTask after advancing simulated RTC to the last programmed alarm */
@@ -170,6 +225,7 @@ void test_slot_task_programs_alarm_nominal_for_tx_slot(void)
 {
     sync_mac();                       /* MAC → Synchronized */
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();
     /*
      * Cell 0 of Sync phase: always SLOT_RX for C2 (epoch not yet received).
@@ -180,13 +236,14 @@ void test_slot_task_programs_alarm_nominal_for_tx_slot(void)
 }
 
 /* =========================================================================
- * Alarm timing — RX guard (MAC Scanning → epoch not received)
+ * Alarm timing — RX guard (MAC Scanning, CLOCK_ACQUIRING → epoch not received)
  * ========================================================================= */
 
 void test_slot_task_rx_alarm_early_by_guard(void)
 {
-    /* MAC in Scanning (initial): all decisions = RX; phase_tx_flag stays 0 */
+    /* MAC in Scanning (ACQUIRING): all decisions = RX; phase_tx_flag stays 0 */
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();
     /*
      * Decision = RX.  DIRECTION_MAC_CELL + epoch not received → next slot Rx.
@@ -195,13 +252,70 @@ void test_slot_task_rx_alarm_early_by_guard(void)
     TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
-void test_slot_task_rx_sets_correct_radio_timeout(void)
+/* =========================================================================
+ * Synced Rx window: open until the latest packet start that still ends by
+ * slot end + MAX_GUARD_TIME_MS; the cap bounds any reception at that end.
+ * ========================================================================= */
+
+void test_rx_window_ends_at_latest_packet_start(void)
 {
     s_rtc_ms = 0u;
+    start_chain();
+    ArcLog_CaptureReset();
     TdmaMachine_SlotTask();
-    /* RadioSetRx(slot_active_ms + 2×MAX_GUARD_TIME_MS) = 2500 + 10 = 2510 */
+    /* last = 2500 + 100 - 991 = 1609, cap = 2600 (from now = slot start) */
     TEST_ASSERT_EQUAL(1, s_radio_set_rx_calls);
-    TEST_ASSERT_EQUAL(SLOT_ACTIVE_MS + 2u * MAX_GUARD_TIME_MS, s_radio_set_rx_timeout);
+    TEST_ASSERT_EQUAL(WIN_LAST_MS, s_rx_start_window_ms);
+    TEST_ASSERT_EQUAL(WIN_CAP_MS, s_rx_cap_ms);
+    TEST_ASSERT_ARCLOG("RX_WIN last=1609 cap=2600");
+}
+
+void test_rx_window_measured_from_early_wake(void)
+{
+    /* Bootstrap on cell 0 at 0: next cell starts at 3000, woken at 2900. */
+    acquire_mac();
+    TdmaMachine_BootstrapFromSync(0u, 0u, 0u);
+    step_slot();
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_rtc_ms);
+    TEST_ASSERT_EQUAL(WIN_LAST_MS + MAX_GUARD_TIME_MS, s_rx_start_window_ms);
+    TEST_ASSERT_EQUAL(WIN_CAP_MS + MAX_GUARD_TIME_MS, s_rx_cap_ms);
+}
+
+void test_rx_window_uses_max_guard_not_current_guard(void)
+{
+    /* The window end is a property of the slot grid (MAX_GUARD_TIME_MS),
+     * independent of how early this node woke. Waking late (after nominal
+     * start) shortens the window but keeps the same absolute end. */
+    s_rtc_ms = 0u;
+    start_chain();
+    s_rtc_ms = 40u;                   /* 40 ms late, within the checkpoint */
+    TdmaMachine_SlotTask();
+    TEST_ASSERT_EQUAL(WIN_LAST_MS - 40u, s_rx_start_window_ms);
+    TEST_ASSERT_EQUAL(WIN_CAP_MS - 40u, s_rx_cap_ms);
+}
+
+void test_rx_window_too_late_sleeps_radio(void)
+{
+    /* A ToA longer than the slot plus max guard leaves no start instant. */
+    s_toa_ms = WIN_CAP_MS + 1u;
+    s_rtc_ms = 0u;
+    start_chain();
+    ArcLog_CaptureReset();
+    TdmaMachine_SlotTask();
+    TEST_ASSERT_EQUAL(0, s_radio_set_rx_calls);
+    TEST_ASSERT_EQUAL(1, s_radio_sleep_calls);
+    TEST_ASSERT_ARCLOG("RX_LATE now=0");
+    TEST_ASSERT_GREATER_THAN(0, s_alarm_calls);   /* chain continues */
+}
+
+void test_rx_end_in_synced_slot_sleeps_radio(void)
+{
+    s_rtc_ms = 0u;
+    start_chain();
+    TdmaMachine_SlotTask();
+    TdmaMachine_OnRxEnd();
+    TEST_ASSERT_EQUAL(1, s_radio_sleep_calls);
+    TEST_ASSERT_EQUAL(0, s_radio_scan_calls);
 }
 
 /* =========================================================================
@@ -215,6 +329,7 @@ void test_slot_task_tx_calls_radio_send(void)
      * Step 3: arm epoch. Step 4: run cell 1 → TX → RadioSend called. */
     sync_mac();
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();        /* cell 0 → SLOT_RX, no send */
     TEST_ASSERT_EQUAL(0, s_radio_send_calls);
 
@@ -241,6 +356,7 @@ void test_slot_task_compliance_skip_no_radio_send(void)
     ComplianceEngine_RequestChannel(868100000u, 36000u, 14);
 
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();
 
     TEST_ASSERT_EQUAL(0, s_radio_send_calls);
@@ -252,6 +368,7 @@ void test_slot_task_compliance_skip_programs_alarm(void)
     ComplianceEngine_RequestChannel(868100000u, 36000u, 14);
 
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();
 
     TEST_ASSERT_GREATER_THAN(0, s_alarm_calls);
@@ -264,6 +381,7 @@ void test_slot_task_compliance_skip_programs_alarm(void)
 void test_slot_task_calls_radio_set_channel(void)
 {
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();
     TEST_ASSERT_EQUAL(1,           s_channel_calls);
     TEST_ASSERT_EQUAL(868100000u,  s_channel_set);
@@ -277,6 +395,7 @@ void test_cursor_advances_cell_index(void)
 {
     /* Slot 0 → cell_index becomes 1 */
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();
     TEST_ASSERT_EQUAL(1u, TdmaMachine_GetCursor().cell_index);
 
@@ -287,8 +406,12 @@ void test_cursor_advances_cell_index(void)
 
 void test_frame_wrap_resets_cursor(void)
 {
-    /* Three SlotTask calls exhaust the 3-cell Sync phase → frame wrap */
-    s_rtc_ms = 0u; TdmaMachine_SlotTask();
+    /* Six SlotTask calls exhaust both 3-cell Sync phases → frame wrap.
+     * 3 cells × 2 phases = 6 slots per frame. */
+    s_rtc_ms = 0u; start_chain(); TdmaMachine_SlotTask();
+    step_slot();
+    step_slot();
+    step_slot();
     step_slot();
     step_slot();
 
@@ -305,6 +428,7 @@ void test_frame_wrap_resets_cursor(void)
 void test_cursor_integrity_clean_on_expected_wake(void)
 {
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();                /* programs alarm, stores expected wake */
 
     s_rtc_ms = s_alarm_programmed;         /* wake exactly on time */
@@ -316,6 +440,7 @@ void test_cursor_integrity_clean_on_expected_wake(void)
 void test_cursor_suspect_on_implausible_delta(void)
 {
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();                /* expected_wake = s_alarm_programmed */
 
     /* Arrive 4000 ms late: 4000 > 1.5 × 2500 = 3750 → suspect */
@@ -332,7 +457,7 @@ void test_cursor_suspect_on_implausible_delta(void)
 void test_bootstrap_cursor_positioned_at_next_cell(void)
 {
     /* Stub table has 3 cells per Sync phase. Bootstrap at cell=1 → advance → cell=2.
-     * (cell=2 would wrap frame back to 0 since phase has only 3 cells.) */
+     * (cell=2 is the last cell; advancing further would move to phase 1.) */
     TdmaMachine_BootstrapFromSync(0u, 1u, 3000u);
     TEST_ASSERT_EQUAL(2u, TdmaMachine_GetCursor().cell_index);
     TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().phase_index);
@@ -360,12 +485,13 @@ void test_bootstrap_cell0_alarm_one_step(void)
     TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
-void test_bootstrap_last_cell_cursor_wraps(void)
+void test_bootstrap_last_cell_advances_to_sync1(void)
 {
-    /* Receive at cell 2 (last cell of 3-cell Sync phase), slot_start=6000.
-     * advance_cursor wraps to {0,0,0}: only 1 phase in table → frame wrap. */
+    /* Receive at cell 2 (last cell of Sync0), slot_start=6000.
+     * advance_cursor moves to Sync1 (phase 1, cell 0) — same frame,
+     * NOT a frame wrap to phase 0. */
     TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
-    TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().phase_index);
+    TEST_ASSERT_EQUAL(1u, TdmaMachine_GetCursor().phase_index);
     TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().cell_index);
 }
 
@@ -383,6 +509,7 @@ void test_sync_tx_payload_fields_match_cursor(void)
      * Sequence: sync_mac → run cell 0 (RX) → arm epoch → run cell 1 (TX). */
     sync_mac();
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();   /* cell 0 → RX, no send */
 
     /* Arm epoch */
@@ -410,6 +537,7 @@ void test_no_guard_when_epoch_received(void)
 {
     sync_mac();
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();   /* cell 0 → RX, epoch not received → guard */
 
     /* Arm epoch: receive Tier 1 sync packet in cell-0 RX window */
@@ -436,6 +564,7 @@ void test_tx_delayed_to_nominal_when_woke_early(void)
 {
     sync_mac();
     s_rtc_ms = 0u;
+    start_chain();
     TdmaMachine_SlotTask();   /* cell 0 → RX, alarm = SLOT_STEP_MS - GUARD */
 
     /* Arm epoch */
@@ -469,6 +598,202 @@ void test_bootstrap_applies_guard_on_alarm(void)
 }
 
 /* =========================================================================
+ * Cursor integrity checkpoint (suspect wake)
+ *
+ * A wake far from the expected time (> 1.5 x slot_active_ms) means the
+ * FrameCursor can no longer be trusted. The TDMA Machine must drop the MAC
+ * to re-acquisition WITHOUT writing the RTC (the former zero-SyncPayload
+ * injection reset the clock to 00:00:00 with an invalid date), and must
+ * resume the alarm chain from the actual wake time so the next alarm is in
+ * the future.
+ * ========================================================================= */
+
+void test_suspect_wake_drops_to_cold_without_rtc_write(void)
+{
+    sync_mac();
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    int rtc_sets_before = s_mac_rtc_set_calls;
+
+    s_rtc_ms = 0u;
+    start_chain();
+    TdmaMachine_SlotTask();                  /* next alarm 3000 - guard = 2900 */
+    s_rtc_ms = s_alarm_programmed + 4000u;   /* 4000 ms late > 3750 */
+    ArcLog_CaptureReset();
+    TdmaMachine_SlotTask();
+
+    TEST_ASSERT_TRUE(TdmaMachine_IsCursorSuspect());
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
+    TEST_ASSERT_EQUAL(rtc_sets_before, s_mac_rtc_set_calls);
+    TEST_ASSERT_ARCLOG("SLOT_SUSPECT exp=2900 now=6900");
+    TEST_ASSERT_ARCLOG("CLK from=WARM to=COLD why=suspect");
+}
+
+void test_suspect_wake_stops_chain_and_scans(void)
+{
+    s_rtc_ms = 0u;
+    start_chain();
+    TdmaMachine_SlotTask();
+    int alarms_before = s_alarm_calls;
+
+    s_rtc_ms = s_alarm_programmed + 4000u;   /* 2900 + 4000 = 6900 */
+    ArcLog_CaptureReset();
+    TdmaMachine_SlotTask();
+
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(alarms_before, s_alarm_calls);  /* no next alarm */
+    TEST_ASSERT_EQUAL(1, s_cancel_alarm_calls);
+    TEST_ASSERT_EQUAL(1, s_radio_scan_calls);
+    TEST_ASSERT_EQUAL(SCAN_FREQ_HZ, s_channel_set);
+    TEST_ASSERT_EQUAL(1, s_radio_set_rx_calls);       /* first slot only */
+    TEST_ASSERT_ARCLOG("SCAN freq=868300000 why=lost");
+}
+
+/* =========================================================================
+ * Scanning: no alarm chain while CLOCK_COLD
+ *
+ * A cold node has no schedule position, so it listens continuously on the
+ * discovery channel and the MCU sleeps until the radio wakes it. The chain
+ * starts on the first Sync packet (BootstrapFromSync) and stops whenever
+ * the clock drops back to CLOCK_COLD.
+ * ========================================================================= */
+
+void test_start_cold_enters_scanning(void)
+{
+    ArcLog_CaptureReset();
+    TEST_ASSERT_FALSE(TdmaMachine_Start());
+    TEST_ASSERT_EQUAL(0, s_alarm_calls);
+    TEST_ASSERT_EQUAL(1, s_radio_scan_calls);
+    TEST_ASSERT_EQUAL(0, s_radio_set_rx_calls);
+    TEST_ASSERT_EQUAL(SCAN_FREQ_HZ, s_channel_set);
+    TEST_ASSERT_ARCLOG("SCAN freq=868300000 why=boot");
+}
+
+void test_slot_task_is_inert_while_scanning(void)
+{
+    /* A stale alarm task (chain stopped while it was pending) must leave
+     * the scanning radio alone. */
+    (void)TdmaMachine_Start();
+    s_rtc_ms = 5000u;
+    TdmaMachine_SlotTask();
+    TEST_ASSERT_EQUAL(0, s_alarm_calls);
+    TEST_ASSERT_EQUAL(1, s_channel_calls);
+    TEST_ASSERT_EQUAL(1, s_radio_scan_calls);
+    TEST_ASSERT_EQUAL(0, s_radio_set_rx_calls);
+    TEST_ASSERT_EQUAL(0, s_radio_sleep_calls);
+}
+
+void test_rx_end_while_scanning_rearms_scan(void)
+{
+    (void)TdmaMachine_Start();
+    TdmaMachine_OnRxEnd();   /* e.g. CRC error or a non-Sync packet */
+    TdmaMachine_OnRxEnd();
+    TEST_ASSERT_EQUAL(3, s_radio_scan_calls);
+    TEST_ASSERT_EQUAL(1, s_channel_calls);   /* channel set once on entry */
+    TEST_ASSERT_EQUAL(0, s_radio_sleep_calls);
+    TEST_ASSERT_EQUAL(0, s_alarm_calls);
+}
+
+void test_first_sync_packet_starts_chain(void)
+{
+    s_mac_hooks.sync_bootstrapped = stub_sync_bootstrapped;
+    MAC_Init(&s_mac_hooks);
+    (void)TdmaMachine_Start();
+
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    MAC_OnSyncPacketReceived(&p, 0u);   /* Packet 1: cell 0 */
+    TdmaMachine_OnRxEnd();
+
+    TEST_ASSERT_EQUAL(CLOCK_ACQUIRING, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_alarm_calls);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(1, s_radio_scan_calls);    /* not re-armed */
+    TEST_ASSERT_EQUAL(1, s_radio_sleep_calls);   /* idle until cell 1 */
+
+    step_slot();                                 /* cell 1: bounded Rx */
+    TEST_ASSERT_EQUAL(1, s_radio_set_rx_calls);
+    TEST_ASSERT_EQUAL(868100000u, s_channel_set);
+}
+
+void test_silence_timeout_stops_chain_and_scans(void)
+{
+    s_rtc_ms = 0u;
+    start_chain();                       /* ACQUIRING, last Sync at 0 */
+    TdmaMachine_SlotTask();
+    while (MAC_GetClockState() != CLOCK_COLD
+           && s_rtc_ms < SYNC_SILENCE_TIMEOUT_MS + SLOT_STEP_MS) {
+        ArcLog_CaptureReset();
+        step_slot();
+    }
+    int alarms_after = s_alarm_calls;
+
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_ARCLOG("CLK from=ACQ to=COLD why=silence");
+    TEST_ASSERT_ARCLOG("SCAN freq=868300000 why=lost");
+    TEST_ASSERT_EQUAL(1, s_cancel_alarm_calls);
+    TEST_ASSERT_EQUAL(1, s_radio_scan_calls);
+
+    step_slot();                         /* stale wake: inert */
+    TEST_ASSERT_EQUAL(alarms_after, s_alarm_calls);
+}
+
+void test_tier3_on_rx_end_stops_chain_and_scans(void)
+{
+    sync_mac();                          /* WARM */
+    s_rtc_ms = 0u;
+    start_chain();
+    TdmaMachine_SlotTask();              /* cell 0 Rx window */
+
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    MAC_OnSyncPacketReceived(&p, 500u);  /* 500 ms off: Tier 3 → COLD */
+    ArcLog_CaptureReset();
+    TdmaMachine_OnRxEnd();
+
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_cancel_alarm_calls);
+    TEST_ASSERT_EQUAL(1, s_radio_scan_calls);
+    TEST_ASSERT_EQUAL(0, s_radio_sleep_calls);
+    TEST_ASSERT_ARCLOG("SCAN freq=868300000 why=lost");
+}
+
+/* =========================================================================
+ * Slot-boundary alignment: alarm uses nominal_start_ms, not hardware readback
+ *
+ * BootstrapFromSync must base the alarm on the schedule-derived nominal cell
+ * start (target_ms), not on the hardware readback from get_rtc_snapshot.
+ * The readback includes per-node execution latency (~200us of SetTime +
+ * SHIFTR + register read). If the alarm used the readback, every node would
+ * wake at a slightly different absolute time, drifting off the slot grid.
+ * ========================================================================= */
+
+void test_bootstrap_alarm_uses_nominal_not_readback(void)
+{
+    /* Simulate execution latency: rtc_set is called with target_ms=3000,
+     * but get_rtc_snapshot returns 3000 + 2 (2 ms latency). */
+    s_mac_hooks.sync_bootstrapped = stub_sync_bootstrapped;
+    MAC_Init(&s_mac_hooks);
+    TdmaMachine_Init(&k_platform);
+
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_phase_index             = 0u;
+    p.sync_cell_index              = 1u;
+    p.ms_since_midnight_sync_phase = 0u;
+
+    /* target_ms = 0 + 1 * 3000 = 3000 (nominal cell 1 start) */
+    s_mac_snapshot_ms = 3002u;  /* hardware readback = target + 2ms latency */
+
+    MAC_OnSyncPacketReceived(&p, 3000u);
+
+    /* Alarm must be based on target_ms (3000), not readback (3002):
+     * nominal_next = 3000 + 3000 = 6000, guard applied = 6000 - 5 = 5995.
+     * If it used readback: 3002 + 3000 = 6002, guard = 5997 (wrong). */
+    TEST_ASSERT_EQUAL(6000u - MAX_GUARD_TIME_MS, s_alarm_programmed);
+}
+
+/* =========================================================================
  * main
  * ========================================================================= */
 
@@ -479,7 +804,11 @@ int main(void)
     RUN_TEST(test_init_sets_cursor_slot_pos_cell);
     RUN_TEST(test_slot_task_programs_alarm_nominal_for_tx_slot);
     RUN_TEST(test_slot_task_rx_alarm_early_by_guard);
-    RUN_TEST(test_slot_task_rx_sets_correct_radio_timeout);
+    RUN_TEST(test_rx_window_ends_at_latest_packet_start);
+    RUN_TEST(test_rx_window_measured_from_early_wake);
+    RUN_TEST(test_rx_window_uses_max_guard_not_current_guard);
+    RUN_TEST(test_rx_window_too_late_sleeps_radio);
+    RUN_TEST(test_rx_end_in_synced_slot_sleeps_radio);
     RUN_TEST(test_slot_task_tx_calls_radio_send);
     RUN_TEST(test_slot_task_compliance_skip_no_radio_send);
     RUN_TEST(test_slot_task_compliance_skip_programs_alarm);
@@ -492,7 +821,7 @@ int main(void)
     RUN_TEST(test_bootstrap_next_alarm_accounts_for_received_cell);
     RUN_TEST(test_bootstrap_cell0_cursor_at_cell1);
     RUN_TEST(test_bootstrap_cell0_alarm_one_step);
-    RUN_TEST(test_bootstrap_last_cell_cursor_wraps);
+    RUN_TEST(test_bootstrap_last_cell_advances_to_sync1);
     RUN_TEST(test_bootstrap_last_cell_alarm_one_step);
     RUN_TEST(test_sync_tx_payload_fields_match_cursor);
 
@@ -506,5 +835,23 @@ int main(void)
 /* ------- Bootstrap guard ----------------------------------------------- */
 
     RUN_TEST(test_bootstrap_applies_guard_on_alarm);
+
+/* ------- Double-advance guard ------------------------------------------- */
+
+    RUN_TEST(test_suspect_wake_drops_to_cold_without_rtc_write);
+    RUN_TEST(test_suspect_wake_stops_chain_and_scans);
+
+/* ------- Scanning ------------------------------------------------------- */
+
+    RUN_TEST(test_start_cold_enters_scanning);
+    RUN_TEST(test_slot_task_is_inert_while_scanning);
+    RUN_TEST(test_rx_end_while_scanning_rearms_scan);
+    RUN_TEST(test_first_sync_packet_starts_chain);
+    RUN_TEST(test_silence_timeout_stops_chain_and_scans);
+    RUN_TEST(test_tier3_on_rx_end_stops_chain_and_scans);
+
+/* ------- Slot-boundary alignment ---------------------------------------- */
+
+    RUN_TEST(test_bootstrap_alarm_uses_nominal_not_readback);
     return UNITY_END();
 }

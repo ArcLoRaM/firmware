@@ -36,16 +36,20 @@ static uint32_t stub_GetRtcMs(void)                          { return s_rtc_ms; 
 static void     stub_ProgramAlarmA(uint32_t t)               { s_alarm_programmed = t; s_alarm_calls++;      }
 static void     stub_RadioSetChannel(uint32_t f)             { s_channel_set = f; s_channel_calls++;         }
 static void     stub_RadioSend(const uint8_t *b, uint8_t l)  { (void)b; (void)l; s_radio_send_calls++;      }
-static void     stub_RadioSetRx(uint32_t ms)                 { (void)ms; s_radio_set_rx_calls++;             }
+static void     stub_CancelAlarmA(void)                      {                                               }
+static void     stub_RadioSetRx(uint32_t w, uint32_t c)      { (void)w; (void)c; s_radio_set_rx_calls++;     }
+static void     stub_RadioScan(void)                         {                                               }
 static void     stub_RadioSleep(void)                        { s_radio_sleep_calls++;                        }
-static uint32_t stub_RadioTimeOnAir(void)                    { return 2500u;                                 }
+static uint32_t stub_RadioTimeOnAir(uint8_t len)             { (void)len; return 991u;                       }
 
 static const TdmaPlatform_t k_platform = {
     .GetRtcMs        = stub_GetRtcMs,
     .ProgramAlarmA   = stub_ProgramAlarmA,
+    .CancelAlarmA    = stub_CancelAlarmA,
     .RadioSetChannel = stub_RadioSetChannel,
     .RadioSend       = stub_RadioSend,
     .RadioSetRx      = stub_RadioSetRx,
+    .RadioScan       = stub_RadioScan,
     .RadioSleep      = stub_RadioSleep,
     .RadioTimeOnAir  = stub_RadioTimeOnAir,
 };
@@ -163,7 +167,12 @@ void test_2sync_bootstrap_last_cell_cursor_at_sync1(void)
 void test_2sync_slot_task_after_bootstrap_advances_within_sync1(void)
 {
     /* Bootstrap at last cell of Sync0.  Alarm fires at 9000-GUARD (Sync1 cell 0).
-     * One SlotTask call must advance cursor to Sync1 cell 1. */
+     * One SlotTask call must advance cursor to Sync1 cell 1. The MAC leaves
+     * CLOCK_COLD on the same packet (Packet 1), as in the firmware. */
+    SyncPayload_t p1;
+    memset(&p1, 0, sizeof(p1));
+    p1.sync_cell_index = 2u;
+    MAC_OnSyncPacketReceived(&p1, 6000u);
     TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
 
     /* step_slot: sets s_rtc_ms = s_alarm_programmed (9000) and runs SlotTask */

@@ -26,7 +26,7 @@ flowchart LR
         c1_pair["PAIRED<br/><i>cluster joined</i>"]
         c1_scan --> |"CLOCK_WARM"| c1_sync
         c1_sync --> |"1st Beacon"| c1_pair
-        c1_pair -.-> |"drift ≥ 300 ms"| c1_scan
+        c1_pair -.-> |"drift ≥ 100 ms"| c1_scan
     end
 
     subgraph C2["C2 — Relay"]
@@ -36,7 +36,7 @@ flowchart LR
         c2_pair["PAIRED<br/><i>mesh + cluster</i>"]
         c2_scan --> |"CLOCK_WARM"| c2_sync
         c2_sync --> |"1st Beacon"| c2_pair
-        c2_pair -.-> |"drift ≥ 300 ms"| c2_scan
+        c2_pair -.-> |"drift ≥ 100 ms"| c2_scan
     end
 
     subgraph C3["C3 — Gateway"]

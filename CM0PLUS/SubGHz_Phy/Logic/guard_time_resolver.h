@@ -31,8 +31,11 @@
  * \brief   Maximum guard time in milliseconds.
  *
  * \details This is the sole reference for guard time in the system.
- *          The TDMA Machine uses it to open the receive window early and
- *          hold it past nominal end. The MAC State Machine uses it as the
+ *          It is a property of the slot grid: the most any node may wake
+ *          early. The TDMA Machine ends every Rx window at the latest packet
+ *          start that still ends by slot end + MAX_GUARD_TIME_MS (the early
+ *          wake itself uses \ref GuardTimeResolver_GetGuardMs, equal to this
+ *          value in Version 1). The MAC State Machine uses it as the
  *          Tier-3 drift threshold: if a received Sync packet has a preamble
  *          offset error at or above this value, the node degrades to
  *          CLOCK_COLD immediately.

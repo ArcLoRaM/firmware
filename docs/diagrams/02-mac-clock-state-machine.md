@@ -22,7 +22,8 @@ stateDiagram-v2
 
     note right of CLOCK_COLD
         No sync received.
-        Continuous wide-RX.
+        Scanning Rx: continuous on the discovery
+        channel, no TDMA alarm chain (ADR-0015).
     end note
 
     note left of CLOCK_ACQUIRING
@@ -53,8 +54,8 @@ stateDiagram-v2
         SCANNING --> SYNCHRONIZED : CLOCK_WARM reached
         SYNCHRONIZED --> PAIRED : 1st Beacon received
 
-        PAIRED --> SCANNING : sync lost (drift ≥ 300 ms)
-        SYNCHRONIZED --> SCANNING : sync lost (drift ≥ 300 ms)
+        PAIRED --> SCANNING : sync lost (drift ≥ 100 ms)
+        SYNCHRONIZED --> SCANNING : sync lost (drift ≥ 100 ms)
     }
 
     state "C3 Path (Gateway)" as c3 {
@@ -78,7 +79,7 @@ flowchart LR
         WARM["CLOCK_WARM"]
         COLD --> |"1st Sync pkt"| ACQ
         ACQ --> |"2 good pkts"| WARM
-        WARM --> |"drift ≥ 300 ms"| COLD
+        WARM --> |"drift ≥ 100 ms"| COLD
         WARM --> |"no sync 15 min"| COLD
         ACQ --> |"no sync 15 min"| COLD
     end

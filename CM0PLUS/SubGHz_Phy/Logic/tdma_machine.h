@@ -62,6 +62,9 @@ typedef struct {
     /*! Program RTC Alarm A to fire at the given absolute millisecond value. */
     void     (*ProgramAlarmA)(uint32_t abs_rtc_ms);
 
+    /*! Disarm RTC Alarm A: the alarm chain stops (node enters scanning). */
+    void     (*CancelAlarmA)(void);
+
     /*! Tune the radio to the specified frequency in Hz. */
     void     (*RadioSetChannel)(uint32_t freq_hz);
 
@@ -69,21 +72,38 @@ typedef struct {
     void     (*RadioSend)(const uint8_t *buf, uint8_t len);
 
     /*!
-     * Open a receive window for \c timeout_ms milliseconds.
-     * The window duration must already include any guard-time extension.
+     * Open a bounded receive window (synced slot).
+     *
+     * \details A packet whose preamble starts within \c start_window_ms from
+     *          now is received in full: the radio's window timer stops on
+     *          preamble detection, so the platform adds the preamble
+     *          detection time to \c start_window_ms. Any reception still
+     *          running \c cap_ms from now is aborted (false preamble
+     *          detection, or a packet that started too late to fit).
+     *          Both values are > 0; the TDMA Machine never opens an
+     *          unbounded window here (see \c RadioScan).
      */
-    void     (*RadioSetRx)(uint32_t timeout_ms);
+    void     (*RadioSetRx)(uint32_t start_window_ms, uint32_t cap_ms);
+
+    /*!
+     * Listen with no timeout until a reception ends (RxDone, CRC or header
+     * error). Used while scanning; the TDMA Machine re-arms it from
+     * \ref TdmaMachine_OnRxEnd after every reception.
+     */
+    void     (*RadioScan)(void);
 
     /*! Put the radio into low-power sleep mode. */
     void     (*RadioSleep)(void);
 
     /*!
-     * Return the actual time-on-air in milliseconds for the most recently
-     * assembled packet.  Called after \c RadioSend to refund the difference
-     * between the conservative pre-TX estimate and the real airtime to
-     * \ref ComplianceEngine_ReportTxDone.
+     * Return the time-on-air in milliseconds of a \c len -byte packet with
+     * the current modem configuration (driver formula, Radio.TimeOnAir).
+     * Called after \c RadioSend to refund the difference between the
+     * conservative pre-TX estimate and the real airtime to
+     * \ref ComplianceEngine_ReportTxDone, and to place the end of each Rx
+     * window (latest packet start).
      */
-    uint32_t (*RadioTimeOnAir)(void);
+    uint32_t (*RadioTimeOnAir)(uint8_t len);
 
     /*!
      * Block until the RTC reaches the given absolute millisecond value.
@@ -110,13 +130,28 @@ typedef struct {
  *
  * \details Call once before the UTIL_SEQ scheduler starts.  The platform
  *          struct is copied internally — the caller's struct need not remain
- *          valid after the call.  The first \ref TdmaMachine_SlotTask
- *          invocation picks up from the first slot of the first phase.
+ *          valid after the call.  Nothing runs until \ref TdmaMachine_Start.
  *
  * \param   [in] platform - Pointer to an initialised \ref TdmaPlatform_t.
  *                          Must not be NULL.
  */
 void TdmaMachine_Init(const TdmaPlatform_t *platform);
+
+/*!
+ * \brief   Start radio activity at boot, after \ref MAC_Init.
+ *
+ * \details The alarm chain only runs once the node is out of
+ *          \c CLOCK_COLD. A C1/C2 node boots cold: it enters scanning
+ *          (continuous Rx on \ref SCAN_FREQ_HZ, no alarm) and the chain is
+ *          started by \ref TdmaMachine_BootstrapFromSync on the first Sync
+ *          packet. C3 is never cold: its chain starts at the current RTC
+ *          time.
+ *
+ * \retval  true   The alarm chain is running: the caller must schedule the
+ *                 first \ref TdmaMachine_SlotTask now.
+ * \retval  false  The node is scanning.
+ */
+bool TdmaMachine_Start(void);
 
 /*!
  * \brief   Execute one slot of the TDMA alarm-chain loop.
@@ -125,9 +160,23 @@ void TdmaMachine_Init(const TdmaPlatform_t *platform);
  *          on each RTC Alarm A wake.  Reads the TDMA Table, queries the
  *          Frequency Resolver and MAC State Machine, checks compliance,
  *          drives the appropriate radio action, advances the FrameCursor,
- *          and programs the next Alarm A before returning.
+ *          and programs the next Alarm A before returning. If the node has
+ *          fallen back to \c CLOCK_COLD (silence timeout, suspect cursor),
+ *          it stops the chain and enters scanning instead.
  */
 void TdmaMachine_SlotTask(void);
+
+/*!
+ * \brief   Notify the end of a reception (RxDone, Rx timeout, CRC or
+ *          header error, or the platform's safety cap).
+ *
+ * \details Call after the MAC has processed the received packet, if any.
+ *          While the node is \c CLOCK_COLD it (re-)arms scanning, stopping
+ *          the alarm chain first if a Tier 3 re-anchor just dropped the
+ *          clock. Otherwise the slot's reception is over and the radio is
+ *          put to sleep until the next slot.
+ */
+void TdmaMachine_OnRxEnd(void);
 
 /*!
  * \brief   Return a snapshot of the current FrameCursor position.
@@ -141,21 +190,25 @@ FrameCursor_t TdmaMachine_GetCursor(void);
  *
  * \details Called by the \c sync_bootstrapped MAC hook (Packet 1). Sets the
  *          cursor to the received cell, advances one step to the next cell,
- *          and programs RTC Alarm A for that next cell start.  After this call
- *          the normal \ref TdmaMachine_SlotTask loop resumes from the correct
- *          position without missing any cells.
+ *          and programs RTC Alarm A for that next cell start. This is where
+ *          the alarm chain starts on a node leaving \c CLOCK_COLD. After this
+ *          call the normal \ref TdmaMachine_SlotTask loop runs from the
+ *          correct position without missing any cells.
  *
- * \param   sync_phase_idx  Phase index from \c SyncPayload_t.sync_phase_index.
- * \param   sync_cell_idx   Cell index from \c SyncPayload_t.sync_cell_index.
- * \param   rtc_now_ms      Live RTC readback (\c get_rtc_snapshot ms value,
- *                          taken right after Packet 1's \c rtc_set) in the new
- *                          RTC domain. Expected to coincide with the nominal
- *                          start of the received cell, but is a hardware
- *                          snapshot, not a value computed from the schedule.
+ * \param   sync_phase_idx     Phase index from \c SyncPayload_t.sync_phase_index.
+ * \param   sync_cell_idx      Cell index from \c SyncPayload_t.sync_cell_index.
+ * \param   nominal_start_ms   Schedule-derived nominal start of the received
+ *                              cell (ms-since-midnight):
+ *                              \c ms_since_midnight_sync_phase +
+ *                              sync_cell_idx * per_cell_ms. This is the same
+ *                              value passed to \c rtc_set. Used as the base
+ *                              for alarm programming so that all nodes wake at
+ *                              the same absolute slot boundary, not at
+ *                              \c target_ms + per-node execution latency.
  */
 void TdmaMachine_BootstrapFromSync(uint8_t  sync_phase_idx,
                                     uint8_t  sync_cell_idx,
-                                    uint32_t rtc_now_ms);
+                                    uint32_t nominal_start_ms);
 
 /*!
  * \brief   Return \c true if the RTC integrity checkpoint detected an

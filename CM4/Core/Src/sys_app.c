@@ -33,6 +33,7 @@
 #include "mbmuxif_radio.h"
 
 /* USER CODE BEGIN Includes */
+#include "arclog.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -49,6 +50,8 @@ extern volatile uint8_t g_stop2_flag;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/* One STOP2_WAKES summary line every N CM4 wakes (~1 per second). */
+#define STOP2_WAKE_REPORT_EVERY  64u
 
 /* USER CODE END PD */
 
@@ -175,10 +178,17 @@ void UTIL_ADV_TRACE_PostSendHook(void)
 
 void UTIL_SEQ_PostIdle(void)
 {
+  /* CM4 wakes from STOP2 about once a second; a line per wake would eat a
+   * large share of the 9600-baud trace link. Report a summary instead. */
+  static uint32_t stop2_wakes;
   if (g_stop2_flag)
   {
     g_stop2_flag = 0;
-    APP_LOG(TS_ON, VLEVEL_H, "CM4: woke from STOP2\r\n");
+    stop2_wakes++;
+    if ((stop2_wakes % STOP2_WAKE_REPORT_EVERY) == 0u)
+    {
+      ARCLOG(ARCLOG_MOD_POWER, VLEVEL_M, "STOP2_WAKES", "n=%u", (unsigned)stop2_wakes);
+    }
   }
 }
 
@@ -188,11 +198,10 @@ void TimestampNow(uint8_t *buff, uint16_t *size)
   RTC_DateTypeDef sDate = {0};
   HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
   HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN); /* mandatory: unlocks shadow registers */
-  uint32_t ms = ((uint32_t)(4095U - sTime.SubSeconds) * 1000U) / 4096U;
-  char tmp[16];
-  snprintf(tmp, sizeof(tmp), "%02u:%02u:%02u:%03u 4>", sTime.Hours, sTime.Minutes, sTime.Seconds, ms);
-  memcpy(buff, tmp, 15);
-  *size = 15;
+  /* ArcLog timestamp "YYMMDDTHHMMSS.ssss " from the shared RTC (see arclog.h). */
+  *size = ArcLog_FormatTimestamp(buff, sDate.Year, sDate.Month, sDate.Date,
+                                 sTime.Hours, sTime.Minutes, sTime.Seconds,
+                                 sTime.SubSeconds, RTC_PREDIV_S);
 }
 /* USER CODE END EF */
 
@@ -205,7 +214,7 @@ UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H); //has to be set after MBMUXIF_TraceIni
   FEAT_INFO_List_t *p_cm0plus_supported_features_list;
   int8_t init_status;
 
-  APP_LOG(TS_ON, VLEVEL_H, "\r\nCM4: System Initialization started \r\n");
+  ARCLOG(ARCLOG_MOD_SYS, VLEVEL_ALWAYS, "BOOT", "");
 
   init_status = MBMUXIF_SystemInit();
   if (init_status < 0)
@@ -222,16 +231,16 @@ UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H); //has to be set after MBMUXIF_TraceIni
   /* once CM0PLUS is also initialized it send a SYS notification */
   MBMUXIF_SetCpusSynchroFlag(CPUS_BOOT_SYNC_ALLOW_CPU2_TO_START);
 
-  APP_LOG(TS_ON, VLEVEL_H, "CM4: System Initialization done: Wait for CM0PLUS \r\n");
+  ARCLOG(ARCLOG_MOD_MBMUX, VLEVEL_M, "CORE_SYNC", "stage=wait_cm0");
 
   MBMUXIF_WaitCm0MbmuxIsInitialized();
 
-  APP_LOG(TS_ON, VLEVEL_H, "CM0PLUS: System Initialization started \r\n");
+  ARCLOG(ARCLOG_MOD_MBMUX, VLEVEL_M, "CORE_SYNC", "stage=cm0_up");
 
   p_cm0plus_supported_features_list = MBMUXIF_SystemSendCm0plusInfoListReq();
   MBMUX_SetCm0plusFeatureListPtr(p_cm0plus_supported_features_list);
 
-  APP_LOG(TS_ON, VLEVEL_H, "System Initialization CM4-CM0PLUS completed \r\n");
+  ARCLOG(ARCLOG_MOD_MBMUX, VLEVEL_M, "CORE_SYNC", "stage=linked");
 
 
 
@@ -276,7 +285,7 @@ UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H); //has to be set after MBMUXIF_TraceIni
   #endif
 MBMUXIF_TraceInit();
   MBMUXIF_SetCpusSynchroFlag(CPUS_BOOT_SYNC_RTC_REGISTERED);
-  APP_LOG(TS_ON, VLEVEL_H, "System_Priority_A Registration for RTC Alarm handling completed \r\n");
+  ARCLOG(ARCLOG_MOD_MBMUX, VLEVEL_M, "CORE_SYNC", "stage=rtc_registered");
 
 UTIL_TIMER_Init();
 SYS_TimerInitialisedFlag = 1;

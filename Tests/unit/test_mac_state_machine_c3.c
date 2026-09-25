@@ -42,6 +42,15 @@ static const Phase_t s_beacon_phase = {
     .slot_active_ms = 2000u,
 };
 
+static const Phase_t s_sync_phase_6 = {
+    .type              = PHASE_TYPE_SYNC,
+    .direction_mode    = DIRECTION_MAC_CELL,
+    .cell_count        = 6u,
+    .slot_count        = 1u,
+    .slot_active_ms    = 2500u,
+    .gap_after_slot_ms = 500u,
+};
+
 static const Phase_t s_other_phase = {
     .type           = PHASE_TYPE_MESH_UPLINK,
     .direction_mode = DIRECTION_CELL_SKIP,
@@ -100,16 +109,70 @@ void test_c3_phase_tx_flag_stays_1_across_multiple_entries(void)
     TEST_ASSERT_EQUAL(1u, MAC_GetPhaseTxFlag());
 }
 
-/* ------- C3 transmits cell 0, skips cells 1+ in Sync -------------------- */
+/* ------- C3 transmits first SYNC_TX_BUDGET cells, skips rest in Sync ------ */
 
-void test_c3_sync_cell0_tx_cells1plus_skip(void)
+void test_c3_sync_first_3_cells_tx_rest_skip(void)
 {
-    FrameCursor_t c0 = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
-    FrameCursor_t c1 = {.phase_index = 0u, .cell_index = 1u, .slot_index = 0u};
-    FrameCursor_t c2 = {.phase_index = 0u, .cell_index = 2u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c0, TdmaTable_GetPhase(0u)));
-    TEST_ASSERT_EQUAL(SLOT_SKIP, MAC_OnSlotOpportunity(&c1, TdmaTable_GetPhase(0u)));
-    TEST_ASSERT_EQUAL(SLOT_SKIP, MAC_OnSlotOpportunity(&c2, TdmaTable_GetPhase(0u)));
+    FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
+    FrameCursor_t c1 = {.phase_index = 10u, .cell_index = 1u, .slot_index = 0u};
+    FrameCursor_t c2 = {.phase_index = 10u, .cell_index = 2u, .slot_index = 0u};
+    FrameCursor_t c3 = {.phase_index = 10u, .cell_index = 3u, .slot_index = 0u};
+    FrameCursor_t c4 = {.phase_index = 10u, .cell_index = 4u, .slot_index = 0u};
+    FrameCursor_t c5 = {.phase_index = 10u, .cell_index = 5u, .slot_index = 0u};
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c0, &s_sync_phase_6));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c1, &s_sync_phase_6));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c2, &s_sync_phase_6));
+    TEST_ASSERT_EQUAL(SLOT_SKIP, MAC_OnSlotOpportunity(&c3, &s_sync_phase_6));
+    TEST_ASSERT_EQUAL(SLOT_SKIP, MAC_OnSlotOpportunity(&c4, &s_sync_phase_6));
+    TEST_ASSERT_EQUAL(SLOT_SKIP, MAC_OnSlotOpportunity(&c5, &s_sync_phase_6));
+}
+
+void test_c3_sync_tx_budget_resets_on_next_occurrence(void)
+{
+    /* First occurrence: exhaust budget in 6-cell phase */
+    for (uint8_t cell = 0u; cell < 6u; cell++) {
+        FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
+        MAC_OnSlotOpportunity(&c, &s_sync_phase_6);
+    }
+
+    /* Second occurrence: enter a different phase, then re-enter sync phase */
+    FrameCursor_t co = {.phase_index = 11u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&co, &s_other_phase);
+
+    /* Budget should be restored: cells 0-2 TX, cell 3 SKIP */
+    FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
+    FrameCursor_t c1 = {.phase_index = 10u, .cell_index = 1u, .slot_index = 0u};
+    FrameCursor_t c2 = {.phase_index = 10u, .cell_index = 2u, .slot_index = 0u};
+    FrameCursor_t c3 = {.phase_index = 10u, .cell_index = 3u, .slot_index = 0u};
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c0, &s_sync_phase_6));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c1, &s_sync_phase_6));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c2, &s_sync_phase_6));
+    TEST_ASSERT_EQUAL(SLOT_SKIP, MAC_OnSlotOpportunity(&c3, &s_sync_phase_6));
+}
+
+void test_c3_sync_tx_budget_getter_after_init(void)
+{
+    TEST_ASSERT_EQUAL(SYNC_TX_BUDGET, MAC_GetSyncTxBudget());
+}
+
+void test_c3_sync_tx_budget_getter_decrements_on_tx(void)
+{
+    FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);
+    TEST_ASSERT_EQUAL(SYNC_TX_BUDGET - 1u, MAC_GetSyncTxBudget());
+
+    FrameCursor_t c1 = {.phase_index = 10u, .cell_index = 1u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c1, &s_sync_phase_6);
+    TEST_ASSERT_EQUAL(SYNC_TX_BUDGET - 2u, MAC_GetSyncTxBudget());
+}
+
+void test_c3_sync_tx_budget_getter_zero_after_exhaustion(void)
+{
+    for (uint8_t cell = 0u; cell < 3u; cell++) {
+        FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
+        MAC_OnSlotOpportunity(&c, &s_sync_phase_6);
+    }
+    TEST_ASSERT_EQUAL(0u, MAC_GetSyncTxBudget());
 }
 
 /* ------- Epoch captured at Sync phase entry ------------------------------- */
@@ -186,6 +249,16 @@ void test_c3_epoch_received_always_false(void)
     TEST_ASSERT_FALSE(MAC_GetEpochReceivedThisPhase());
 }
 
+/* ------- Sync silence timeout — C3 is always a no-op --------------------- */
+
+void test_c3_sync_timeout_is_noop(void)
+{
+    /* C3 is always CLOCK_WARM and never degrades */
+    MAC_CheckSyncTimeout(900000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+}
+
 /* ------- main ------------------------------------------------------------- */
 
 int main(void)
@@ -195,7 +268,11 @@ int main(void)
     RUN_TEST(test_c3_sync_phase_returns_tx_without_acquisition);
     RUN_TEST(test_c3_phase_tx_flag_always_1_first_entry);
     RUN_TEST(test_c3_phase_tx_flag_stays_1_across_multiple_entries);
-    RUN_TEST(test_c3_sync_cell0_tx_cells1plus_skip);
+    RUN_TEST(test_c3_sync_first_3_cells_tx_rest_skip);
+    RUN_TEST(test_c3_sync_tx_budget_resets_on_next_occurrence);
+    RUN_TEST(test_c3_sync_tx_budget_getter_after_init);
+    RUN_TEST(test_c3_sync_tx_budget_getter_decrements_on_tx);
+    RUN_TEST(test_c3_sync_tx_budget_getter_zero_after_exhaustion);
     RUN_TEST(test_c3_sync_phase_epoch_ms_captured_at_phase_entry);
     RUN_TEST(test_c3_sync_phase_date_captured_at_phase_entry);
     RUN_TEST(test_c3_sync_phase_date_not_captured_on_non_sync_phase);
@@ -205,5 +282,9 @@ int main(void)
 /* ------- Epoch Received flag (always false for C3) ----------------------- */
 
     RUN_TEST(test_c3_epoch_received_always_false);
+
+/* ------- Sync silence timeout — C3 is always a no-op --------------------- */
+
+    RUN_TEST(test_c3_sync_timeout_is_noop);
     return UNITY_END();
 }

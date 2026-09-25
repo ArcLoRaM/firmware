@@ -22,7 +22,7 @@
 #include "compliance_engine.h"
 #include "mac_state_machine.h"
 #include "mac_types.h"
-#include "sys_app.h"
+#include "arclog.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -52,6 +52,11 @@ static uint8_t         s_slot_idx;      /* slot within the current cell */
 static uint32_t        s_slot_start_ms; /* nominal start of the current slot */
 static uint32_t        s_expected_wake_ms;
 static bool            s_cursor_suspect;
+static bool            s_bootstrapped_in_slot; /* BootstrapFromSync called during this SlotTask */
+/* Alarm chain armed. False while scanning (CLOCK_COLD): the radio listens
+ * continuously and no slot runs. Written from the radio ISR path
+ * (BootstrapFromSync, OnRxEnd) and read by SlotTask. */
+static volatile bool   s_running;
 
 /* =========================================================================
  * Internal helpers — cursor advancement
@@ -129,9 +134,8 @@ static void advance_cursor(const Phase_t *phase)
          * TdmaMachine_SlotTask Step 2) and fall back to a safe phase
          * boundary instead of looping forever on garbage state. */
         s_cursor_suspect = true;
-        APP_LOG(TS_ON, VLEVEL_M,
-                "TDMA: advance_cursor corrupt s_cursor.slot_pos=%u\r\n",
-                (unsigned)s_cursor.slot_pos);
+        ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_L, "CURSOR_CORRUPT", "pos=%u",
+               (unsigned)s_cursor.slot_pos);
         advance_to_next_phase();
         break;
     }
@@ -170,6 +174,50 @@ static uint32_t u32_abs_diff(uint32_t a, uint32_t b)
     return (a >= b) ? (a - b) : (b - a);
 }
 
+/* =========================================================================
+ * Internal helpers - radio
+ * ========================================================================= */
+
+/* Stop the alarm chain (if running) and listen continuously on the
+ * discovery channel. The next Sync packet restarts the chain through
+ * TdmaMachine_BootstrapFromSync. */
+static void enter_scanning(const char *why)
+{
+    if (s_running) {
+        s_running = false;
+        s_platform.CancelAlarmA();
+    }
+    ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_M, "SCAN", "freq=%u why=%s",
+           (unsigned)SCAN_FREQ_HZ, why);
+    s_platform.RadioSetChannel(SCAN_FREQ_HZ);
+    s_platform.RadioScan();
+}
+
+/* Open the Rx window of the current slot, from now (early wake, guard
+ * applied) until the latest instant a packet can start and still end by
+ * slot end + MAX_GUARD_TIME_MS. Gaps are >= 2 x MAX_GUARD_TIME_MS, so a
+ * packet ending by then never reaches the next slot, whatever guard its
+ * receivers apply. The expected packet is the Sync packet in every slot for
+ * now (issue #38). The platform aborts any reception still running at that
+ * end (cap), e.g. after a false preamble detection. */
+static void open_rx_window(const Phase_t *phase, uint32_t now_ms)
+{
+    uint32_t cap_ms  = s_slot_start_ms + phase->slot_active_ms + MAX_GUARD_TIME_MS;
+    uint32_t toa_ms  = s_platform.RadioTimeOnAir((uint8_t)sizeof(SyncPayload_t));
+    uint32_t last_ms = cap_ms - toa_ms;
+
+    if ((int32_t)(last_ms - now_ms) <= 0) {
+        /* Woke too late for any packet to fit (or ToA exceeds the slot). */
+        ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_L, "RX_LATE", "now=%u last=%u",
+               (unsigned)now_ms, (unsigned)last_ms);
+        s_platform.RadioSleep();
+        return;
+    }
+    ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_H, "RX_WIN", "last=%u cap=%u",
+           (unsigned)last_ms, (unsigned)cap_ms);
+    s_platform.RadioSetRx(last_ms - now_ms, cap_ms - now_ms);
+}
+
 /* Determine whether the next slot opportunity will be RX (for guard-time
    look-ahead).  Guard is applied when the next slot is deterministically Rx
    or when its role is uncertain (conservative Rx default).  Guard is withheld
@@ -186,12 +234,12 @@ static bool next_slot_is_rx(const Phase_t *phase)
 #if   NODE_CLASS == NODE_CLASS_C1
             return true;               /* C1 always Rx in Sync */
 #elif NODE_CLASS == NODE_CLASS_C3
-            return false;              /* C3: cell 0 Tx, cells 1+ Skip — not Rx */
+            return false;              /* C3: first SYNC_TX_BUDGET cells Tx, rest Skip — not Rx */
 #else  /* C2 */
             if (s_cursor.cell_index == 0u) {
                 return true;           /* cell 0 always Rx */
             }
-            return !MAC_GetEpochReceivedThisPhase();
+            return !(MAC_GetEpochReceivedThisPhase() && MAC_GetSyncTxBudget() > 0u);
 #endif
         }
         /* Mesh_Beacon: prediction depends on node class */
@@ -240,10 +288,39 @@ void TdmaMachine_Init(const TdmaPlatform_t *platform)
     s_slot_start_ms      = 0u;
     s_expected_wake_ms   = 0u;
     s_cursor_suspect     = false;
+    s_bootstrapped_in_slot = false;
+    s_running            = false;
 
     const Phase_t *p0 = TdmaTable_GetPhase(0u);
     s_cursor.slot_pos = (p0 != NULL && p0->header.duration_ms > 0u)
                  ? SLOT_POS_HEADER : SLOT_POS_CELL;
+}
+
+bool TdmaMachine_Start(void)
+{
+    if (MAC_GetClockState() == CLOCK_COLD) {
+        enter_scanning("boot");
+        return false;
+    }
+    /* Never cold (C3): the chain starts now, from {0,0,0}. */
+    s_slot_start_ms    = s_platform.GetRtcMs();
+    s_expected_wake_ms = s_slot_start_ms;
+    s_running          = true;
+    return true;
+}
+
+void TdmaMachine_OnRxEnd(void)
+{
+    if (MAC_GetClockState() == CLOCK_COLD) {
+        if (s_running) {
+            enter_scanning("lost");  /* Tier 3 re-anchor on this packet */
+        } else {
+            s_platform.RadioScan();  /* keep scanning */
+        }
+        return;
+    }
+    /* Synced slot: nothing more to receive until the next slot. */
+    s_platform.RadioSleep();
 }
 
 void TdmaMachine_SlotTask(void)
@@ -252,15 +329,16 @@ void TdmaMachine_SlotTask(void)
     const Phase_t *phase;
     uint32_t      freq_hz;
     SlotDecision_t decision;
-    uint8_t        prev_slot_idx;
     uint32_t       next_start_ms;
     uint32_t       alarm_ms;
 
+    /* Stale wake: the chain stopped (radio ISR entered scanning) while this
+     * alarm's task was pending. Leave the scanning radio alone. */
+    if (!s_running) return;
+
     /* ---- Step 1: read RTC ---- */
+    s_bootstrapped_in_slot = false;
     now_ms = s_platform.GetRtcMs();
-    APP_LOG(TS_ON, VLEVEL_H, "TDMA: slot ph=%u cell=%u sl=%u now=%lu ms\r\n",
-            (unsigned)s_cursor.phase_index, (unsigned)s_cursor.cell_index,
-            (unsigned)s_cursor.slot_index, now_ms);
 
     /* ---- Step 2: cursor integrity checkpoint ---- */
     {
@@ -270,13 +348,30 @@ void TdmaMachine_SlotTask(void)
                              : 3750u;
         if (u32_abs_diff(now_ms, s_expected_wake_ms) > threshold) {
             s_cursor_suspect = true;
-            /* Drive MAC toward re-acquisition */
-            SyncPayload_t zero_pkt;
-            memset(&zero_pkt, 0, sizeof(zero_pkt));
-            MAC_OnSyncPacketReceived(&zero_pkt, now_ms);
+            ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_L, "SLOT_SUSPECT", "exp=%u now=%u",
+                   (unsigned)s_expected_wake_ms, (unsigned)now_ms);
+            /* Drive MAC toward re-acquisition without touching the RTC. */
+            MAC_OnCursorSuspect();
+            /* Resume the alarm chain from the actual wake time; the old
+             * nominal start is stale and the next alarm computed from it
+             * could already be in the past (it would then only fire after
+             * the RTC wraps at midnight). */
+            s_slot_start_ms = now_ms;
         } else {
             s_cursor_suspect = false;
         }
+    }
+
+    /* If BootstrapFromSync was called during the cursor integrity checkpoint,
+     * the cursor and Alarm A have already been repositioned to the correct
+     * cell in the new RTC domain. Skip the rest of this SlotTask invocation;
+     * the alarm from BootstrapFromSync will fire and resume normal execution. */
+    if (s_bootstrapped_in_slot) return;
+
+    /* The suspect cursor dropped the clock: stop the chain, scan. */
+    if (MAC_GetClockState() == CLOCK_COLD) {
+        enter_scanning("lost");
+        return;
     }
 
     /* ---- Step 3: fetch phase ---- */
@@ -308,11 +403,23 @@ void TdmaMachine_SlotTask(void)
     freq_hz = FrequencyResolver_GetFreq(&s_cursor);
     s_platform.RadioSetChannel(freq_hz);
 
+    /* ---- Step 6.5: sync silence timeout check ---- */
+    MAC_CheckSyncTimeout(now_ms);
+    if (MAC_GetClockState() == CLOCK_COLD) {
+        enter_scanning("lost");
+        return;
+    }
+
     /* ---- Step 7: MAC decision ---- */
     decision = MAC_OnSlotOpportunity(&s_cursor, phase);
-    APP_LOG(TS_ON, VLEVEL_H, "TDMA: MAC dec=%u mac_state=%u clock=%u\r\n",
-            (unsigned)decision, (unsigned)MAC_GetState(),
-            (unsigned)MAC_GetClockState());
+    /* wake = actual minus programmed wake time: local timing deviation. */
+    ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_H, "SLOT",
+           "ph=%u ty=%s ce=%u sl=%u pos=%s dec=%s wake=%d nom=%u",
+           (unsigned)s_cursor.phase_index, ArcLog_PhaseTypeName(phase->type),
+           (unsigned)s_cursor.cell_index, (unsigned)s_cursor.slot_index,
+           ArcLog_SlotPosName(s_cursor.slot_pos), ArcLog_DecisionName(decision),
+           (int)(int32_t)(now_ms - s_expected_wake_ms),
+           (unsigned)s_slot_start_ms);
 
     /* ---- Step 8: radio action ---- */
     if (decision == SLOT_TX) {
@@ -325,8 +432,10 @@ void TdmaMachine_SlotTask(void)
             ComplianceEngine_RequestChannel(freq_hz,
                                             phase->slot_active_ms,
                                             TX_POWER_DBM);
-        APP_LOG(TS_ON, VLEVEL_H, "TDMA: TX compliance result=%u freq=%lu\r\n",
-                (unsigned)result, freq_hz);
+        if (result != COMPLIANCE_GRANTED) {
+            ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_M, "TX_DENIED", "res=%u freq=%u",
+                   (unsigned)result, (unsigned)freq_hz);
+        }
         if (result == COMPLIANCE_GRANTED) {
             SyncPayload_t pkt;
             memset(&pkt, 0, sizeof(pkt));
@@ -334,19 +443,27 @@ void TdmaMachine_SlotTask(void)
             MAC_GetSyncPhaseDate(&pkt.day, &pkt.month, &pkt.year);
             pkt.sync_phase_index = (uint8_t)s_cursor.phase_index;
             pkt.sync_cell_index  = (uint8_t)s_cursor.cell_index;
+            uint32_t send_ms = s_platform.GetRtcMs();
             s_platform.RadioSend((const uint8_t *)&pkt, (uint8_t)sizeof(pkt));
-            uint32_t actual_toa = s_platform.RadioTimeOnAir();
+            /* plan = nominal slot start, send = RTC just before Radio.Send.
+             * The radio's own TX start is logged by TX_DONE (end - toa). */
+            ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "SYNC_TX",
+                   "ph=%u ce=%u ep=%u plan=%u send=%u freq=%u",
+                   (unsigned)pkt.sync_phase_index, (unsigned)pkt.sync_cell_index,
+                   (unsigned)pkt.ms_since_midnight_sync_phase,
+                   (unsigned)s_slot_start_ms, (unsigned)send_ms,
+                   (unsigned)freq_hz);
+            uint32_t actual_toa = s_platform.RadioTimeOnAir((uint8_t)sizeof(pkt));
             ComplianceEngine_ReportTxDone(freq_hz, actual_toa);
         }
         /* On non-GRANTED: fall through to alarm programming without TX */
     } else if (decision == SLOT_RX) {
-        s_platform.RadioSetRx(phase->slot_active_ms + 2u * GuardTimeResolver_GetGuardMs());
+        open_rx_window(phase, now_ms);
     } else {
         s_platform.RadioSleep();
     }
 
     /* ---- Steps 9-14: advance cursor, compute and program next alarm ---- */
-    prev_slot_idx   = s_slot_idx;
     advance_cursor(phase);
 
     next_start_ms   = s_slot_start_ms + phase->slot_active_ms
@@ -368,19 +485,19 @@ void TdmaMachine_SlotTask(void)
 
 void TdmaMachine_BootstrapFromSync(uint8_t  sync_phase_idx,
                                     uint8_t  sync_cell_idx,
-                                    uint32_t rtc_now_ms)
+                                    uint32_t nominal_start_ms)
 {
     s_cursor.phase_index = sync_phase_idx;
     s_cursor.cell_index  = sync_cell_idx;
     s_cursor.slot_index  = 0u;
     s_slot_idx           = 0u;
     s_cursor.slot_pos     = SLOT_POS_CELL;
-    s_slot_start_ms      = rtc_now_ms;
+    s_slot_start_ms      = nominal_start_ms;
     s_cursor_suspect     = false;
 
     const Phase_t *phase = TdmaTable_GetPhase(sync_phase_idx);
     if (phase != NULL) {
-        uint32_t next_ms = rtc_now_ms + phase->slot_active_ms
+        uint32_t next_ms = nominal_start_ms + phase->slot_active_ms
                            + phase->gap_after_slot_ms;
         advance_cursor(phase);
         s_slot_start_ms    = next_ms;
@@ -389,6 +506,8 @@ void TdmaMachine_BootstrapFromSync(uint8_t  sync_phase_idx,
          * so wake early to open the window before nominal start. */
         s_expected_wake_ms = next_ms - GuardTimeResolver_GetGuardMs();
         s_platform.ProgramAlarmA(next_ms - GuardTimeResolver_GetGuardMs());
+        s_bootstrapped_in_slot = true;
+        s_running              = true;
     }
 }
 

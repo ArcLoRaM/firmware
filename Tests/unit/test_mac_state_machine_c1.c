@@ -1,6 +1,7 @@
 #include "unity.h"
 #include "mac_state_machine.h"
 #include "tdma_table.h"
+#include "arclog_capture.h"
 #include <string.h>
 
 /* ------- hook stubs ------------------------------------------------------- */
@@ -268,7 +269,181 @@ void test_c1_epoch_received_resets_on_phase_entry(void)
     TEST_ASSERT_FALSE(MAC_GetEpochReceivedThisPhase());
 }
 
+/* ------- Sync silence timeout (ADR-0013) -------------------------------- */
+
+/*
+ * three_sync_packets() drives to CLOCK_WARM with the last preamble at 6000 ms.
+ * s_last_sync_received_ms = 6000 after acquisition.
+ * 14 min = 840000 ms, 15 min = 900000 ms = SYNC_SILENCE_TIMEOUT_MS.
+ */
+
+void test_c1_warm_14min_silence_no_degradation(void)
+{
+    three_sync_packets();
+    MAC_CheckSyncTimeout(6000u + 840000u);  /* 14 min — under threshold */
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+}
+
+void test_c1_warm_15min_silence_degrades_to_cold(void)
+{
+    three_sync_packets();
+    MAC_CheckSyncTimeout(6000u + 900000u);  /* 15 min — at threshold */
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+}
+
+void test_c1_acquiring_15min_silence_degrades_to_cold(void)
+{
+    /* P1 only — CLOCK_ACQUIRING, last_sync = 0 */
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_cell_index = 0u;
+    MAC_OnSyncPacketReceived(&p, 0u);
+    TEST_ASSERT_EQUAL(CLOCK_ACQUIRING, MAC_GetClockState());
+
+    MAC_CheckSyncTimeout(900000u);  /* 15 min from last_sync=0 */
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+}
+
+void test_c1_cold_timeout_is_noop(void)
+{
+    /* Boot state is CLOCK_COLD — timeout check must not fire */
+    MAC_CheckSyncTimeout(900000u);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+}
+
+void test_c1_sync_at_14min_resets_timer(void)
+{
+    three_sync_packets();  /* CLOCK_WARM, last_sync = 6000 */
+
+    /* 14 min: no degradation */
+    MAC_CheckSyncTimeout(6000u + 840000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+
+    /* Receive Tier 1 sync at 14 min — resets timer to 846000 */
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_phase_index             = 0u;
+    p.sync_cell_index              = 0u;
+    p.ms_since_midnight_sync_phase = 846000u;
+    MAC_OnSyncPacketReceived(&p, 846000u);  /* error=0 → Tier 1 */
+
+    /* 15 min from original start (906000): only 1 min after reset → no degradation */
+    MAC_CheckSyncTimeout(906000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+}
+
+void test_c1_tier2_resets_silence_timer(void)
+{
+    three_sync_packets();  /* CLOCK_WARM, last_sync = 6000 */
+
+    /* Tier 2 packet (error 50 ms, < 300 ms) at 14 min — stays WARM, resets timer */
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_phase_index             = 0u;
+    p.sync_cell_index              = 0u;
+    p.ms_since_midnight_sync_phase = 846000u;
+    MAC_OnSyncPacketReceived(&p, 846050u);  /* error=50 → Tier 2 */
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+
+    /* 14 min from Tier 2 reset: no degradation */
+    MAC_CheckSyncTimeout(846050u + 840000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+
+    /* 15 min from Tier 2 reset: degradation */
+    MAC_CheckSyncTimeout(846050u + 900000u);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+}
+
+void test_c1_tier3_resets_silence_timer(void)
+{
+    three_sync_packets();  /* CLOCK_WARM, last_sync = 6000 */
+
+    /* Tier 3 packet at 14 min — immediate degradation to COLD, but timer reset */
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_phase_index             = 0u;
+    p.sync_cell_index              = 0u;
+    p.ms_since_midnight_sync_phase = 846000u;
+    MAC_OnSyncPacketReceived(&p, 846400u);  /* error=400 ≥ 300ms → Tier 3 */
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+
+    /* Re-acquire from the Tier 3 moment */
+    s_snapshot_ms = 846400u;
+    memset(&p, 0, sizeof(p));
+    p.sync_phase_index             = 0u;
+    p.sync_cell_index              = 0u;
+    p.ms_since_midnight_sync_phase = 846400u;
+    MAC_OnSyncPacketReceived(&p, 846400u);  /* P1 → ACQUIRING */
+    p.sync_cell_index = 1u;  MAC_OnSyncPacketReceived(&p, 849400u);  /* P2 */
+    p.sync_cell_index = 2u;  MAC_OnSyncPacketReceived(&p, 852400u);  /* P3 → WARM */
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+
+    /* 14 min from re-acquisition: no degradation */
+    MAC_CheckSyncTimeout(852400u + 840000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+
+    /* 15 min from re-acquisition: degradation */
+    MAC_CheckSyncTimeout(852400u + 900000u);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(2, s_sync_lost_calls);
+}
+
+void test_c1_tier3_immediate_degradation_unchanged(void)
+{
+    three_sync_packets();
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_cell_index              = 0u;
+    p.ms_since_midnight_sync_phase = 0u;
+    MAC_OnSyncPacketReceived(&p, 400u);  /* error=400 ≥ 300ms → Tier 3 */
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+}
+
 /* ------- main ------------------------------------------------------------- */
+
+/* ------- Cursor suspect --------------------------------------------------- */
+
+void test_c1_cursor_suspect_drops_to_cold_without_rtc_write(void)
+{
+    three_sync_packets();
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    int rtc_sets = s_rtc_set_calls;
+
+    MAC_OnCursorSuspect();
+
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
+    TEST_ASSERT_EQUAL(rtc_sets, s_rtc_set_calls);
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+}
+
+/* A phase index that is not a Sync phase cannot anchor the FrameCursor:
+ * the packet is dropped before it touches the RTC or the ClockState, so a
+ * cold node keeps scanning instead of reaching ACQUIRING with no chain. */
+void test_c1_sync_pkt_with_non_sync_phase_is_rejected(void)
+{
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_phase_index = 0xFFu;
+    p.sync_cell_index  = 1u;
+    ArcLog_CaptureReset();
+
+    MAC_OnSyncPacketReceived(&p, 1000u);
+
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_rtc_set_calls);
+    TEST_ASSERT_ARCLOG("SYNC_REJ ph=255 ce=1");
+}
 
 int main(void)
 {
@@ -295,5 +470,18 @@ int main(void)
     RUN_TEST(test_c1_epoch_received_false_after_init);
     RUN_TEST(test_c1_epoch_received_true_after_tier1);
     RUN_TEST(test_c1_epoch_received_resets_on_phase_entry);
+
+/* ------- Sync silence timeout (ADR-0013) -------------------------------- */
+
+    RUN_TEST(test_c1_warm_14min_silence_no_degradation);
+    RUN_TEST(test_c1_warm_15min_silence_degrades_to_cold);
+    RUN_TEST(test_c1_acquiring_15min_silence_degrades_to_cold);
+    RUN_TEST(test_c1_cold_timeout_is_noop);
+    RUN_TEST(test_c1_sync_at_14min_resets_timer);
+    RUN_TEST(test_c1_tier2_resets_silence_timer);
+    RUN_TEST(test_c1_tier3_resets_silence_timer);
+    RUN_TEST(test_c1_tier3_immediate_degradation_unchanged);
+    RUN_TEST(test_c1_cursor_suspect_drops_to_cold_without_rtc_write);
+    RUN_TEST(test_c1_sync_pkt_with_non_sync_phase_is_rejected);
     return UNITY_END();
 }

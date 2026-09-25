@@ -109,7 +109,7 @@ State coincide — which is why the two concepts are easily conflated.
   The TDMA Machine does not pre-filter — it wakes for every cell and passes
   the opportunity to the MAC, which may assign Tx-role, Rx-role, or Skip.
   For `Mesh_Beacon`, the MAC never assigns Skip (every cell is Tx or Rx).
-  For `Sync`, C3 is Skip in Cells 1+ (already transmitted in Cell 0).
+  For `Sync`, C3 is Tx in the first `SYNC_TX_BUDGET` cells, Skip in the rest.
 - `DIRECTION_MAC_PHASE`: `phase_tx_flag` assigns the same Cell Role to
   every Cell in the Phase. Currently unused — no phase requires uniform
   per-phase direction. Retained for future use.
@@ -158,9 +158,9 @@ Machine calls it and applies it in two places:
 1. **Alarm look-ahead:** when programming the next RTC Alarm, if the TDMA
    Machine predicts the next Slot will be Rx (via `next_slot_is_rx()`), it
    subtracts `guard_ms` from the nominal alarm time — waking the node early.
-2. **Rx window extension:** `RadioSetRx(slot_active_ms + 2 × guard_ms)` —
-   the receive window opens `guard_ms` before nominal start and holds
-   `guard_ms` after nominal end.
+2. **Rx window opening:** the receive window opens at the early wake,
+   `guard_ms` before nominal start.
+   Where it closes is not a guard-time question: see Rx Window.
 
 The Rx prediction (`next_slot_is_rx()`) covers both used DirectionModes.
 The governing principle: guard time is applied when the next slot is
@@ -195,13 +195,14 @@ node always transmits at nominal time regardless of when it woke.
     alarm-programming time (end of current cell), so it always reflects the
     latest MAC state:
     - C1: always Rx in every cell → guard. Deterministic.
-    - C3: Cell 0 = Tx → no guard; Cells 1+ = Skip → no alarm. Deterministic.
+    - C3: first `SYNC_TX_BUDGET` cells = Tx → no guard; remaining cells = Skip → no alarm. Deterministic.
     - C2: the epoch may be received in any cell (Cell 0 for hop-1, Cell 1
       for hop-2, Cell N for hop-(N+1)) depending on the node's depth in the
       relay chain. Before the epoch is received → Rx → guard. After the
-      epoch is received (flag set) → Tx → no guard. Because the flag is
-      read after the current cell completes, the prediction for the next
-      cell is always deterministic.
+      epoch is received (flag set) and `SyncTxBudget > 0` → Tx → no guard.
+      When `SyncTxBudget == 0` (budget exhausted) → Rx → guard. Because the
+      flag and budget are read after the current cell completes, the
+      prediction for the next cell is always deterministic.
     Node class is a compile-time constant, so the prediction branches at
     compile time — no runtime class check.
 
@@ -223,6 +224,33 @@ on estimated clock drift, duration without receiving synchronization, and
 possibly other factors. The single-value resolver interface
 (`GuardTimeResolver_GetGuardMs()`) may be split into separate alarm-advance
 and Rx-extension values if V2 requires decoupling them.
+
+**Current guard vs maximum guard.**
+The *current guard* (`GuardTimeResolver_GetGuardMs()`) is how early this node wakes for an Rx slot.
+The *maximum guard* (`MAX_GUARD_TIME_MS`) is a property of the slot grid: the most any node may wake early, which the gaps are sized for (every gap ≥ 2 × `MAX_GUARD_TIME_MS`).
+They are equal in Version 1 but are different concepts: the early wake uses the current guard, the Rx Window end uses the maximum guard.
+
+### Rx Window
+The span during which a synced node listens in an Rx slot.
+It opens at the early wake (current guard) and closes at the **latest packet start**:
+
+  `latest_start = nominal_start + slot_active_ms + MAX_GUARD_TIME_MS − ToA(expected packet)`
+
+A packet starting later could not end by `slot end + MAX_GUARD_TIME_MS`, the latest instant that never reaches the next slot whatever guard its nodes apply.
+The window is closed by the radio's own Rx timer, which stops on preamble detection: a packet whose preamble arrives in time is always received in full, a later one is not received.
+A **cap** at `slot end + MAX_GUARD_TIME_MS` aborts any reception still running there (a false preamble detection, or a packet detected within the detection margin but too late to fit).
+The expected packet is the Sync packet for every slot for now (issue #38).
+Preamble rather than header detection is a deliberate choice (issue #39): Sync timing is anchored on the preamble, and the Sync packet will move to implicit header.
+The radio's symbol timeout is off: noise never closes a window early.
+_Avoid_: Rx extension, `slot_active_ms + 2 × guard`
+
+### Scanning Rx
+How a `CLOCK_COLD` node (C1/C2) listens: continuously on the **discovery channel** (`SCAN_FREQ_HZ`, 868.3 MHz, the frequency the SyncAnchor transmits Sync on), with no timeout, re-armed after every reception.
+There is no TDMA alarm chain while cold: with no schedule position, slot-sized windows would only overlap the SyncAnchor's transmissions by chance.
+The MCU sleeps (Stop2) and is woken by the radio.
+The alarm chain starts on the first Sync packet (bootstrap) and stops whenever the node falls back to `CLOCK_COLD`.
+See ADR-0015.
+_Avoid_: wide Rx, discovery windows
 
 ### TDMA Table
 The read-only schedule descriptor for one Frame. An ordered array of Phase structs.
@@ -284,11 +312,14 @@ never be heard under a deterministic mod-3 assignment since both sides would
 transmit simultaneously in the same cells.
 
 For `Sync`, the MAC assigns Cell Role per-cell based on the three-tier relay
-model (see CT Sync Propagation Model and Sync Algorithm). C3 is Tx in Cell 0,
-Skip in Cells 1+. C2 is Rx in Cell 0, then Tx in Cells 1+ if the received
-epoch error is below `SYNC_PARTICIPATE_THRESHOLD_MS`, otherwise continues Rx.
-C1 is Rx in all cells. The MAC makes the relay decision after processing
-Cell 0 reception; subsequent cells follow from that decision.
+model (see CT Sync Propagation Model and Sync Algorithm). C3 is Tx in the
+first `SYNC_TX_BUDGET` cells, Skip in the rest. C2 is Rx in Cell 0, then Tx
+in Cells 1+ if the received epoch error is below
+`SYNC_PARTICIPATE_THRESHOLD_MS`, otherwise continues Rx.
+C2 Tx is gated by `SyncTxBudget` (see SyncTxBudget): after `SYNC_TX_BUDGET`
+transmissions, remaining cells return Rx. C1 is Rx in all cells. The MAC makes
+the relay decision after processing Cell 0 reception; subsequent cells follow
+from that decision.
 
 `DIRECTION_MAC_PHASE` is currently unused. It was originally designed for
 `Sync` (uniform Tx or Rx for the entire phase via `phase_tx_flag`), but
@@ -329,8 +360,11 @@ Never modifies it. Responsible purely for timing mechanics — when to wake and 
 - For `DIRECTION_MAC_CELL` phases (Mesh_Beacon, Sync): waking for every cell
   and passing the opportunity to the MAC; the MAC assigns Tx-role, Rx-role,
   or Skip per-cell
+- Running the alarm chain only out of `CLOCK_COLD`: C1/C2 start it on the
+  first Sync packet (bootstrap) and stop it for Scanning Rx whenever the
+  clock drops back to `CLOCK_COLD`; C3 runs it from boot
 - Programming Alarm A (RTC Alarm A) for each slot wake-up (alarm-chain sleep model)
-- Applying Guard Time on Rx Slots
+- Applying Guard Time on Rx Slots and bounding each Rx Window
 - Correcting Frame Epoch on Mesh_Beacon or Sync reception
 
 **Sleep strategy — alarm-chain model:**
@@ -392,8 +426,8 @@ State Machine determines *whether* that opportunity is taken and *how*.
   assigning Cell Role from MAC-internal state. For `Mesh_Beacon`: K-cell
   schedule selected at phase entry, gated by `BeaconTxBudget`. For `Sync`:
   three-tier relay decision (C2 Rx Cell 0, Tx Cells 1+ if epoch received
-  with error below `SYNC_PARTICIPATE_THRESHOLD_MS`; C3 Tx Cell 0, Skip
-  Cells 1+; C1 Rx all cells)
+  with error below `SYNC_PARTICIPATE_THRESHOLD_MS`, gated by `SyncTxBudget`;
+  C3 Tx first `SYNC_TX_BUDGET` cells, Skip rest; C1 Rx all cells)
 - Executing contention logic in CONTENTION footer Slots (CSMA + backoff)
 - Selecting packet type (data vs join request) in `Cluster_Exchange` footer
 - Decoding the `Cluster_Exchange` header and writing the Cell Permit
@@ -407,7 +441,7 @@ opportunity boundaries.
 
 | State | Applies to | Condition | Radio behaviour |
 |---|---|---|---|
-| `Scanning` | C1, C2 | No sync established (`ClockState = CLOCK_COLD` or `CLOCK_ACQUIRING`). Boot default for C1/C2. | Continuous wide RX. No TX. Listening for Sync packets only. |
+| `Scanning` | C1, C2 | No sync established (`ClockState = CLOCK_COLD` or `CLOCK_ACQUIRING`). Boot default for C1/C2. | No TX. `CLOCK_COLD`: Scanning Rx (continuous, discovery channel, no alarm chain). `CLOCK_ACQUIRING`: alarm chain running, Rx Window in every slot. |
 | `Synchronized` | C1, C2 | Two consecutive Sync packets with preamble error below `SYNC_PARTICIPATE_THRESHOLD_MS` after initial RTC set (`ClockState = CLOCK_WARM`). Seeking peers — discovery behaviour is implied, not a separate state. | Listens on known frame boundaries. Attempts cluster join or mesh peer exchange. No data TX. |
 | `Active` | C3 | Boot default for C3. C3 is the SyncAnchor — it requires no sync acquisition. Immediately operational: transmitting Sync packets, listening for peer connections. | Follows TDMA Table (C3 slot pattern). Originates Sync packets. Accepts mesh and cluster connections. |
 | `Paired` | C1, C2, C3 | C1/C2: connected to cluster master or mesh backbone. C3: at least one node (C2 or C1) is connected. | Full TDMA schedule: TX from phase-specific buffers when non-empty. |
@@ -567,7 +601,8 @@ regardless of network depth.
 **C2 sync relay model**: C2 always enters Rx Radio state in Cell 0 of every
 Sync Phase occurrence, and continues until it actually receives the C3's (or
 upstream C2's) epoch, then relays it in Cells 1+ if the measured error is below
-`SYNC_PARTICIPATE_THRESHOLD_MS`. C2 never self-generates an epoch; it only
+`SYNC_PARTICIPATE_THRESHOLD_MS`, up to `SYNC_TX_BUDGET` transmissions per
+occurrence (see SyncTxBudget). C2 never self-generates an epoch; it only
 forwards what it receives. Three-tier per-occurrence dispatch (see Sync
 Algorithm) replaces the former audit/participate cycle alternation (which
 was part of the pure CT model and is also deferred).
@@ -583,9 +618,13 @@ deferred pending empirical validation.
 Algorithm section.
 
 ### PreambleStamp
-An in-memory RTC snapshot (`RTC_TimeTypeDef`) captured inside the DIO1 GPIO ISR
-the instant a sync preamble is detected. Never persisted. Consumed immediately
-by the warm-sync handler to compute `elapsed_ms`.
+The RTC time (ms since midnight, `GetTimerTicks` domain) at entry of the radio IRQ that signals `IRQ_PREAMBLE_DETECTED` for the packet being received.
+It is taken first thing in `SUBGHZ_Radio_IRQHandler` (`SubGhzPhyTask_OnRadioIrq`), before HAL dispatch; `Radio.Rx()` is followed by an IRQ-mask update that enables `IRQ_PREAMBLE_DETECTED` and `IRQ_HEADER_VALID`.
+It is what `MAC_OnSyncPacketReceived` receives as `preamble_timestamp_ms`, minus `PREAMBLE_DETECT_LATENCY_MS` (0 until measured, issue #17).
+If no preamble IRQ was seen for the packet, the stamp falls back to `RxDone − ToA(size)`.
+RxDone itself arrives about one airtime after the packet starts (~1 s for a SyncPayload at SF12), so it is never used directly.
+The `HEADER_VALID` time is logged alongside as a cross-check: it follows the TX start by a fixed number of symbols, so the spread of `hdr − pre` measures preamble-detection jitter.
+Never persisted.
 
 ### Epoch Received
 A MAC-internal boolean flag (`s_epoch_received_this_phase`) indicating whether
@@ -605,7 +644,7 @@ Three-value enum tracking RTC synchronisation quality.
 
 | Value | Meaning |
 |---|---|
-| `CLOCK_COLD` | No Sync packet received. Boot default. MAC State Machine is in `Scanning`. |
+| `CLOCK_COLD` | No Sync packet received. Boot default. MAC State Machine is in `Scanning`. No alarm chain: Scanning Rx. |
 | `CLOCK_ACQUIRING` | At least one Sync packet processed. RTC partially calibrated; sub-second precision not yet confirmed. |
 | `CLOCK_WARM` | Two consecutive Sync packets with preamble offset error below `SYNC_PARTICIPATE_THRESHOLD_MS = 8ms` (after initial RTC set on Packet 1). Node is fully Synchronized. |
 
@@ -628,13 +667,14 @@ good packets (error below `SYNC_PARTICIPATE_THRESHOLD_MS = 8ms`).
 
 **Packet 1 (`CLOCK_COLD` → `CLOCK_ACQUIRING`):** parse `SyncPayload` →
 `target_ms = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms` →
-call `HAL_RTC_SetTime(BIN: H=ms/3600000, M=(ms%3600000)/60000, S=(ms%60000)/1000)` +
-`HAL_RTC_SetDate(BCD: day, month, year)` → read `GetTimerTicks()` in new RTC domain →
-`s_sync_phase_ms = rtc_now − sync_cell_index × per_cell_ms` (phase start in new RTC) →
-call `sync_bootstrapped` hook to re-anchor TDMA cursor → `s_sync_consecutive = 0`,
+`age = rtc_now − PreambleStamp` (the MAC runs at RxDone, about one airtime after the stamp; ignored above `SYNC_STAMP_MAX_AGE_MS`) →
+`rtc_set(target_ms + age)` (`HAL_RTC_SetTime` + `SetDate` + SHIFTR sub-second), so the new RTC domain reads `target_ms` at the stamp instant →
+`s_sync_phase_ms = target_ms − sync_cell_index × per_cell_ms` (phase start in new RTC) →
+call `sync_bootstrapped` hook to re-anchor TDMA cursor and start the alarm chain → `s_sync_consecutive = 0`,
 `ClockState = CLOCK_ACQUIRING`.
+Without the age carry, the new domain would lag the sender by the airtime while every later stamp-to-expected comparison still read zero error.
 
-**Packets 2+ (`CLOCK_ACQUIRING`):** capture `PreambleStamp` in DIO1 ISR →
+**Packets 2+ (`CLOCK_ACQUIRING`):** take the `PreambleStamp` →
 `expected_arrival = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms` →
 `clock_error = |preamble_ts − expected_arrival|`.
 If `clock_error < SYNC_PARTICIPATE_THRESHOLD_MS (8ms)`: `s_sync_consecutive++`;
@@ -643,10 +683,17 @@ if `s_sync_consecutive ≥ 2`: `ClockState = CLOCK_WARM`, MAC transitions to
 
 **CLOCK_WARM ongoing check (three-tier per Sync Phase occurrence):**
 C2 always receives Cell 0 to measure error against the incoming epoch:
-- **Tier 1 — error < 8ms (0.25·T_S):** relay in Cells 1+ (store `ms_since_midnight_sync_phase` for TX).
+- **Tier 1 — error < 8ms (0.25·T_S):** relay in Cells 1+ (store `ms_since_midnight_sync_phase` for TX), up to `SYNC_TX_BUDGET` transmissions per occurrence (see SyncTxBudget).
 - **Tier 2 — 8ms ≤ error < 100ms (MAX_GUARD_TIME_MS):** SSR-only correction via `HAL_RTCEx_SetSynchroShift`
   (shift_ticks = error_ms × (PREDIV_S + 1) / 1000); receive only this occurrence.
-- **Tier 3 — error ≥ 100ms (MAX_GUARD_TIME_MS):** full `HAL_RTC_SetTime` re-anchor; `ClockState = CLOCK_COLD`.
+- **Tier 3 — error ≥ 100ms (MAX_GUARD_TIME_MS):** full `rtc_set` re-anchor with the same age carry as Packet 1; `ClockState = CLOCK_COLD`; the alarm chain stops for Scanning Rx.
+
+**Cursor suspect:** when the TDMA Machine wakes more than 1.5 × `slot_active_ms` away from the programmed wake, the FrameCursor is untrusted.
+It calls `MAC_OnCursorSuspect()`: C1/C2 drop to `CLOCK_COLD` / `Scanning` without writing the RTC (the next Sync packet re-anchors through Packet 1), and the TDMA Machine stops its alarm chain for Scanning Rx.
+C3 ignores it: its TDMA Machine resumes the alarm chain from the actual wake time, so the next alarm is never in the past.
+
+**Rejected Sync packet:** a `SyncPayload` whose `sync_phase_index` is not a Sync phase is dropped before it touches the RTC, the ClockState or the silence timer (corrupt or foreign packet).
+It could not anchor the FrameCursor, so accepting it would leave a node out of `CLOCK_COLD` with no alarm chain.
 
 Constants: `SYNC_PARTICIPATE_THRESHOLD_MS = 8` (0.25·T_S at SF12/BW125) ·
 `SYNC_RESYNC_THRESHOLD_MS = MAX_GUARD_TIME_MS = 100` (3·T_S at SF12/BW125).
@@ -945,7 +992,39 @@ guard-time look-ahead (see Guard Time).
 **C3 exception:** C3 bypasses `BeaconTxBudget` entirely and transmits in
 every `Mesh_Beacon` cell unconditionally. C3 has no upstream to receive
 a beacon from, so no trigger can fire; and as the mesh root its beacon is the
-anchor all C2 nodes depend on — suppressing it would be a protocol hazard.
+anchor all C2 nodes depend on - suppressing it would be a protocol hazard.
+
+### SyncTxBudget
+MAC State Machine counter governing sync relay transmission in `Sync` phases
+(C2 only). Limits the number of cells in which C2 transmits a relayed sync
+packet per Sync Phase occurrence to `SYNC_TX_BUDGET` (default 3). After the
+budget is exhausted, C2 returns `SLOT_RX` for the remaining cells in the
+occurrence instead of `SLOT_TX`.
+
+**Rationale.** Under the three-tier relay model, C2 transmits in every cell
+1+ after receiving a valid epoch. On a phase with many cells, the node stays
+radio-active far longer than necessary. After 3 transmissions the entire
+reachable network has had multiple reception opportunities. Keeping the
+radio on for the remaining cells wastes energy with no benefit.
+
+**Reset** - reset to `SYNC_TX_BUDGET` at each Sync Phase entry (detected via
+`s_last_phase_idx` change in `MAC_OnSlotOpportunity`).
+
+**Decrement** - decremented by 1 each time `MAC_OnSlotOpportunity` returns
+`SLOT_TX` for a Sync cell 1+. When the counter reaches 0, all remaining Sync
+cells in the occurrence return `SLOT_RX`.
+
+**C1** - unaffected. C1 never relays (always Rx in Sync).
+
+**C3** - also governed by `SyncTxBudget`. C3 transmits in the first
+`SYNC_TX_BUDGET` cells of each Sync Phase occurrence, then skips the rest.
+The counter is reset at phase entry and decremented on each Tx. This gives
+downstream C2 nodes multiple reception opportunities across consecutive
+cells (benefiting CT capture effect) while limiting C3 radio-on time.
+
+`SyncTxBudget` is MAC-internal state; it is not written to shared memory.
+It is exposed to the TDMA Machine via `MAC_GetSyncTxBudget()` for
+state-aware guard-time look-ahead (see Guard Time).
 
 ### phase_tx_flag
 Shared memory value previously written by the MAC State Machine before each
@@ -1142,23 +1221,47 @@ gaps — satisfying it requires periodic sub-alarms that cost more energy than t
 protection is worth for this deployment profile.
 
 ### Debug Console
-CM4 owns a UART peripheral driven by DMA ring buffer. Present in all builds
-(debug and production). CM4 enqueues log entries into a ring buffer; DMA drains
-asynchronously — zero CM4 blocking time. Active only during CM4 wake windows.
+CM4 owns the only UART (USART2, PA2/PA3, 9600 8N1), transmitted by DMA from the `stm32_adv_trace` FIFO.
+Present in all builds (debug and production).
+At 9600 baud the link carries about 960 B/s, roughly 11–15 ArcLog lines per second sustained; bursts are bounded by the two 512 B trace FIFOs (about 6–8 lines).
 
 ### Trace Channel (CM0+ → CM4)
 Implemented via STM32 middleware: `mbmuxif_trace` + `stm32_adv_trace` utility.
 
-CM0+ writes into the `stm32_adv_trace` circular FIFO (zero-copy allocation via
-`UTIL_ADV_TRACE_ZCSend_Allocation/Finalize`), then fires
-`MBMUXIF_TraceSendNotif_NoWait()` — no blocking, no ACK wait. The FIFO absorbs
-bursts; multiple trace writes batch into one IPCC notification. CM4 receives the
-notification, drains the entire FIFO to UART DMA in one wake, then calls
-`MBMUXIF_TraceSendAck()`. Buffer-full overrun is handled via the registered
-overrun callback. IPCC pressure is naturally rate-limited by the ACK mechanism.
-Budget impact: FIFO drain to DMA is microseconds — compatible with the 20–30 ms
-MbMux window. Verbose level and region filtering available via
-`UTIL_ADV_TRACE_COND_FSend` to suppress trace categories at runtime.
+CM0+ formats each line (`UTIL_ADV_TRACE_COND_FSend`) into its own 512 B FIFO in shared RAM (`MB_MEM3`).
+The FIFO output driver passes a pointer and length to CM4 with `MBMUX_NotificationSnd` (no wait).
+CM4 copies the bytes into its own 512 B FIFO from the IPCC interrupt and acknowledges at once; its UART DMA then drains that FIFO.
+When a FIFO is full the line is dropped (`MEM_FULL`); there is no overrun callback.
+Losses are made visible by the ArcLog sequence number, not prevented.
+The verbosity level (`VLEVEL_*`) filters lines at runtime on each core.
+
+### ArcLog
+The structured trace format of both cores (`Common/Log/arclog.h`), one event per line:
+
+```
+260925T123456.7890 0Y M #41 SYNC_RX ph=0 ce=1 ep=45120000 st=45123004 exp=45123000 err=4 clk=WARM act=t1
+```
+
+| Field | Meaning |
+|---|---|
+| `260925T123456.7890` | RTC calendar `YYMMDDTHHMMSS.ssss` (100 µs digits, 244 µs resolution), written by `TimestampNow` on both cores; both read the same RTC |
+| `0` / `4` | core: CM0+ / CM4 |
+| `T M Y R X S P` | module: TDMA, MAC, Sync/clock, Radio, MbMux, System, Power |
+| `A L M H` | verbosity: `VLEVEL_ALWAYS`, `VLEVEL_L`, `VLEVEL_M`, `VLEVEL_H` |
+| `#41` | per-core sequence number (hex, wraps at 0xff), consumed only by lines that pass the verbosity filter; a gap means lost lines |
+| `SYNC_RX` | event name |
+| `k=v` | fields; enums by name (`COLD ACQ WARM`, `SCAN SYNC ACTIVE PAIRED`, `TX RX SKIP`) |
+
+Emitted with `ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "EVENT", "k=%u ...", ...)`.
+Format strings go through `tiny_vsnprintf_like` built with `TINY_PRINTF`: no length modifiers (`%lu` prints literally and shifts the following arguments) and no floats; 32-bit values use `%u` / `%d` with `(unsigned)` / `(int)` casts.
+In host unit tests the lines are captured instead (`Tests/stubs/arclog_capture.h`, `TEST_ASSERT_ARCLOG`), so the events a state machine emits are part of its tested contract.
+ST-generated trace lines outside CubeMX USER CODE regions keep their free text; the host tool classifies them as LEGACY.
+
+Key sync events: `CLK` and `MAC_ST` (every ClockState / MacState transition, with `why`), `SYNC_RX` (one per received Sync packet: stamp, expected, signed error, decision), `SYNC_TX` (nominal vs actual send), `RX_DONE` (`pre`, `hdr`, `rxd` IRQ stamps and the stamp source), `TX_DONE` (radio TX start = end − ToA), `RTC_SET` / `RTC_SHIFT` (every clock correction).
+Rx timing events: `SCAN` (alarm chain stopped, Scanning Rx starts, `why=boot|lost`), `RX_WIN` (Rx Window opened: latest packet start and cap), `RX_LATE` (woke after the latest packet start), `RX_TIMEOUT` (no preamble in time), `RX_CAP` (reception aborted at the cap), `SYNC_REJ` (Sync packet with a non-Sync phase dropped).
+Sync packets are matched across nodes by `(ep, ph, ce)`, which both sender and receiver log.
+The event table, host capture, viewer, merge and sync report live in `tools/arclog/` (see its README); a test there fails when the firmware's `ARCLOG()` calls and the tool's schema disagree.
+See ADR-0014.
 
 ---
 
@@ -1387,7 +1490,7 @@ semantics are not yet finalised.
 
 ---
 
-**Resolved — TDMA Table direction split (final):** `DirectionMode` is a three-value enum governing Cell Role assignment. `DIRECTION_CELL_SKIP` (`Mesh_Uplink`, `Cluster_Exchange`, `Mesh_Downlink`): MAC-internal `CellEligibilityMask` / Cell Permit; the MAC returns `SLOT_SKIP` for ineligible cells in `MAC_OnSlotOpportunity`; the TDMA Machine wakes every cell and delegates; uplink uses ascending hop-count residue, downlink uses mirror descending pattern (Skip at uplink-Tx residue). `DIRECTION_MAC_CELL` (`Mesh_Beacon`, `Sync`): TDMA wakes every cell; MAC assigns Cell Role per-cell from internal state. For Mesh_Beacon: K random Tx cells at phase entry; for Sync: three-tier relay (C3 Tx Cell 0, C2 Rx Cell 0 then Tx Cells 1+, C1 Rx all). `DIRECTION_MAC_PHASE`: currently unused — previously applied to Sync but moved to `DIRECTION_MAC_CELL` because C2's mid-phase role switch violated the uniform-role contract. `phase_tx_flag` shared memory field retained for future use. `DIRECTION_STATIC` removed. See ADR-0010 (original split) and ADR-0011 (three-value finalisation, revised).
+**Resolved — TDMA Table direction split (final):** `DirectionMode` is a three-value enum governing Cell Role assignment. `DIRECTION_CELL_SKIP` (`Mesh_Uplink`, `Cluster_Exchange`, `Mesh_Downlink`): MAC-internal `CellEligibilityMask` / Cell Permit; the MAC returns `SLOT_SKIP` for ineligible cells in `MAC_OnSlotOpportunity`; the TDMA Machine wakes every cell and delegates; uplink uses ascending hop-count residue, downlink uses mirror descending pattern (Skip at uplink-Tx residue). `DIRECTION_MAC_CELL` (`Mesh_Beacon`, `Sync`): TDMA wakes every cell; MAC assigns Cell Role per-cell from internal state. For Mesh_Beacon: K random Tx cells at phase entry; for Sync: three-tier relay (C3 Tx first SYNC_TX_BUDGET cells, C2 Rx Cell 0 then Tx Cells 1+, C1 Rx all). `DIRECTION_MAC_PHASE`: currently unused — previously applied to Sync but moved to `DIRECTION_MAC_CELL` because C2's mid-phase role switch violated the uniform-role contract. `phase_tx_flag` shared memory field retained for future use. `DIRECTION_STATIC` removed. See ADR-0010 (original split) and ADR-0011 (three-value finalisation, revised).
 
 **Resolved — Spectrum Access Compliance Engine:** A MAC-agnostic compliance component resides entirely on CM0+. It exposes two hooks to the MAC State Machine: `RequestChannel(freq_hz, expected_toa_ms, tx_power_dbm) → Result` (called before any TX) and `ReportTxDone(freq_hz, actual_toa_ms)` (called after TX completes). The MAC State Machine calls these; the engine knows nothing about the protocol above it. Initial strategy: ETSI duty-cycle time-credit accounting per `RegionProfile` / `Band`. Interface is open to future strategies (LBT, FHSS dwell-time). CM4 is not involved in compliance decisions. `expected_toa_ms` is `slot_active_ms` from the TDMA Table (conservative, always compliant — flagged for optimization to per-packet ToA calculation). TX power is passed explicitly so the engine can validate against `Band.max_tx_power_dbm` and return `POWER_TOO_HIGH` without reading radio hardware state directly.
 
