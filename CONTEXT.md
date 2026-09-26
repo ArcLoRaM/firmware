@@ -597,6 +597,12 @@ preamble-locking failure ceiling (~100 ms, 3·T_S). Significant problems must be
 solved before this model can be implemented; see
 `ArcLoRaM_CT_Sync_Design.md` for the full design and open empirical items.
 
+**CT beyond Sync (design intent, not implemented):** CT is not only a Sync airtime saving, so its value holds even if Sync becomes rare (issue #49).
+It is also the intended path for `Mesh_Downlink` (a C3 command reaching every depth in one network-wide pulse instead of hop by hop) and for low-latency uplink (early-warning alerts, see ADR-0010, travelling upstream without waiting for the hop-staggered `Mesh_Uplink` cells).
+The alignment it requires therefore stays a protocol requirement whatever a node synchronises from: two nodes transmitting concurrently must stay within 16 ms (0.5·T_S) of each other.
+When each node tracks its own upstream peer, the offset between two concurrent transmitters is the sum of the per-hop errors along both paths to their common ancestor, so the per-hop error budget is `2 × depth × per_hop_error < 16 ms`.
+The CT failure boundary is validated on hardware in issue #46 (H3/H4).
+
 **Sync Phase structure**: N identical Cells × 1 Slot. `participant_mask` for
 Sync: C2 + C3 transmit, C1 RX-only. Under the three-tier model, Sync Phase
 airtime scales with network depth (each hop relays in a subsequent Cell).
