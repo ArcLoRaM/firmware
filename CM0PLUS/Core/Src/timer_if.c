@@ -102,6 +102,7 @@ static uint8_t RTC_Initialized = 0;
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
 static inline uint32_t GetTimerTicks(void);
+static inline int32_t SubSecondsToMs(uint32_t ssr);
 /* USER CODE END PFP */
 
 /* Exported functions ---------------------------------------------------------*/
@@ -245,10 +246,7 @@ uint32_t TIMER_IF_GetTime(uint16_t *mSeconds)
   HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
   HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
 
-  if (mSeconds != NULL)
-  {
-    *mSeconds = (uint16_t)(((RTC_PREDIV_S - sTime.SubSeconds) * 1000u) / (RTC_PREDIV_S + 1u));
-  }
+  int32_t subsec_ms = SubSecondsToMs(sTime.SubSeconds);
 
   struct tm t = {0};
   t.tm_year  = sDate.Year + 100;
@@ -260,6 +258,16 @@ uint32_t TIMER_IF_GetTime(uint16_t *mSeconds)
   t.tm_isdst = -1;
 
   seconds = (uint32_t)mktime(&t);
+  if (subsec_ms < 0)
+  {
+    /* Right after an ADD1S shift: the calendar is one second ahead. */
+    seconds--;
+    subsec_ms += 1000;
+  }
+  if (mSeconds != NULL)
+  {
+    *mSeconds = (uint16_t)subsec_ms;
+  }
   /* USER CODE END TIMER_IF_GetTime */
   return seconds;
 }
@@ -330,7 +338,25 @@ static inline uint32_t GetTimerTicks(void)
   hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
   HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
   HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
-  uint32_t subsec_ms = ((RTC_PREDIV_S - sTime.SubSeconds) * 1000u) / (RTC_PREDIV_S + 1u);
-  return (sTime.Hours * 3600u + sTime.Minutes * 60u + sTime.Seconds) * 1000u + subsec_ms;
+  int32_t ms = (int32_t)((sTime.Hours * 3600u + sTime.Minutes * 60u + sTime.Seconds) * 1000u)
+             + SubSecondsToMs(sTime.SubSeconds);
+  if (ms < 0)
+  {
+    ms += 86400000;  /* 00:00:00 read right after an ADD1S shift: still 23:59:59 */
+  }
+  return (uint32_t)ms;
+}
+
+/* Milliseconds elapsed in the current calendar second. SSR counts down from
+ * PREDIV_S, but a SHIFTR advance (ADD1S=1, SUBFS) adds SUBFS to it: for up to
+ * one second SSR > PREDIV_S while the calendar already shows the next second.
+ * The result is then negative (floored), borrowing from that second. */
+static inline int32_t SubSecondsToMs(uint32_t ssr)
+{
+  if (ssr <= RTC_PREDIV_S)
+  {
+    return (int32_t)(((RTC_PREDIV_S - ssr) * 1000u) / (RTC_PREDIV_S + 1u));
+  }
+  return -(int32_t)(((ssr - RTC_PREDIV_S) * 1000u + RTC_PREDIV_S) / (RTC_PREDIV_S + 1u));
 }
 /* USER CODE END PrFD */

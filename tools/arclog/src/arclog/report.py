@@ -4,17 +4,20 @@ Inputs are the capture files of every node of the run. Output is a Markdown
 report plus a CSV with one row per received Sync packet.
 
 Definitions (all times in ms unless stated):
-  err         SYNC_RX err = PreambleStamp - expected arrival, receiver clock.
+  err         SYNC_RX err = SyncStamp - expected arrival, receiver clock.
+              The SyncStamp is RxDone - ToA: the packet start on air.
   drift       Slope of err over time while CLOCK_WARM, fitted separately
               within each segment without an RTC correction (RTC_SET,
               RTC_SHIFT and ClockState changes start a new segment), pooled
               into one slope. Reported in ppm (1 ppm = 1 ms per 1000 s).
+  pre - st    PREAMBLE_DETECTED minus SyncStamp: when the preamble is
+              detected after the packet start. Diagnostic only; its spread is
+              the preamble-detection jitter (one symbol at SF12).
   hdr - pre   Delay between PREAMBLE_DETECTED and HEADER_VALID IRQs. The
               header is valid a fixed number of symbols after the TX start,
-              so its spread is the preamble-detection jitter and
-              (theoretical header time - mean(hdr - pre)) estimates the
-              preamble-detection latency (PREAMBLE_DETECT_LATENCY_MS, #17).
-  st - start  Receiver PreambleStamp minus sender radio TX start for the same
+              so (theoretical header time - mean(hdr - pre)) is a second
+              estimate of the preamble-detection delay.
+  st - start  Receiver SyncStamp minus sender radio TX start for the same
               packet (matched by ep, ph, ce): residual clock offset plus
               detection latency. Only meaningful once the receiver is WARM.
 """
@@ -139,7 +142,7 @@ class NodeResult:
     warm_err: Stats = field(default_factory=Stats)
     warm_t1_err: Stats = field(default_factory=Stats)
     drift: DriftFit = field(default_factory=DriftFit)
-    stamp_src: Counter = field(default_factory=Counter)
+    pre_minus_st: Stats = field(default_factory=Stats)
     hdr_minus_pre: Stats = field(default_factory=Stats)
     rtc_sets: int = 0
     rtc_shifts: int = 0
@@ -210,15 +213,17 @@ def analyse_node(node: str, lines: list[Line]) -> NodeResult:
 
     res.rx = rx_records(lines)
     res.tx = tx_records(lines)
-    deltas = []
+    deltas, pre_lags = [], []
     for r in res.rx:
         if r.radio is None:
             continue
-        res.stamp_src[r.radio.get("src", "?")] += 1
-        pre, hdr = r.field("pre"), r.field("hdr")
-        if r.radio.get("src") == "pre" and pre and hdr:
+        pre, hdr, st = r.field("pre"), r.field("hdr"), r.field("st")
+        if pre and hdr:
             deltas.append(hdr - pre)
+        if pre and st is not None:
+            pre_lags.append(pre - st)
     res.hdr_minus_pre = Stats.of(deltas)
+    res.pre_minus_st = Stats.of(pre_lags)
     res.tx_latency = Stats.of([t.start - t.plan for t in res.tx
                                if t.start is not None and t.plan is not None])
     res.send_latency = Stats.of([t.tx.int("send") - t.plan for t in res.tx
@@ -327,14 +332,15 @@ def to_markdown(run: RunResult, title: str = "Sync run report") -> str:
         d = nr.drift
         w(f"Drift: **{_fmt(d.ppm)} ppm** from {d.points} points in {d.segments} "
           f"correction-free segments spanning {d.span_s / 3600:.2f} h.\n\n")
-        src = ", ".join(f"{k}: {v}" for k, v in nr.stamp_src.most_common()) or "none"
-        w(f"Stamp source: {src}.\n\n")
+        if nr.pre_minus_st.n:
+            w("PREAMBLE_DETECTED minus SyncStamp (ms, diagnostic):\n\n")
+            w(STATS_HEADER + "\n" + nr.pre_minus_st.row() + "\n\n")
         if nr.hdr_minus_pre.n:
             est = hdr_theory - nr.hdr_minus_pre.mean
             w("HEADER_VALID minus PREAMBLE_DETECTED (ms):\n\n")
             w(STATS_HEADER + "\n" + nr.hdr_minus_pre.row() + "\n\n")
-            w(f"Estimated preamble-detection latency: **{est:.1f} ms** after TX start "
-              f"(candidate PREAMBLE_DETECT_LATENCY_MS, issue #17).\n\n")
+            w(f"Estimated preamble-detection delay: **{est:.1f} ms** after TX start "
+              f"(diagnostic; the SyncStamp does not depend on it).\n\n")
 
     w("## Cross-node pairing\n\n")
     w(f"Received Sync packets matched to a sender by (ep, ph, ce): {run.matched}; "
@@ -346,7 +352,7 @@ def to_markdown(run: RunResult, title: str = "Sync run report") -> str:
 
 CSV_COLUMNS = [
     "node", "host_time", "dev_time", "ph", "ce", "ep", "st", "exp", "err", "clk", "act",
-    "src", "pre", "hdr", "rxd", "toa", "rssi", "snr", "tx_node", "tx_plan", "tx_start", "st_minus_start",
+    "pre", "hdr", "rxd", "toa", "rssi", "snr", "tx_node", "tx_plan", "tx_start", "st_minus_start",
 ]
 
 
@@ -366,7 +372,7 @@ def to_csv(run: RunResult) -> str:
                 ln.dev_time.isoformat() if ln.dev_time else "",
                 *(ln.get(k, "") for k in ("ph", "ce", "ep", "st", "exp", "err", "clk", "act")),
                 *((r.radio.get(k, "") if r.radio else "") for k in
-                  ("src", "pre", "hdr", "rxd", "toa", "rssi", "snr")),
+                  ("pre", "hdr", "rxd", "toa", "rssi", "snr")),
                 t.node if t else "",
                 t.plan if t and t.plan is not None else "",
                 start if start is not None else "",

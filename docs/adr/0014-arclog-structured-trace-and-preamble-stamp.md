@@ -1,8 +1,8 @@
-# ArcLog structured trace and IRQ-entry PreambleStamp
+# ArcLog structured trace and IRQ-entry SyncStamp
 
 Both cores log through one structured line format, ArcLog (`Common/Log/arclog.h`): an RTC timestamp with the year, core, module, ST verbosity letter, per-core sequence number, event name and `key=value` fields.
 A host tool (`tools/arclog/`) captures, classifies, merges and analyses the lines.
-The sync timestamp given to the MAC is the RTC at entry of the `IRQ_PREAMBLE_DETECTED` radio IRQ, no longer the RxDone callback time.
+The sync timestamp given to the MAC (SyncStamp) is the packet start on air: the RTC at entry of the RxDone radio IRQ minus the packet's airtime, no longer the raw RxDone callback time.
 
 ## Context
 
@@ -22,19 +22,20 @@ Every node stamped the same way, so errors looked like zero while the whole rece
 - **ST verbosity letters** (`A L M H` for `VLEVEL_ALWAYS/L/M/H`), so runtime filtering is unchanged.
 - **Cross-node pairing by protocol key** `(ep, ph, ce)`, which both the sender (`SYNC_TX`) and the receiver (`SYNC_RX`) log, so the two captures need no shared clock.
 - **Logs are tested.** Host unit tests capture ARCLOG lines and assert on them; a tool test fails when the firmware's `ARCLOG()` calls and the tool's event schema disagree, or when a format uses a length modifier the target formatter does not support.
-- **PreambleStamp at IRQ entry.** `Radio.Rx()` is followed by an IRQ-mask update enabling `IRQ_PREAMBLE_DETECTED` and `IRQ_HEADER_VALID`; `SUBGHZ_Radio_IRQHandler` stamps the RTC before HAL dispatch.
-  Because the MAC still runs at RxDone, an RTC write (Packet 1, Tier 3) carries the time elapsed since the stamp, so the new domain reads the sender's nominal time at the stamp instant.
-  The constant preamble-detection latency (`PREAMBLE_DETECT_LATENCY_MS`, 0 until measured) is estimated by the sync report from `hdr − pre` (issue #17).
+- **SyncStamp = RxDone − ToA, stamped at IRQ entry.** `SUBGHZ_Radio_IRQHandler` stamps the RTC before HAL dispatch; the SyncStamp is the RxDone stamp minus `Radio.TimeOnAir` of the received length, minus `RX_DONE_LATENCY_MS` (sub-millisecond, 0 until measured).
+  Because the MAC runs at RxDone, an RTC write (Packet 1, Tier 3) carries the time elapsed since the stamp, so the new domain reads the sender's nominal time at the stamp instant.
+  `IRQ_PREAMBLE_DETECTED` and `IRQ_HEADER_VALID` are still enabled and stamped, and logged in `RX_DONE` as diagnostics.
 
 ## Considered Options
 
 - **Binary frames (COBS, Trice/defmt style):** 5–10× smaller, but unreadable without the decoder and needs a new MbMux payload path.
   Rejected: bandwidth is not the constraint at the sync event rate.
 - **Raise the baud rate:** not needed for the event rate; kept at 9600.
-- **RxDone − ToA as the stamp:** deterministic from the modem parameters, but includes interrupt latency at the end of a ~1 s packet and depends on ToA accuracy.
-  Kept only as the fallback when no preamble IRQ was seen.
-- **HEADER_VALID as the stamp:** a fixed symbol count after TX start, independent of when the Rx window opened, but ~660 ms later than the preamble.
-  Logged as a cross-check instead, to measure preamble-detection jitter before choosing.
+- **PREAMBLE_DETECTED as the stamp:** the earliest IRQ of a reception, and the first choice of this ADR.
+  Rejected after the C3-C2 bench (2026-09-26): at SF12/BW125 the detection lands one symbol (32.8 ms) early or late from packet to packet, while `RxDone − ToA` and `HEADER_VALID` of the same packets agree with the sender's timing to ~3 ms.
+  The jitter exceeds `SYNC_PARTICIPATE_THRESHOLD_MS` (8 ms), so it drove spurious Tier-2 corrections and could leave acquisition anchored on an outlier.
+- **HEADER_VALID as the stamp:** as stable as `RxDone − ToA`, but it does not exist once the Sync packet uses implicit header (issue #39).
+  Logged as a diagnostic instead.
 
 ## Consequences
 

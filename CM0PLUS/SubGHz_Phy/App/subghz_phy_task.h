@@ -46,8 +46,8 @@ void SubGhzPhyTask_Init(void);
  *
  * \details Must be called first thing in SUBGHZ_Radio_IRQHandler, before
  *          HAL_SUBGHZ_IRQHandler clears the IRQ status. Records the RTC time
- *          of the IRQ and, when set, of IRQ_PREAMBLE_DETECTED (PreambleStamp)
- *          and IRQ_HEADER_VALID.
+ *          of the IRQ (RxDone gives the SyncStamp) and, when set, of
+ *          IRQ_PREAMBLE_DETECTED and IRQ_HEADER_VALID (diagnostics).
  */
 void SubGhzPhyTask_OnRadioIrq(void);
 

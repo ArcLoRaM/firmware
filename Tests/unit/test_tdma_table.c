@@ -69,10 +69,10 @@ void test_phase_start_offset_zero_is_zero(void)
     TEST_ASSERT_EQUAL(0u, TdmaTable_PhaseStartOffset_ms(0u));
 }
 
-void test_phase_start_offset_one_is_9000(void)
+void test_phase_start_offset_one_is_30000(void)
 {
-    /* per_cell = 1 * (2500 + 500) = 3000; 3 cells → 9000 ms */
-    TEST_ASSERT_EQUAL(9000u, TdmaTable_PhaseStartOffset_ms(1u));
+    /* per_cell = 1 * (2500 + 500) = 3000; 10 cells → 30000 ms */
+    TEST_ASSERT_EQUAL(30000u, TdmaTable_PhaseStartOffset_ms(1u));
 }
 
 void test_phase_start_offset_out_of_bounds_returns_zero(void)
@@ -122,7 +122,7 @@ int main(void)
     RUN_TEST(test_get_phase_one_direction_mode_is_mac_cell);
     RUN_TEST(test_get_phase_out_of_bounds_returns_null);
     RUN_TEST(test_phase_start_offset_zero_is_zero);
-    RUN_TEST(test_phase_start_offset_one_is_9000);
+    RUN_TEST(test_phase_start_offset_one_is_30000);
     RUN_TEST(test_phase_start_offset_out_of_bounds_returns_zero);
     RUN_TEST(test_sync_phase_per_cell_ge_1000ms);
     return UNITY_END();

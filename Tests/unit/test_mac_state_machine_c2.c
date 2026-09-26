@@ -80,8 +80,8 @@ static void make_sync_pkt(SyncPayload_t *p, uint8_t cell, uint32_t ms_midnight)
 /*
  * Drive MAC to CLOCK_WARM.
  * P1 at cell=0: s_snapshot_ms = 0 (phase start), s_sync_phase_ms = 0.
- * P2 at cell=1: preamble_ts=3000, expected=3000, error=0 → consecutive=1.
- * P3 at cell=2: preamble_ts=6000, expected=6000, error=0 → consecutive=2 → WARM.
+ * P2 at cell=1: stamp=3000, expected=3000, error=0 → consecutive=1.
+ * P3 at cell=2: stamp=6000, expected=6000, error=0 → consecutive=2 → WARM.
  */
 static void sync_mac(void)
 {
@@ -191,27 +191,6 @@ void test_c2_packet1_rtc_set_called_with_target_ms_including_cell_offset(void)
     TEST_ASSERT_EQUAL(6000u, s_rtc_set_target_ms);
 }
 
-void test_c2_packet1_sync_phase_ms_corrected_for_cell_offset(void)
-{
-    /* get_rtc_snapshot returns 6000 (= target_ms); K=2, per_cell=3000
-     * s_sync_phase_ms = 6000 - 2×3000 = 0 */
-    SyncPayload_t p;
-    make_sync_pkt(&p, 2u, 0u);
-    s_snapshot_ms = 6000u;
-    MAC_OnSyncPacketReceived(&p, 0u);
-    TEST_ASSERT_EQUAL(0u, MAC_GetSyncPhaseMs());
-}
-
-void test_c2_packet1_sync_phase_ms_at_cell_zero_equals_rtc_now(void)
-{
-    /* ms_since_midnight=37800000, K=0 → target_ms=37800000, s_sync_phase_ms=37800000 */
-    SyncPayload_t p;
-    make_sync_pkt(&p, 0u, 37800000u);
-    s_snapshot_ms = 37800000u;
-    MAC_OnSyncPacketReceived(&p, 0u);
-    TEST_ASSERT_EQUAL(37800000u, MAC_GetSyncPhaseMs());
-}
-
 void test_c2_sync_bootstrapped_hook_called_with_rtc_now_as_slot_start(void)
 {
     /* get_rtc_snapshot returns 6000 (= target_ms); K=2
@@ -242,32 +221,61 @@ void test_c2_sync_locked_called_once(void)
     TEST_ASSERT_EQUAL(1, s_sync_locked_calls);
 }
 
-void test_c2_consecutive_reset_on_bad_packet(void)
+void test_c2_acquiring_bad_packet_drops_to_cold(void)
 {
     /* P1(cell=0), P2(cell=1,ts=3000,err=0 → consecutive=1),
-     * P3(cell=2,ts=100: expected=6000, err=5900 > 8ms → consecutive=0 → ACQUIRING)
-     * P4(cell=3,ts=9000,err=0 → consecutive=1 → still ACQUIRING, need 2) */
+     * P3(cell=2,ts=6100: expected=6000, err=100 ≥ 8ms → bad): the packet
+     * disagrees with the RTC set from P1, so the node re-acquires. */
     SyncPayload_t p;
     s_snapshot_ms = 0u;
     make_sync_pkt(&p, 0u, 0u);  MAC_OnSyncPacketReceived(&p, 0u);
     make_sync_pkt(&p, 1u, 0u);  MAC_OnSyncPacketReceived(&p, 3000u);
-    make_sync_pkt(&p, 2u, 0u);  MAC_OnSyncPacketReceived(&p, 100u);   /* bad */
-    TEST_ASSERT_EQUAL(CLOCK_ACQUIRING, MAC_GetClockState());
-    make_sync_pkt(&p, 3u, 0u);  MAC_OnSyncPacketReceived(&p, 9000u);  /* good but only 1 */
-    TEST_ASSERT_EQUAL(CLOCK_ACQUIRING, MAC_GetClockState());
+    make_sync_pkt(&p, 2u, 0u);  MAC_OnSyncPacketReceived(&p, 6100u);   /* bad */
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
     TEST_ASSERT_EQUAL(0, s_sync_locked_calls);
+    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=2 ep=0 st=6100 exp=6000 err=100 clk=ACQ act=bad");
+    TEST_ASSERT_ARCLOG("CLK from=ACQ to=COLD why=acq_bad");
 }
 
-void test_c2_sync_pkt_large_error_stays_acquiring(void)
+void test_c2_acquiring_bad_packet_then_next_packet_sets_rtc(void)
 {
+    /* After a bad packet the next one is a fresh Packet 1: RTC set again. */
     SyncPayload_t p;
     s_snapshot_ms = 0u;
-    make_sync_pkt(&p, 0u, 0u);  MAC_OnSyncPacketReceived(&p, 0u);
-    make_sync_pkt(&p, 1u, 0u);  MAC_OnSyncPacketReceived(&p, 3000u);
-    /* cell=2, expected=6000, preamble=100 → error=5900 >> 8ms */
-    make_sync_pkt(&p, 2u, 0u);  MAC_OnSyncPacketReceived(&p, 100u);
+    make_sync_pkt(&p, 0u, 0u);      MAC_OnSyncPacketReceived(&p, 0u);
+    make_sync_pkt(&p, 1u, 0u);      MAC_OnSyncPacketReceived(&p, 3033u);  /* bad */
+    make_sync_pkt(&p, 2u, 0u);      MAC_OnSyncPacketReceived(&p, 6033u);
+    TEST_ASSERT_EQUAL(2, s_rtc_set_calls);
     TEST_ASSERT_EQUAL(CLOCK_ACQUIRING, MAC_GetClockState());
-    TEST_ASSERT_EQUAL(0, s_sync_locked_calls);
+}
+
+void test_c2_acquiring_checks_packet_against_its_own_epoch(void)
+{
+    /* Bench case: Packet 1 from phase occurrence ep=30000, the next packets
+     * from occurrence ep=60000. Each is judged against its own epoch, not
+     * against Packet 1's occurrence (which read err=30003). */
+    SyncPayload_t p;
+    s_snapshot_ms = 30000u;
+    make_sync_pkt(&p, 0u, 30000u);  MAC_OnSyncPacketReceived(&p, 30000u);
+    make_sync_pkt(&p, 0u, 60000u);  MAC_OnSyncPacketReceived(&p, 60003u);
+    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=0 ep=60000 st=60003 exp=60000 err=3 clk=ACQ act=good");
+    make_sync_pkt(&p, 1u, 60000u);  MAC_OnSyncPacketReceived(&p, 63003u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+}
+
+void test_c2_acquiring_locks_when_packet1_is_the_last_tx_cell(void)
+{
+    /* Packet 1 in cell 2, the sender's last Tx cell of the occurrence: no
+     * later packet of that occurrence exists, so the lock must come from
+     * the next occurrence. */
+    SyncPayload_t p;
+    s_snapshot_ms = 6000u;
+    make_sync_pkt(&p, 2u, 0u);      MAC_OnSyncPacketReceived(&p, 6000u);
+    make_sync_pkt(&p, 0u, 30000u);  MAC_OnSyncPacketReceived(&p, 30000u);
+    make_sync_pkt(&p, 1u, 30000u);  MAC_OnSyncPacketReceived(&p, 33000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_sync_locked_calls);
 }
 
 /* ------- SYNC_LOST -------------------------------------------------------- */
@@ -275,7 +283,7 @@ void test_c2_sync_pkt_large_error_stays_acquiring(void)
 void test_c2_sync_lost_resets_to_scanning(void)
 {
     sync_mac();
-    /* cell=0, ms_midnight=0, expected_arrival=0, preamble=400 → error=400 ≥ 300ms Tier 3 */
+    /* cell=0, ms_midnight=0, expected_arrival=0, stamp=400 → error=400 ≥ SYNC_RESYNC_THRESHOLD_MS Tier 3 */
     SyncPayload_t p;
     make_sync_pkt(&p, 0u, 0u);
     MAC_OnSyncPacketReceived(&p, 400u);
@@ -297,7 +305,7 @@ void test_c2_sync_lost_calls_hook(void)
 void test_c2_warm_tier1_epoch_stored_on_good_cell0(void)
 {
     sync_mac();
-    /* CLOCK_WARM; cell=0, ms_midnight=54000000, preamble=54000000, error=0 → Tier 1 */
+    /* CLOCK_WARM; cell=0, ms_midnight=54000000, stamp=54000000, error=0 → Tier 1 */
     SyncPayload_t p;
     make_sync_pkt(&p, 0u, 54000000u);
     MAC_OnSyncPacketReceived(&p, 54000000u);
@@ -307,7 +315,7 @@ void test_c2_warm_tier1_epoch_stored_on_good_cell0(void)
 void test_c2_warm_tier2_no_epoch_below_resync_threshold(void)
 {
     sync_mac();
-    /* cell=0, ms_midnight=0, preamble=50, expected=0, error=50 ≥ 8ms < 300ms → Tier 2 */
+    /* cell=0, ms_midnight=0, stamp=50, expected=0, error=50 ≥ 8ms < SYNC_RESYNC_THRESHOLD_MS → Tier 2 */
     SyncPayload_t p;
     make_sync_pkt(&p, 0u, 0u);
     MAC_OnSyncPacketReceived(&p, 50u);
@@ -322,7 +330,7 @@ void test_c2_warm_tier3_resync_above_resync_threshold(void)
 {
     sync_mac();
     int rtc_calls_before = s_rtc_set_calls;  /* snapshot after sync_mac P1 call */
-    /* cell=0, ms_midnight=0, preamble=400, expected=0, error=400 ≥ 300ms → Tier 3 */
+    /* cell=0, ms_midnight=0, stamp=400, expected=0, error=400 ≥ SYNC_RESYNC_THRESHOLD_MS → Tier 3 */
     SyncPayload_t p;
     make_sync_pkt(&p, 0u, 0u);
     MAC_OnSyncPacketReceived(&p, 400u);
@@ -675,7 +683,7 @@ void test_c2_hop_count_set_after_beacon(void)
 /* ------- Sync silence timeout (ADR-0013) -------------------------------- */
 
 /*
- * sync_mac() drives to CLOCK_WARM with the last preamble at 6000 ms.
+ * sync_mac() drives to CLOCK_WARM with the last stamp at 6000 ms.
  * s_last_sync_received_ms = 6000 after acquisition.
  * 14 min = 840000 ms, 15 min = 900000 ms = SYNC_SILENCE_TIMEOUT_MS.
  */
@@ -764,7 +772,7 @@ void test_c2_tier3_resets_silence_timer(void)
     /* Tier 3 packet at 14 min — immediate degradation to COLD */
     SyncPayload_t p;
     make_sync_pkt(&p, 0u, 846000u);
-    MAC_OnSyncPacketReceived(&p, 846400u);  /* error=400 ≥ 300ms → Tier 3 */
+    MAC_OnSyncPacketReceived(&p, 846400u);  /* error=400 ≥ SYNC_RESYNC_THRESHOLD_MS → Tier 3 */
     TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
     TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
 
@@ -791,7 +799,7 @@ void test_c2_tier3_immediate_degradation_unchanged(void)
     sync_mac();
     SyncPayload_t p;
     make_sync_pkt(&p, 0u, 0u);
-    MAC_OnSyncPacketReceived(&p, 400u);  /* error=400 ≥ 300ms → Tier 3 */
+    MAC_OnSyncPacketReceived(&p, 400u);  /* error=400 ≥ SYNC_RESYNC_THRESHOLD_MS → Tier 3 */
     TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
     TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
     TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
@@ -856,8 +864,8 @@ void test_c2_arclog_silence(void)
     TEST_ASSERT_ARCLOG("CLK from=WARM to=COLD why=silence");
 }
 
-/* ------- PreambleStamp age carry -----------------------------------------
- * The MAC runs at RxDone, ~one airtime after the PreambleStamp. rtc_set must
+/* ------- SyncStamp age carry ---------------------------------------------
+ * The MAC runs at RxDone, ~one airtime after the SyncStamp. rtc_set must
  * add the time elapsed since the stamp, so that the new RTC domain reads the
  * sender's nominal cell start at the stamp instant.
  * ------------------------------------------------------------------------- */
@@ -870,7 +878,6 @@ void test_c2_cold_rtc_set_carries_time_since_stamp(void)
     MAC_OnSyncPacketReceived(&p, 50000u);
 
     TEST_ASSERT_EQUAL(33991u, s_rtc_set_target_ms);
-    TEST_ASSERT_EQUAL(30000u, MAC_GetSyncPhaseMs());
 }
 
 void test_c2_cold_stale_stamp_is_not_carried(void)
@@ -958,13 +965,13 @@ int main(void)
     RUN_TEST(test_c2_sync_pkt1_transitions_acquiring);
     RUN_TEST(test_c2_sync_pkt1_calls_rtc_set_hook);
     RUN_TEST(test_c2_packet1_rtc_set_called_with_target_ms_including_cell_offset);
-    RUN_TEST(test_c2_packet1_sync_phase_ms_corrected_for_cell_offset);
-    RUN_TEST(test_c2_packet1_sync_phase_ms_at_cell_zero_equals_rtc_now);
     RUN_TEST(test_c2_sync_bootstrapped_hook_called_with_rtc_now_as_slot_start);
     RUN_TEST(test_c2_two_consecutive_good_packets_warm);
     RUN_TEST(test_c2_sync_locked_called_once);
-    RUN_TEST(test_c2_consecutive_reset_on_bad_packet);
-    RUN_TEST(test_c2_sync_pkt_large_error_stays_acquiring);
+    RUN_TEST(test_c2_acquiring_bad_packet_drops_to_cold);
+    RUN_TEST(test_c2_acquiring_bad_packet_then_next_packet_sets_rtc);
+    RUN_TEST(test_c2_acquiring_checks_packet_against_its_own_epoch);
+    RUN_TEST(test_c2_acquiring_locks_when_packet1_is_the_last_tx_cell);
     RUN_TEST(test_c2_sync_lost_resets_to_scanning);
     RUN_TEST(test_c2_sync_lost_calls_hook);
     RUN_TEST(test_c2_warm_tier1_epoch_stored_on_good_cell0);

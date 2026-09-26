@@ -17,7 +17,7 @@ The chain has no meaning before the FrameCursor is anchored.
 Rejected: it ties the window to the guard rather than to what can physically be decoded, and a window closed by the driver's software timer cuts a packet still arriving.
 
 **Window timer stopped on header / sync-word detection instead of preamble.**
-Deferred (issue #39): stronger proof of a real packet before committing, but a later decision point, a different timing reference from the preamble stamp the sync algorithm uses, and no header once the Sync packet is implicit.
+Deferred (issue #39): stronger proof of a real packet before committing, but a later decision point, and no header once the Sync packet is implicit.
 
 ## Consequences
 

@@ -125,10 +125,10 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
 }
 
 void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
-                               uint32_t             preamble_timestamp_ms)
+                               uint32_t             stamp_ms)
 {
     (void)payload;
-    (void)preamble_timestamp_ms;
+    (void)stamp_ms;
 }
 
 void MAC_OnBeaconReceived(const BeaconPayload_t *beacon)
@@ -166,7 +166,6 @@ bool                  MAC_GetEpochReceivedThisPhase(void)        { return false;
 uint8_t               MAC_GetHopCount(void)                      { return s_hop_count;        }
 uint8_t               MAC_GetBeaconTxBudget(void)                 { return 0u;                }
 uint8_t               MAC_GetSyncTxBudget(void)                   { return s_sync_tx_remaining; }
-uint32_t              MAC_GetSyncPhaseMs(void)                  { return s_sync_phase_epoch_ms; }
 uint32_t              MAC_GetSyncPhaseEpochMs(void)             { return s_sync_phase_epoch_ms; }
 void MAC_GetSyncPhaseDate(uint8_t *day, uint8_t *month, uint8_t *year)
 {

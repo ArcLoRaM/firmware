@@ -278,9 +278,13 @@ uint32_t TIMER_IF_GetTime(uint16_t *mSeconds)
   HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
   HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
 
+  /* SSR > PREDIV_S right after a SHIFTR advance (ADD1S=1) on CM0+: the
+   * calendar already shows the next second, so borrow it back. */
+  uint32_t borrow = (sTime.SubSeconds > RTC_PREDIV_S) ? 1u : 0u;
+  uint32_t ssr = sTime.SubSeconds - borrow * (RTC_PREDIV_S + 1u);
   if (mSeconds != NULL)
   {
-    *mSeconds = (uint16_t)(((RTC_PREDIV_S - sTime.SubSeconds) * 1000u) / (RTC_PREDIV_S + 1u));
+    *mSeconds = (uint16_t)(((RTC_PREDIV_S - ssr) * 1000u) / (RTC_PREDIV_S + 1u));
   }
 
   struct tm t = {0};
@@ -293,6 +297,7 @@ uint32_t TIMER_IF_GetTime(uint16_t *mSeconds)
   t.tm_isdst = -1;
 
   seconds = (uint32_t)mktime(&t);
+  seconds -= borrow;
   /* USER CODE END TIMER_IF_GetTime */
   return seconds;
 }

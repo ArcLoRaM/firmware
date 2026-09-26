@@ -38,7 +38,7 @@
  * \remark Must not exceed the band's \c max_tx_power_dbm (14 dBm for the
  *         ETSI 868 MHz ISM profile). Full TX power management is deferred. Should probably lie inside the MAC State Machine eventually, but for now this is a convenient global constant.
  */
-#define TX_POWER_DBM  14
+#define TX_POWER_DBM  0
 #endif
 
 /* =========================================================================

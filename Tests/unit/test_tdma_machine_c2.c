@@ -263,16 +263,16 @@ void test_rx_window_ends_at_latest_packet_start(void)
     start_chain();
     ArcLog_CaptureReset();
     TdmaMachine_SlotTask();
-    /* last = 2500 + 100 - 991 = 1609, cap = 2600 (from now = slot start) */
+    /* last = 2500 + 200 - 991 = 1709, cap = 2700 (from now = slot start) */
     TEST_ASSERT_EQUAL(1, s_radio_set_rx_calls);
     TEST_ASSERT_EQUAL(WIN_LAST_MS, s_rx_start_window_ms);
     TEST_ASSERT_EQUAL(WIN_CAP_MS, s_rx_cap_ms);
-    TEST_ASSERT_ARCLOG("RX_WIN last=1609 cap=2600");
+    TEST_ASSERT_ARCLOG("RX_WIN last=1709 cap=2700");
 }
 
 void test_rx_window_measured_from_early_wake(void)
 {
-    /* Bootstrap on cell 0 at 0: next cell starts at 3000, woken at 2900. */
+    /* Bootstrap on cell 0 at 0: next cell starts at 3000, woken at 2800. */
     acquire_mac();
     TdmaMachine_BootstrapFromSync(0u, 0u, 0u);
     step_slot();
@@ -406,14 +406,12 @@ void test_cursor_advances_cell_index(void)
 
 void test_frame_wrap_resets_cursor(void)
 {
-    /* Six SlotTask calls exhaust both 3-cell Sync phases → frame wrap.
-     * 3 cells × 2 phases = 6 slots per frame. */
+    /* Twenty SlotTask calls exhaust both 10-cell Sync phases → frame wrap.
+     * 10 cells × 2 phases = 20 slots per frame. */
     s_rtc_ms = 0u; start_chain(); TdmaMachine_SlotTask();
-    step_slot();
-    step_slot();
-    step_slot();
-    step_slot();
-    step_slot();
+    for (int i = 0; i < 19; i++) {
+        step_slot();
+    }
 
     FrameCursor_t c = TdmaMachine_GetCursor();
     TEST_ASSERT_EQUAL(0u, c.phase_index);
@@ -456,8 +454,8 @@ void test_cursor_suspect_on_implausible_delta(void)
 
 void test_bootstrap_cursor_positioned_at_next_cell(void)
 {
-    /* Stub table has 3 cells per Sync phase. Bootstrap at cell=1 → advance → cell=2.
-     * (cell=2 is the last cell; advancing further would move to phase 1.) */
+    /* Table has 10 cells per Sync phase. Bootstrap at cell=1 → advance → cell=2.
+     * (cell=9 is the last cell; advancing past it moves to phase 1.) */
     TdmaMachine_BootstrapFromSync(0u, 1u, 3000u);
     TEST_ASSERT_EQUAL(2u, TdmaMachine_GetCursor().cell_index);
     TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().phase_index);
@@ -487,20 +485,20 @@ void test_bootstrap_cell0_alarm_one_step(void)
 
 void test_bootstrap_last_cell_advances_to_sync1(void)
 {
-    /* Receive at cell 2 (last cell of Sync0), slot_start=6000.
+    /* Receive at cell 9 (last cell of Sync0), slot_start=27000.
      * advance_cursor moves to Sync1 (phase 1, cell 0) — same frame,
      * NOT a frame wrap to phase 0. */
-    TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
+    TdmaMachine_BootstrapFromSync(0u, 9u, 27000u);
     TEST_ASSERT_EQUAL(1u, TdmaMachine_GetCursor().phase_index);
     TEST_ASSERT_EQUAL(0u, TdmaMachine_GetCursor().cell_index);
 }
 
 void test_bootstrap_last_cell_alarm_one_step(void)
 {
-    /* Receive at cell 2, slot_start=6000.
-     * nominal = 6000 + 3000 = 9000, guard applied */
-    TdmaMachine_BootstrapFromSync(0u, 2u, 6000u);
-    TEST_ASSERT_EQUAL(6000u + SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
+    /* Receive at cell 9, slot_start=27000.
+     * nominal = 27000 + 3000 = 30000, guard applied */
+    TdmaMachine_BootstrapFromSync(0u, 9u, 27000u);
+    TEST_ASSERT_EQUAL(27000u + SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 void test_sync_tx_payload_fields_match_cursor(void)
@@ -554,6 +552,50 @@ void test_no_guard_when_epoch_received(void)
      * alarm = 2 × SLOT_STEP_MS = 6000 (nominal, no guard subtraction).
      */
     TEST_ASSERT_EQUAL(2u * SLOT_STEP_MS, s_alarm_programmed);
+}
+
+/* =========================================================================
+ * Next wake re-decided at Rx end: the alarm for the next cell is programmed
+ * at the start of the current one, before its packet arrives. A Tier 1
+ * epoch received in this cell turns the next cell into Tx, so the guard is
+ * dropped and the node wakes at the nominal start instead of waiting.
+ * ========================================================================= */
+
+void test_rx_end_with_epoch_drops_guard_from_next_wake(void)
+{
+    sync_mac();
+    s_rtc_ms = 0u;
+    start_chain();
+    TdmaMachine_SlotTask();   /* cell 0 → RX, alarm = SLOT_STEP_MS - guard */
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
+
+    SyncPayload_t arm;
+    memset(&arm, 0, sizeof(arm));
+    MAC_OnSyncPacketReceived(&arm, 0u);  /* Tier 1 → epoch armed */
+    ArcLog_CaptureReset();
+    s_rtc_ms = 1000u;                    /* RxDone, ~one airtime later */
+    TdmaMachine_OnRxEnd();
+
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS, s_alarm_programmed);
+    TEST_ASSERT_ARCLOG("WAKE_ADJ from=2800 to=3000");
+
+    step_slot();              /* cell 1 → TX at the nominal start */
+    TEST_ASSERT_EQUAL(0, s_wait_until_ms_calls);
+    TEST_ASSERT_EQUAL(1, s_radio_send_calls);
+}
+
+void test_rx_end_without_epoch_keeps_guarded_wake(void)
+{
+    sync_mac();
+    s_rtc_ms = 0u;
+    start_chain();
+    TdmaMachine_SlotTask();   /* cell 0 → RX, no packet */
+    int calls = s_alarm_calls;
+    s_rtc_ms = 1900u;         /* RX_TIMEOUT */
+    TdmaMachine_OnRxEnd();
+
+    TEST_ASSERT_EQUAL(calls, s_alarm_calls);
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 /* =========================================================================
@@ -616,7 +658,7 @@ void test_suspect_wake_drops_to_cold_without_rtc_write(void)
 
     s_rtc_ms = 0u;
     start_chain();
-    TdmaMachine_SlotTask();                  /* next alarm 3000 - guard = 2900 */
+    TdmaMachine_SlotTask();                  /* next alarm 3000 - guard = 2800 */
     s_rtc_ms = s_alarm_programmed + 4000u;   /* 4000 ms late > 3750 */
     ArcLog_CaptureReset();
     TdmaMachine_SlotTask();
@@ -625,7 +667,7 @@ void test_suspect_wake_drops_to_cold_without_rtc_write(void)
     TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
     TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
     TEST_ASSERT_EQUAL(rtc_sets_before, s_mac_rtc_set_calls);
-    TEST_ASSERT_ARCLOG("SLOT_SUSPECT exp=2900 now=6900");
+    TEST_ASSERT_ARCLOG("SLOT_SUSPECT exp=2800 now=6800");
     TEST_ASSERT_ARCLOG("CLK from=WARM to=COLD why=suspect");
 }
 
@@ -636,7 +678,7 @@ void test_suspect_wake_stops_chain_and_scans(void)
     TdmaMachine_SlotTask();
     int alarms_before = s_alarm_calls;
 
-    s_rtc_ms = s_alarm_programmed + 4000u;   /* 2900 + 4000 = 6900 */
+    s_rtc_ms = s_alarm_programmed + 4000u;   /* 2800 + 4000 = 6800 */
     ArcLog_CaptureReset();
     TdmaMachine_SlotTask();
 
@@ -832,6 +874,8 @@ int main(void)
 /* ------- TX delay to nominal -------------------------------------------- */
 
     RUN_TEST(test_tx_delayed_to_nominal_when_woke_early);
+    RUN_TEST(test_rx_end_with_epoch_drops_guard_from_next_wake);
+    RUN_TEST(test_rx_end_without_epoch_keeps_guarded_wake);
 /* ------- Bootstrap guard ----------------------------------------------- */
 
     RUN_TEST(test_bootstrap_applies_guard_on_alarm);

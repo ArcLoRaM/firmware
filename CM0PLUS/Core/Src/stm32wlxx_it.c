@@ -181,7 +181,7 @@ void IPCC_C2_RX_C2_TX_IRQHandler(void)
 void SUBGHZ_Radio_IRQHandler(void)
 {
   /* USER CODE BEGIN SUBGHZ_Radio_IRQn 0 */
-  /* Stamp the RTC before HAL dispatch clears the IRQ status (PreambleStamp). */
+  /* Stamp the RTC before HAL dispatch clears the IRQ status (SyncStamp). */
   SubGhzPhyTask_OnRadioIrq();
   /* USER CODE END SUBGHZ_Radio_IRQn 0 */
   HAL_SUBGHZ_IRQHandler(&hsubghz);

@@ -45,7 +45,7 @@ equidistant-C1 failure mode (near-0 dB capture offset when a C1 sits equidistant
 between two C2s). Specific policy (randomised, hop-count-based, or deterministic
 per node) is deferred pending empirical validation.
 
-The receiver-side sync algorithm (PreambleStamp, `expected_offset_ms`, three-packet
+The receiver-side sync algorithm (SyncStamp, `expected_offset_ms`, three-packet
 acquisition, `SYNC_LOCK_THRESHOLD_MS`) is unchanged — CT is a transmission-side
 change only.
 

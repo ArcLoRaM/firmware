@@ -136,7 +136,7 @@ void test_c1_sync_locked_called_once(void)
     TEST_ASSERT_EQUAL(1, s_sync_locked_calls);
 }
 
-void test_c1_sync_pkt3_large_error_stays_acquiring(void)
+void test_c1_acquiring_bad_packet_drops_to_cold(void)
 {
     SyncPayload_t p;
     memset(&p, 0, sizeof(p));
@@ -145,10 +145,24 @@ void test_c1_sync_pkt3_large_error_stays_acquiring(void)
     s_snapshot_ms                  = 0u;
     p.sync_cell_index = 0u;  MAC_OnSyncPacketReceived(&p, 0u);
     p.sync_cell_index = 1u;  MAC_OnSyncPacketReceived(&p, 3000u);
-    /* cell=2, expected=6000, preamble=100 → error=5900 >> 8ms → consecutive reset */
-    p.sync_cell_index = 2u;  MAC_OnSyncPacketReceived(&p, 100u);
-    TEST_ASSERT_EQUAL(CLOCK_ACQUIRING, MAC_GetClockState());
+    /* cell=2, expected=6000, stamp=6100 → error=100 ≥ 8ms → re-acquire */
+    p.sync_cell_index = 2u;  MAC_OnSyncPacketReceived(&p, 6100u);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
     TEST_ASSERT_EQUAL(0, s_sync_locked_calls);
+}
+
+void test_c1_acquiring_checks_packet_against_its_own_epoch(void)
+{
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.sync_phase_index = 0u;
+    s_snapshot_ms      = 0u;
+    p.ms_since_midnight_sync_phase = 0u;
+    p.sync_cell_index = 1u;  MAC_OnSyncPacketReceived(&p, 3000u);   /* Packet 1 */
+    p.ms_since_midnight_sync_phase = 30000u;
+    p.sync_cell_index = 0u;  MAC_OnSyncPacketReceived(&p, 30002u);
+    p.sync_cell_index = 1u;  MAC_OnSyncPacketReceived(&p, 33002u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
 }
 
 /* ------- SYNC_LOST (Tier 3: error >= MAX_GUARD_TIME_MS) --------------------- */
@@ -156,7 +170,7 @@ void test_c1_sync_pkt3_large_error_stays_acquiring(void)
 void test_c1_sync_lost_resets_to_cold(void)
 {
     three_sync_packets();
-    /* cell=0, ms_midnight=0, expected_arrival=0, preamble=400 -> error=400 >= 100ms -> Tier 3 */
+    /* cell=0, ms_midnight=0, expected_arrival=0, stamp=400 -> error=400 >= SYNC_RESYNC_THRESHOLD_MS -> Tier 3 */
     SyncPayload_t p;
     memset(&p, 0, sizeof(p));
     p.sync_cell_index              = 0u;
@@ -272,7 +286,7 @@ void test_c1_epoch_received_resets_on_phase_entry(void)
 /* ------- Sync silence timeout (ADR-0013) -------------------------------- */
 
 /*
- * three_sync_packets() drives to CLOCK_WARM with the last preamble at 6000 ms.
+ * three_sync_packets() drives to CLOCK_WARM with the last stamp at 6000 ms.
  * s_last_sync_received_ms = 6000 after acquisition.
  * 14 min = 840000 ms, 15 min = 900000 ms = SYNC_SILENCE_TIMEOUT_MS.
  */
@@ -371,7 +385,7 @@ void test_c1_tier3_resets_silence_timer(void)
     p.sync_phase_index             = 0u;
     p.sync_cell_index              = 0u;
     p.ms_since_midnight_sync_phase = 846000u;
-    MAC_OnSyncPacketReceived(&p, 846400u);  /* error=400 ≥ 300ms → Tier 3 */
+    MAC_OnSyncPacketReceived(&p, 846400u);  /* error=400 ≥ SYNC_RESYNC_THRESHOLD_MS → Tier 3 */
     TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
     TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
 
@@ -403,7 +417,7 @@ void test_c1_tier3_immediate_degradation_unchanged(void)
     memset(&p, 0, sizeof(p));
     p.sync_cell_index              = 0u;
     p.ms_since_midnight_sync_phase = 0u;
-    MAC_OnSyncPacketReceived(&p, 400u);  /* error=400 ≥ 300ms → Tier 3 */
+    MAC_OnSyncPacketReceived(&p, 400u);  /* error=400 ≥ SYNC_RESYNC_THRESHOLD_MS → Tier 3 */
     TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
     TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
     TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
@@ -457,7 +471,8 @@ int main(void)
     RUN_TEST(test_c1_sync_pkt3_valid_transitions_warm);
     RUN_TEST(test_c1_sync_pkt3_valid_transitions_synchronized);
     RUN_TEST(test_c1_sync_locked_called_once);
-    RUN_TEST(test_c1_sync_pkt3_large_error_stays_acquiring);
+    RUN_TEST(test_c1_acquiring_bad_packet_drops_to_cold);
+    RUN_TEST(test_c1_acquiring_checks_packet_against_its_own_epoch);
     RUN_TEST(test_c1_sync_lost_resets_to_cold);
     RUN_TEST(test_c1_sync_lost_returns_to_scanning);
     RUN_TEST(test_c1_sync_lost_calls_hook);

@@ -191,9 +191,11 @@ node always transmits at nominal time regardless of when it woke.
     switch to conservative Rx (guard applied, delay to nominal if Tx)
     because Tx can no longer be predicted from the budget alone.
   - `Sync`: the prediction is **state-aware**, consulting the MAC's Epoch
-    Received flag (see Epoch Received). The flag is read at
-    alarm-programming time (end of current cell), so it always reflects the
-    latest MAC state:
+    Received flag (see Epoch Received). The alarm for the next cell is
+    first programmed at the start of the current one, before its packet
+    arrives; the TDMA Machine re-decides it when the current Rx ends
+    (`TdmaMachine_OnRxEnd`, logged as `WAKE_ADJ`), so the prediction
+    reflects the MAC state after the current cell's packet:
     - C1: always Rx in every cell → guard. Deterministic.
     - C3: first `SYNC_TX_BUDGET` cells = Tx → no guard; remaining cells = Skip → no alarm. Deterministic.
     - C2: the epoch may be received in any cell (Cell 0 for hop-1, Cell 1
@@ -201,8 +203,10 @@ node always transmits at nominal time regardless of when it woke.
       relay chain. Before the epoch is received → Rx → guard. After the
       epoch is received (flag set) and `SyncTxBudget > 0` → Tx → no guard.
       When `SyncTxBudget == 0` (budget exhausted) → Rx → guard. Because the
-      flag and budget are read after the current cell completes, the
+      flag and budget are re-read when the current cell's Rx ends, the
       prediction for the next cell is always deterministic.
+      Should a Tx cell still be woken early, the TDMA Machine waits for the
+      nominal start before sending (`WaitUntilMs`, at most one guard time).
     Node class is a compile-time constant, so the prediction branches at
     compile time — no runtime class check.
 
@@ -240,7 +244,8 @@ A packet starting later could not end by `slot end + MAX_GUARD_TIME_MS`, the lat
 The window is closed by the radio's own Rx timer, which stops on preamble detection: a packet whose preamble arrives in time is always received in full, a later one is not received.
 A **cap** at `slot end + MAX_GUARD_TIME_MS` aborts any reception still running there (a false preamble detection, or a packet detected within the detection margin but too late to fit).
 The expected packet is the Sync packet for every slot for now (issue #38).
-Preamble rather than header detection is a deliberate choice (issue #39): Sync timing is anchored on the preamble, and the Sync packet will move to implicit header.
+Preamble rather than header detection is a deliberate choice (issue #39): it is the earliest proof of a packet, and the Sync packet will move to implicit header.
+Sync timing does not use the preamble detection time (see SyncStamp).
 The radio's symbol timeout is off: noise never closes a window early.
 _Avoid_: Rx extension, `slot_active_ms + 2 × guard`
 
@@ -442,7 +447,7 @@ opportunity boundaries.
 | State | Applies to | Condition | Radio behaviour |
 |---|---|---|---|
 | `Scanning` | C1, C2 | No sync established (`ClockState = CLOCK_COLD` or `CLOCK_ACQUIRING`). Boot default for C1/C2. | No TX. `CLOCK_COLD`: Scanning Rx (continuous, discovery channel, no alarm chain). `CLOCK_ACQUIRING`: alarm chain running, Rx Window in every slot. |
-| `Synchronized` | C1, C2 | Two consecutive Sync packets with preamble error below `SYNC_PARTICIPATE_THRESHOLD_MS` after initial RTC set (`ClockState = CLOCK_WARM`). Seeking peers — discovery behaviour is implied, not a separate state. | Listens on known frame boundaries. Attempts cluster join or mesh peer exchange. No data TX. |
+| `Synchronized` | C1, C2 | Two consecutive Sync packets with SyncStamp error below `SYNC_PARTICIPATE_THRESHOLD_MS` after initial RTC set (`ClockState = CLOCK_WARM`). Seeking peers — discovery behaviour is implied, not a separate state. | Listens on known frame boundaries. Attempts cluster join or mesh peer exchange. No data TX. |
 | `Active` | C3 | Boot default for C3. C3 is the SyncAnchor — it requires no sync acquisition. Immediately operational: transmitting Sync packets, listening for peer connections. | Follows TDMA Table (C3 slot pattern). Originates Sync packets. Accepts mesh and cluster connections. |
 | `Paired` | C1, C2, C3 | C1/C2: connected to cluster master or mesh backbone. C3: at least one node (C2 or C1) is connected. | Full TDMA schedule: TX from phase-specific buffers when non-empty. |
 
@@ -457,8 +462,9 @@ call at slot completion resolves to the correct mode at compile time.
   but retains sync. Re-enters peer-seeking behaviour.
 - `Paired → Active` (C3): all connected nodes disconnect. C3 resumes listening
   for new connections. Sync is never lost — C3 is the source.
-- C1/C2 any state → `Scanning`: sync lost (RTC drift exceeds threshold, or too
-  many consecutive Sync packets missed). Full three-packet acquisition restarts.
+- C1/C2 any state → `Scanning`: sync lost (RTC drift exceeds threshold, a bad
+  packet while `CLOCK_ACQUIRING`, or too many consecutive Sync packets missed).
+  Full three-packet acquisition restarts.
 - C3 never enters `Scanning`.
 
 ### Frame Cursor
@@ -528,7 +534,7 @@ typedef struct __attribute__((packed)) {
 Index of the Cell within the Sync Phase in which this packet was transmitted (renamed
 from `sync_slot_index`). Under concurrent transmission, all C2/C3 nodes in the same
 Cell stamp the same `sync_cell_index`. The receiver uses this field together with
-`ms_since_midnight_sync_phase` to compute the expected preamble arrival time:
+`ms_since_midnight_sync_phase` to compute the expected packet start (SyncStamp):
 
 ```
 expected_arrival_ms = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms
@@ -612,19 +618,22 @@ to provide power offset at receivers near the equidistant-failure zone.
 Policy (randomised per cycle, hop-count-based, or deterministic per node) is
 deferred pending empirical validation.
 
-**Receiver-side algorithm unchanged**: PreambleStamp capture,
+**Receiver-side algorithm unchanged**: SyncStamp capture,
 `expected_offset_ms` computation, three-packet acquisition, and
 `SYNC_LOCK_THRESHOLD_MS` validation all remain as documented in the Sync
 Algorithm section.
 
-### PreambleStamp
-The RTC time (ms since midnight, `GetTimerTicks` domain) at entry of the radio IRQ that signals `IRQ_PREAMBLE_DETECTED` for the packet being received.
-It is taken first thing in `SUBGHZ_Radio_IRQHandler` (`SubGhzPhyTask_OnRadioIrq`), before HAL dispatch; `Radio.Rx()` is followed by an IRQ-mask update that enables `IRQ_PREAMBLE_DETECTED` and `IRQ_HEADER_VALID`.
-It is what `MAC_OnSyncPacketReceived` receives as `preamble_timestamp_ms`, minus `PREAMBLE_DETECT_LATENCY_MS` (0 until measured, issue #17).
-If no preamble IRQ was seen for the packet, the stamp falls back to `RxDone − ToA(size)`.
-RxDone itself arrives about one airtime after the packet starts (~1 s for a SyncPayload at SF12), so it is never used directly.
-The `HEADER_VALID` time is logged alongside as a cross-check: it follows the TX start by a fixed number of symbols, so the spread of `hdr − pre` measures preamble-detection jitter.
+### SyncStamp
+The start on air of a received Sync packet, in the receiver's RTC (ms since midnight, `GetTimerTicks` domain): `RxDone − ToA(size) − RX_DONE_LATENCY_MS`.
+The RxDone time is the RTC at entry of the radio IRQ, taken first thing in `SUBGHZ_Radio_IRQHandler` (`SubGhzPhyTask_OnRadioIrq`), before HAL dispatch.
+`ToA(size)` is `Radio.TimeOnAir` with the modem configuration, which must match the sender's (the same function derives `TX_DONE`'s start).
+`RX_DONE_LATENCY_MS` is the delay from the last symbol to the IRQ stamp, well under a millisecond (0 until measured with a common time reference).
+It is what `MAC_OnSyncPacketReceived` receives as `stamp_ms`.
+The `IRQ_PREAMBLE_DETECTED` and `IRQ_HEADER_VALID` times are logged alongside (`pre`, `hdr`) as diagnostics only.
+The preamble detection time is not a usable timing reference: at SF12/BW125 it lands one symbol (32.8 ms) early or late from packet to packet, while `RxDone − ToA` and `HEADER_VALID` track the sender's TX start to within ~3 ms (bench, 2026-09-26).
+`HEADER_VALID` does not exist once the Sync packet uses implicit header (issue #39); RxDone does.
 Never persisted.
+_Avoid_: PreambleStamp
 
 ### Epoch Received
 A MAC-internal boolean flag (`s_epoch_received_this_phase`) indicating whether
@@ -646,7 +655,7 @@ Three-value enum tracking RTC synchronisation quality.
 |---|---|
 | `CLOCK_COLD` | No Sync packet received. Boot default. MAC State Machine is in `Scanning`. No alarm chain: Scanning Rx. |
 | `CLOCK_ACQUIRING` | At least one Sync packet processed. RTC partially calibrated; sub-second precision not yet confirmed. |
-| `CLOCK_WARM` | Two consecutive Sync packets with preamble offset error below `SYNC_PARTICIPATE_THRESHOLD_MS = 8ms` (after initial RTC set on Packet 1). Node is fully Synchronized. |
+| `CLOCK_WARM` | Two consecutive Sync packets with SyncStamp error below `SYNC_PARTICIPATE_THRESHOLD_MS = 8ms` (after initial RTC set on Packet 1). Node is fully Synchronized. |
 
 ### Sync Silence Timeout
 A wall-clock duration (`SYNC_SILENCE_TIMEOUT_MS`, provisioned at 15 minutes) after
@@ -667,19 +676,19 @@ good packets (error below `SYNC_PARTICIPATE_THRESHOLD_MS = 8ms`).
 
 **Packet 1 (`CLOCK_COLD` → `CLOCK_ACQUIRING`):** parse `SyncPayload` →
 `target_ms = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms` →
-`age = rtc_now − PreambleStamp` (the MAC runs at RxDone, about one airtime after the stamp; ignored above `SYNC_STAMP_MAX_AGE_MS`) →
+`age = rtc_now − SyncStamp` (the MAC runs at RxDone, about one airtime after the packet start; ignored above `SYNC_STAMP_MAX_AGE_MS`) →
 `rtc_set(target_ms + age)` (`HAL_RTC_SetTime` + `SetDate` + SHIFTR sub-second), so the new RTC domain reads `target_ms` at the stamp instant →
-`s_sync_phase_ms = target_ms − sync_cell_index × per_cell_ms` (phase start in new RTC) →
 call `sync_bootstrapped` hook to re-anchor TDMA cursor and start the alarm chain → `s_sync_consecutive = 0`,
 `ClockState = CLOCK_ACQUIRING`.
 Without the age carry, the new domain would lag the sender by the airtime while every later stamp-to-expected comparison still read zero error.
 
-**Packets 2+ (`CLOCK_ACQUIRING`):** take the `PreambleStamp` →
+**Packets 2+ (`CLOCK_ACQUIRING`):** take the `SyncStamp` →
 `expected_arrival = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms` →
-`clock_error = |preamble_ts − expected_arrival|`.
+`clock_error = |SyncStamp − expected_arrival|`.
+Packet 1 put the RTC on the sender's timeline, so the packet is checked against its own epoch and may come from any later Sync Phase occurrence.
 If `clock_error < SYNC_PARTICIPATE_THRESHOLD_MS (8ms)`: `s_sync_consecutive++`;
-if `s_sync_consecutive ≥ 2`: `ClockState = CLOCK_WARM`, MAC transitions to
-`Synchronized`. If `clock_error ≥ 8ms`: `s_sync_consecutive = 0` (reset).
+if `s_sync_consecutive ≥ 2`: `ClockState = CLOCK_WARM`, MAC transitions to `Synchronized`.
+If `clock_error ≥ 8ms` the packet disagrees with Packet 1, and either may be the wrong one: `ClockState = CLOCK_COLD` (`why=acq_bad`), the alarm chain stops for Scanning Rx, and the next packet is a new Packet 1.
 
 **CLOCK_WARM ongoing check (three-tier per Sync Phase occurrence):**
 C2 always receives Cell 0 to measure error against the incoming epoch:
@@ -760,7 +769,7 @@ Three signal types are multiplexed on this one channel via `MsgId`:
 |---|---|---|
 | `RX_READY` | CM0+ has written a new packet to a phase-specific RX buffer. CM4 should read and process it. | Phase type identifying which RX buffer to read. |
 | `TX_NO_ACK` | A TX slot completed without receiving an ACK. | Destination peer ID + phase context. CM4 updates Routing State; CM0+ uses internally for contention strategy. |
-| `SYNC_LOCKED` | Third Sync packet received with preamble offset error below `SYNC_PARTICIPATE_THRESHOLD_MS`. `ClockState` → `CLOCK_WARM`. | None — signal alone is sufficient. |
+| `SYNC_LOCKED` | Third Sync packet received with SyncStamp error below `SYNC_PARTICIPATE_THRESHOLD_MS`. `ClockState` → `CLOCK_WARM`. | None — signal alone is sufficient. |
 | `ACK_RECEIVED` | A TX slot completed with a successful ACK. CM4 must dequeue the delivered payload. | Queue entry identifier (e.g. sequence number assigned by CM4 at enqueue time). CM4 locates and removes the entry. |
 | `RX_TIMEOUT` | A scheduled RX slot expired with no packet received. CM4 uses this to track RX-side Packet Error Rate. | Phase type identifying which link (mesh vs cluster) the missed slot belongs to. |
 | `SYNC_LOST` | `ClockState` degraded from `CLOCK_WARM` to `CLOCK_ACQUIRING` or `CLOCK_COLD`. CM4 records the event for the Frame Cursor drift metric. | None — signal alone is sufficient. |
@@ -1257,7 +1266,7 @@ Format strings go through `tiny_vsnprintf_like` built with `TINY_PRINTF`: no len
 In host unit tests the lines are captured instead (`Tests/stubs/arclog_capture.h`, `TEST_ASSERT_ARCLOG`), so the events a state machine emits are part of its tested contract.
 ST-generated trace lines outside CubeMX USER CODE regions keep their free text; the host tool classifies them as LEGACY.
 
-Key sync events: `CLK` and `MAC_ST` (every ClockState / MacState transition, with `why`), `SYNC_RX` (one per received Sync packet: stamp, expected, signed error, decision), `SYNC_TX` (nominal vs actual send), `RX_DONE` (`pre`, `hdr`, `rxd` IRQ stamps and the stamp source), `TX_DONE` (radio TX start = end − ToA), `RTC_SET` / `RTC_SHIFT` (every clock correction).
+Key sync events: `CLK` and `MAC_ST` (every ClockState / MacState transition, with `why`), `SYNC_RX` (one per received Sync packet: stamp, expected, signed error, decision), `SYNC_TX` (nominal vs actual send), `RX_DONE` (`pre`, `hdr`, `rxd` IRQ stamps and the SyncStamp `st`), `TX_DONE` (radio TX start = end − ToA), `RTC_SET` / `RTC_SHIFT` (every clock correction).
 Rx timing events: `SCAN` (alarm chain stopped, Scanning Rx starts, `why=boot|lost`), `RX_WIN` (Rx Window opened: latest packet start and cap), `RX_LATE` (woke after the latest packet start), `RX_TIMEOUT` (no preamble in time), `RX_CAP` (reception aborted at the cap), `SYNC_REJ` (Sync packet with a non-Sync phase dropped).
 Sync packets are matched across nodes by `(ep, ph, ce)`, which both sender and receiver log.
 The event table, host capture, viewer, merge and sync report live in `tools/arclog/` (see its README); a test there fails when the firmware's `ARCLOG()` calls and the tool's schema disagree.

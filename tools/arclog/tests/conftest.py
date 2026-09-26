@@ -82,7 +82,7 @@ def build_run(drift_ppm: float = 20.0, frames: int = 120, hdr_minus_pre: int = 5
             st = plan + round(offset_ms)
             exp = plan
             c2.emit(t_done, "0", "R", "M", "RX_DONE", sz=10, rssi=-40, snr=9, pre=st,
-                    hdr=st + hdr_minus_pre, rxd=st + 991, toa=991, st=st, src="pre")
+                    hdr=st + hdr_minus_pre, rxd=st + 991, toa=991, st=st)
             err = st - exp
             if clk == "COLD":
                 c2.emit(t_done, "0", "Y", "M", "SYNC_RX", ph=0, ce=ce, ep=ep, st=st, exp=exp, err=err,

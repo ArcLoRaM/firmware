@@ -218,6 +218,20 @@ static void open_rx_window(const Phase_t *phase, uint32_t now_ms)
     s_platform.RadioSetRx(last_ms - now_ms, cap_ms - now_ms);
 }
 
+static bool next_slot_is_rx(const Phase_t *phase);
+
+/* Wake time for the slot at s_slot_start_ms (the cursor already points at
+ * it): guard-time look-ahead, early by the guard if the slot will be Rx. */
+static uint32_t next_wake_ms(void)
+{
+    uint32_t wake_ms = s_slot_start_ms;
+    const Phase_t *next_phase = TdmaTable_GetPhase(s_cursor.phase_index);
+    if (next_phase != NULL && next_slot_is_rx(next_phase)) {
+        wake_ms -= GuardTimeResolver_GetGuardMs();
+    }
+    return wake_ms;
+}
+
 /* Determine whether the next slot opportunity will be RX (for guard-time
    look-ahead).  Guard is applied when the next slot is deterministically Rx
    or when its role is uncertain (conservative Rx default).  Guard is withheld
@@ -321,6 +335,21 @@ void TdmaMachine_OnRxEnd(void)
     }
     /* Synced slot: nothing more to receive until the next slot. */
     s_platform.RadioSleep();
+
+    /* The next wake was programmed at the start of this slot, before its
+     * packet arrived. Re-decide it now that the MAC has seen the packet:
+     * e.g. a Tier 1 epoch turns C2's next Sync cell from Rx into Tx, which
+     * needs no guard. The Rx window ends by slot end + MAX_GUARD_TIME_MS and
+     * gaps are >= 2 x MAX_GUARD_TIME_MS, so the early wake is still ahead. */
+    if (s_running) {
+        uint32_t wake_ms = next_wake_ms();
+        if (wake_ms != s_expected_wake_ms) {
+            ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_M, "WAKE_ADJ", "from=%u to=%u",
+                   (unsigned)s_expected_wake_ms, (unsigned)wake_ms);
+            s_expected_wake_ms = wake_ms;
+            s_platform.ProgramAlarmA(wake_ms);
+        }
+    }
 }
 
 void TdmaMachine_SlotTask(void)
@@ -470,15 +499,7 @@ void TdmaMachine_SlotTask(void)
                       + phase->gap_after_slot_ms;
     s_slot_start_ms = next_start_ms;
 
-    /* Guard-time look-ahead: if next slot will be RX, wake early */
-    alarm_ms = next_start_ms;
-    {
-        const Phase_t *next_phase = TdmaTable_GetPhase(s_cursor.phase_index);
-        if (next_phase != NULL && next_slot_is_rx(next_phase)) {
-            alarm_ms -= GuardTimeResolver_GetGuardMs();
-        }
-    }
-
+    alarm_ms = next_wake_ms();
     s_expected_wake_ms = alarm_ms;
     s_platform.ProgramAlarmA(alarm_ms);
 }

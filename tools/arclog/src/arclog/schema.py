@@ -75,14 +75,18 @@ EVENTS: dict[str, Event] = {
         "cap = hard end (slot end + max guard).",
     ),
     "RX_LATE": Event("T", ("now", "last"), "Woke after the latest packet start: no Rx window opened."),
+    "WAKE_ADJ": Event(
+        "T", ("from", "to"),
+        "Next wake re-decided at Rx end (e.g. guard dropped: next Sync cell became Tx).",
+    ),
     # --- Radio ---------------------------------------------------------------
     "TX_DONE": Event("R", ("sz", "toa", "end", "start"), "TX finished at end; start = end - toa."),
     "TX_TIMEOUT": Event("R", (), "Radio TX timeout."),
     "RX_DONE": Event(
         "R",
-        ("sz", "rssi", "snr", "pre", "hdr", "rxd", "toa", "st", "src"),
+        ("sz", "rssi", "snr", "pre", "hdr", "rxd", "toa", "st"),
         "Packet received. pre/hdr/rxd = RTC at PREAMBLE_DETECTED / HEADER_VALID / RX_DONE IRQ "
-        "(0 = not seen); st = stamp given to the MAC; src = pre or toa (rxd - toa fallback).",
+        "(0 = not seen); st = SyncStamp given to the MAC (rxd - toa, the packet start).",
     ),
     "RX_TIMEOUT": Event("R", ("pre",), "Rx window closed: no preamble by the latest packet start."),
     "RX_CAP": Event(

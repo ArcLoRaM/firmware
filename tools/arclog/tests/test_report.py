@@ -69,12 +69,12 @@ def test_acquisition_tiers_and_corrections():
     assert rx.warm_t1_err.p95_abs < 8
 
 
-def test_preamble_latency_estimate():
+def test_preamble_detection_delay_estimate():
     c3, c2 = build_run(hdr_minus_pre=530)
     run = analyse(streams(c3, c2))
     rx = node(run, "c2")
     assert rx.hdr_minus_pre.mean == pytest.approx(530)
-    assert "Estimated preamble-detection latency: **133.6 ms**" in to_markdown(run)
+    assert "Estimated preamble-detection delay: **133.6 ms**" in to_markdown(run)
 
 
 def test_packets_are_paired_across_nodes():
@@ -94,7 +94,7 @@ def test_csv_has_one_row_per_received_packet(run_files):
     rows = to_csv(run).strip().split("\n")
     assert rows[0].startswith("node,host_time")
     assert len(rows) - 1 == sum(len(n.rx) for n in run.nodes)
-    assert all(r.split(",")[18] == "c3" for r in rows[1:])  # tx_node
+    assert all(r.split(",")[17] == "c3" for r in rows[1:])  # tx_node
 
 
 def test_markdown_sections(run_files):

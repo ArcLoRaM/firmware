@@ -54,7 +54,7 @@
  *          future revision by splitting SYNC_RESYNC_THRESHOLD_MS into its
  *          own value. For now they are unified.
  */
-#define MAX_GUARD_TIME_MS  100u
+#define MAX_GUARD_TIME_MS  200u  /* bench value: absorbs the ~100 ms preamble detection latency while it is uncompensated */
 
 /*!
  * \brief   Tier-3 drift threshold: preamble offset error at or above

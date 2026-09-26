@@ -35,24 +35,28 @@
 #include "shared_mem.h"
 #include "protocol_types.h"   /* NODE_CLASS_C* constants */
 #include "tdma_table.h"       /* TdmaTable_PhaseCount */
+#include "guard_time_resolver.h" /* MAX_GUARD_TIME_MS */
 
 /* =========================================================================
  * Radio IRQ timestamps
  *
  * The radio IRQ handler (stm32wlxx_it.c, USER CODE SUBGHZ_Radio_IRQn 0) calls
  * SubGhzPhyTask_OnRadioIrq() first thing, before HAL dispatch, so every stamp
- * is the RTC at IRQ entry. RxDone arrives about one airtime after the packet
- * started (~1 s at SF12 for a SyncPayload), so the Sync timestamp is the
- * PREAMBLE_DETECTED IRQ (PreambleStamp). HEADER_VALID is stamped as a
- * cross-check: it fires a fixed number of symbols after the preamble, so the
- * spread of (hdr - pre) measures the preamble-detection jitter.
+ * is the RTC at IRQ entry. The Sync timestamp given to the MAC (SyncStamp) is
+ * the packet's start on air: RxDone minus the airtime of the received length.
+ * Both are deterministic, so it tracks the sender's TX start to within an RTC
+ * tick. The PREAMBLE_DETECTED IRQ is not: at SF12 it lands one symbol
+ * (32.8 ms) early or late from packet to packet (bench, 2026-09-26). It is
+ * still stamped, with HEADER_VALID, as a diagnostic in RX_DONE.
  * ========================================================================= */
 
-#ifndef PREAMBLE_DETECT_LATENCY_MS
-/* Constant delay between the sender's TX start and the PREAMBLE_DETECTED
- * IRQ, subtracted from the PreambleStamp. 0 until measured on the bench
- * (issue #17): tools/arclog sync-report estimates it from hdr - pre. */
-#define PREAMBLE_DETECT_LATENCY_MS  0u
+#ifndef RX_DONE_LATENCY_MS
+/* Delay between the end of the packet on air and the RxDone IRQ stamp,
+ * subtracted from the SyncStamp. The radio raises RxDone right after the
+ * last symbol and the IRQ is stamped at entry, so it is well under a
+ * millisecond; 0 until a common time reference (e.g. GPIO on a logic
+ * analyser) measures it. */
+#define RX_DONE_LATENCY_MS  0u
 #endif
 
 /* Time the radio may take to raise PREAMBLE_DETECTED after a packet starts,
@@ -117,27 +121,17 @@ static void on_tx_timeout(void)
 
 static void on_rx_done(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr)
 {
-    uint32_t rxd = s_irq_stamp_ms;
-    uint32_t toa = plat_radio_toa((uint8_t)size);
-    uint32_t stamp;
-    const char *src;
+    uint32_t rxd   = s_irq_stamp_ms;
+    uint32_t toa   = plat_radio_toa((uint8_t)size);
+    uint32_t stamp = rxd - toa - RX_DONE_LATENCY_MS;   /* SyncStamp: packet start */
 
     UTIL_TIMER_Stop(&s_rx_cap_timer);
-    if (s_pre_valid) {
-        stamp = s_pre_stamp_ms - PREAMBLE_DETECT_LATENCY_MS;
-        src   = "pre";
-    } else {
-        /* No preamble IRQ seen: derive the TX start from the airtime. */
-        stamp = rxd - toa;
-        src   = "toa";
-    }
-
     ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_M, "RX_DONE",
-           "sz=%u rssi=%d snr=%d pre=%u hdr=%u rxd=%u toa=%u st=%u src=%s",
+           "sz=%u rssi=%d snr=%d pre=%u hdr=%u rxd=%u toa=%u st=%u",
            (unsigned)size, (int)rssi, (int)snr,
            (unsigned)(s_pre_valid ? s_pre_stamp_ms : 0u),
            (unsigned)(s_hdr_valid ? s_hdr_stamp_ms : 0u),
-           (unsigned)rxd, (unsigned)toa, (unsigned)stamp, src);
+           (unsigned)rxd, (unsigned)toa, (unsigned)stamp);
 
     if (size == (uint16_t)sizeof(SyncPayload_t)) {
         MAC_OnSyncPacketReceived((const SyncPayload_t *)payload, stamp);
@@ -227,7 +221,7 @@ static void plat_radio_send(const uint8_t *b, uint8_t l)
  * RxDone / errors only and so cuts a packet that is still arriving. The
  * hardware timer instead stops on preamble detection, so a packet that
  * started in time is always received in full. Preamble rather than header
- * (SetRxConfig's default): Sync timing is anchored on the preamble, and the
+ * (SetRxConfig's default): it is the earliest proof of a packet, and the
  * Sync packet will move to implicit header (issue #39 keeps the tradeoff).
  * It is re-applied on every start rather than trusted to survive the radio's
  * sleep between slots. The IRQ mask adds PREAMBLE_DETECTED and HEADER_VALID so the IRQ
@@ -276,6 +270,22 @@ static void on_rx_cap(void *context)
     TdmaMachine_OnRxEnd();  /* puts the radio to sleep */
 }
 
+/* Block until the RTC reaches abs_ms. The TDMA Machine calls it only after
+ * a guarded (early) wake in a slot the MAC then made Tx, so the wait is at
+ * most one guard time; a target already passed, or further away than that
+ * (not a guarded wake), returns at once. Normally unused: the next wake is
+ * re-decided at Rx end (TdmaMachine_OnRxEnd), so a Tx slot is not woken
+ * early. Midnight-safe. */
+static void plat_wait_until_ms(uint32_t abs_ms)
+{
+    for (;;) {
+        uint32_t left = (abs_ms % MS_PER_DAY + MS_PER_DAY - plat_get_rtc_ms()) % MS_PER_DAY;
+        if (left == 0u || left > MAX_GUARD_TIME_MS) {
+            return;
+        }
+    }
+}
+
 static void plat_cancel_alarm_a(void)
 {
     hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
@@ -286,8 +296,8 @@ static void     plat_radio_sleep(void)                         { Radio.Sleep(); 
 /* Time on air of a len-byte packet with the modem configuration set in
  * SubGhzPhyTask_Init (SF12 / BW125 / CR4-5 / 8-symbol preamble / explicit
  * header / CRC on). The driver's formula is the reference for duty-cycle
- * accounting and for deriving TX start (TX_DONE) and the RxDone fallback
- * stamp. Keep the parameters in step with Radio.SetTxConfig/SetRxConfig. */
+ * accounting and for deriving TX start (TX_DONE) and the SyncStamp
+ * (RxDone − ToA). Keep the parameters in step with Radio.SetTxConfig/SetRxConfig. */
 static uint32_t plat_radio_toa(uint8_t len)
 {
     return Radio.TimeOnAir(MODEM_LORA,
@@ -305,8 +315,8 @@ static uint32_t plat_radio_toa(uint8_t len)
  * ========================================================================= */
 
 /* Packet 1 / Tier 3 hook: decompose binary target_ms to H:M:S; apply HAL_RTC_SetTime(BIN).
- * Sub-second component (target_ms % 1000) is aligned via SHIFTR ADD1S after SetTime:
- * set one second early, then ADD1S=1 advances calendar to target_s with SSR = SUBFS. */
+ * SetTime starts the second at target_s.000; the sub-second component
+ * (target_ms % 1000) is then added by a SHIFTR advance (ADD1S=1 with SUBFS). */
 static void mac_hook_rtc_set(uint32_t target_ms,
                               uint8_t  day, uint8_t month, uint8_t year)
 {
@@ -314,14 +324,10 @@ static void mac_hook_rtc_set(uint32_t target_ms,
     uint32_t target_s  = (target_ms / 1000u) % 86400u;
     uint32_t subsec_ms = target_ms % 1000u;
 
-    /* Set one second early when sub-second adjustment is needed.
-     * Midnight edge (target_s == 0) skipped to avoid date roll-back. */
-    uint32_t set_s = (subsec_ms > 0u && target_s > 0u) ? target_s - 1u : target_s;
-
     RTC_TimeTypeDef t = {0};
-    t.Hours          = (uint8_t)(set_s / 3600u);
-    t.Minutes        = (uint8_t)((set_s % 3600u) / 60u);
-    t.Seconds        = (uint8_t)(set_s % 60u);
+    t.Hours          = (uint8_t)(target_s / 3600u);
+    t.Minutes        = (uint8_t)((target_s % 3600u) / 60u);
+    t.Seconds        = (uint8_t)(target_s % 60u);
     t.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
     t.StoreOperation = RTC_STOREOPERATION_RESET;
 
@@ -333,13 +339,17 @@ static void mac_hook_rtc_set(uint32_t target_ms,
     hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
     HAL_RTC_SetTime(&hrtc, &t, RTC_FORMAT_BIN);
     HAL_RTC_SetDate(&hrtc, &d, RTC_FORMAT_BCD);
-    /* SSR = PREDIV_S (start of set_s) after SetTime */
+    /* SSR = PREDIV_S (start of target_s) after SetTime */
 
-    /* Sub-second alignment via SHIFTR.
-     * ADD1S=1 advances calendar by 1 s and sets SSR = SUBFS, so
-     * elapsed-in-second = (PREDIV_S − SUBFS)/(PREDIV_S+1) ≈ subsec_ms/1000. */
+    /* Sub-second alignment via SHIFTR (RM0453, RTC_SHIFTR): ADD1S adds one
+     * second and SUBFS is added to the SSR down-counter, delaying the clock
+     * by SUBFS/(PREDIV_S+1). The net advance is 1 − SUBFS/(PREDIV_S+1) =
+     * shift_ticks/(PREDIV_S+1) ≈ subsec_ms/1000, never a whole second, so
+     * no date roll-over. Until SSR counts back below PREDIV_S the calendar
+     * reads target_s + 1 with SSR > PREDIV_S; the time readers in
+     * timer_if.c borrow that second back. */
     const char *shift = "none";
-    if (subsec_ms > 0u && target_s > 0u) {
+    if (subsec_ms > 0u) {
         hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
         shift = "busy";   /* a previous shift is still pending (SHPF) */
         if (!READ_BIT(hrtc.Instance->ICSR, RTC_ICSR_SHPF)) {
@@ -359,13 +369,13 @@ static void mac_hook_rtc_set(uint32_t target_ms,
 }
 
 /* Tier 2 hook: apply SSR-only correction when CLOCK_WARM and
- * SYNC_PARTICIPATE_THRESHOLD_MS (8 ms) <= error < SYNC_RESYNC_THRESHOLD_MS (100 ms).
+ * SYNC_PARTICIPATE_THRESHOLD_MS (8 ms) <= error < SYNC_RESYNC_THRESHOLD_MS (= MAX_GUARD_TIME_MS).
  * Direction: error_ms > 0 → RTC fast → delay (ADD1S=0).
  *            error_ms < 0 → RTC slow → advance (ADD1S=1, SSR set to SUBFS). */
-static void mac_hook_rtc_align_sub(uint32_t preamble_timestamp_ms,
+static void mac_hook_rtc_align_sub(uint32_t stamp_ms,
                                     uint32_t expected_offset_ms)
 {
-    int32_t error_ms = (int32_t)preamble_timestamp_ms - (int32_t)expected_offset_ms;
+    int32_t error_ms = (int32_t)stamp_ms - (int32_t)expected_offset_ms;
 
     if (error_ms == 0) return;
 
@@ -533,6 +543,7 @@ void SubGhzPhyTask_Init(void)
         .RadioScan       = plat_radio_scan,
         .RadioSleep      = plat_radio_sleep,
         .RadioTimeOnAir  = plat_radio_toa,
+        .WaitUntilMs     = plat_wait_until_ms,
     };
     TdmaMachine_Init(&plat);
 

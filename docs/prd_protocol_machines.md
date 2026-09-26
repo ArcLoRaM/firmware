@@ -87,7 +87,7 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor, const Phase_t 
 Radio callback hooks (CM0+ RxDone wrapper):
 
 ```c
-void MAC_OnSyncPacketReceived(const SyncPayload_t *p, uint32_t preamble_timestamp_ms);
+void MAC_OnSyncPacketReceived(const SyncPayload_t *p, uint32_t stamp_ms);
 void MAC_OnBeaconReceived(const BeaconPayload_t *b);
 ```
 

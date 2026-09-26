@@ -87,7 +87,7 @@ uv run arclog merge runs/2026-09-25/*.log --mod Y,R
 
 ### report
 
-Sync run report: acquisitions, drops to CLOCK_COLD, tier decisions, error statistics, drift in ppm, preamble-detection latency estimate, cross-node offsets and trace health.
+Sync run report: acquisitions, drops to CLOCK_COLD, tier decisions, error statistics, drift in ppm, preamble-detection diagnostics, cross-node offsets and trace health.
 Writes Markdown plus a CSV with one row per received Sync packet.
 
 ```sh

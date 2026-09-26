@@ -88,9 +88,9 @@ The 16 ms operating target sits comfortably below the 100 ms ceiling, providing 
 
 **Relation to existing structure:** Preamble length is not currently specified in `CONTEXT.md`. This decision adds a configuration parameter (default 8 symbols) and a validation requirement to the hardware experiment plan referenced in the philosophy document.
 
-### Decision 6 — PreambleStamp Model Preserved
+### Decision 6 — SyncStamp Model Preserved
 
-**Registered:** The existing PreambleStamp / `elapsed_ms` / `expected_offset_ms` mechanism in the sync algorithm is preserved under CT. The receiver captures the preamble arrival time in the DIO1 ISR regardless of which concurrent transmitter's signal it captured, because all participating transmitters are themselves synchronised within the 16 ms tolerance and therefore produce timing-equivalent preambles.
+**Registered:** The existing SyncStamp / `expected_offset_ms` mechanism in the sync algorithm is preserved under CT. The receiver derives the packet start (RxDone − ToA) regardless of which concurrent transmitter's signal it captured, because all participating transmitters are themselves synchronised within the 16 ms tolerance and therefore produce timing-equivalent packets.
 
 **Relation to existing structure:** No change to the sync algorithm described in `CONTEXT.md`. The three-packet acquisition sequence (`CLOCK_COLD → CLOCK_ACQUIRING → CLOCK_WARM`), the DIO1 GPIO ISR capture, and the `SYNC_LOCK_THRESHOLD_MS` validation all remain as documented.
 
@@ -158,7 +158,7 @@ The simplest implementation: the C2 maintains a local counter of completed Sync 
 | `SyncPayload` struct | None | Layout preserved; `sync_cell_index` semantics clarified (TDMA slot index, not hop depth) |
 | Sync Phase blueprint | None | Phase remains N identical Cells × 1 Slot |
 | `participant_mask` for Sync | Clarified | C2 + C3 transmit, C1 RX-only, for every Sync Slot |
-| Sync algorithm (RX path) | None | PreambleStamp, `expected_offset_ms`, three-packet acquisition preserved |
+| Sync algorithm (RX path) | None | SyncStamp, `expected_offset_ms`, three-packet acquisition preserved |
 | `ClockState` machine | None | `CLOCK_COLD/ACQUIRING/WARM` transitions preserved |
 | Sync Phase airtime | Reduced (deferred) | From `network_depth × packet_length` to `1 × packet_length` — under pure CT model only |
 | Sync propagation model | Replaced | Sequential hop-by-hop forwarding → concurrent network-wide pulse |

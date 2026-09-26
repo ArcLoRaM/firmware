@@ -93,12 +93,12 @@
 
 #ifndef SYNC_STAMP_MAX_AGE_MS
 /*!
- * \brief   Maximum plausible age of a PreambleStamp when the Sync packet is
+ * \brief   Maximum plausible age of a SyncStamp when the Sync packet is
  *          processed.
  *
  * \details The MAC processes a Sync packet at RxDone, about one airtime
- *          (~1 s at SF12) after its PreambleStamp, and carries that elapsed
- *          time into \c rtc_set. An older stamp cannot come from the packet
+ *          (~1 s at SF12) after its SyncStamp (the packet start), and carries
+ *          that elapsed time into \c rtc_set. An older stamp cannot come from the packet
  *          being processed, so it is ignored (no elapsed-time carry).
  */
 #define SYNC_STAMP_MAX_AGE_MS  5000u
@@ -149,18 +149,19 @@ typedef struct {
                     uint8_t  day, uint8_t month, uint8_t year);
 
     /*!
-     * Tier 2 drift correction hook — CLOCK_WARM, 8ms ≤ error < 100ms.
+     * Tier 2 drift correction hook — CLOCK_WARM,
+     * SYNC_PARTICIPATE_THRESHOLD_MS ≤ error < SYNC_RESYNC_THRESHOLD_MS.
      *
      * \details Applies HAL_RTCEx_SetSynchroShift without a full calendar
      *          re-anchor. Must not block. Called only from
      *          \ref MAC_OnSyncPacketReceived. Relay is suppressed for this
      *          sync occurrence regardless of the return path.
      *
-     * \param preamble_timestamp_ms  PreambleStamp (GetTimerTicks domain).
-     * \param expected_offset_ms     ms_since_midnight_sync_phase +
-     *                               sync_cell_index × per_cell_ms.
+     * \param stamp_ms            SyncStamp (GetTimerTicks domain).
+     * \param expected_offset_ms  ms_since_midnight_sync_phase +
+     *                            sync_cell_index × per_cell_ms.
      */
-    void (*rtc_align_subsecond)(uint32_t preamble_timestamp_ms,
+    void (*rtc_align_subsecond)(uint32_t stamp_ms,
                                  uint32_t expected_offset_ms);
 
     /*!
@@ -249,13 +250,12 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
  *
  * \param   [in] payload              - Decoded SyncPayload from the received
  *                                      packet.
- * \param   [in] preamble_timestamp_ms - PreambleStamp: RTC ms captured at
- *                                      entry of the radio IRQ that signalled
- *                                      IRQ_PREAMBLE_DETECTED (see CONTEXT.md
- *                                      - PreambleStamp).
+ * \param   [in] stamp_ms  - SyncStamp: the packet's start on air in the
+ *                          RTC domain, RxDone IRQ time minus the airtime
+ *                          (see CONTEXT.md - SyncStamp).
  */
 void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
-                               uint32_t             preamble_timestamp_ms);
+                               uint32_t             stamp_ms);
 
 /*!
  * \brief   Check whether the sync silence timeout has expired.
@@ -394,17 +394,6 @@ uint8_t MAC_GetBeaconTxBudget(void);
  * \retval  uint8_t Remaining sync TX budget.
  */
 uint8_t MAC_GetSyncTxBudget(void);
-
-/*!
- * \brief   Return the Sync Phase start time (binary ms) in the current RTC domain.
- *
- * \details Set on Packet 1: \c get_rtc_snapshot().ms − sync_cell_index × per_cell_ms.
- *          Valid after \ref MAC_OnSyncPacketReceived with \c CLOCK_COLD.
- *          Used for CLOCK_ACQUIRING elapsed-ms error computation.
- *
- * \retval  uint32_t Phase start in ms-since-midnight (current RTC domain).
- */
-uint32_t MAC_GetSyncPhaseMs(void);
 
 /*!
  * \brief   Return the Sync Phase Epoch captured for TX relay.
