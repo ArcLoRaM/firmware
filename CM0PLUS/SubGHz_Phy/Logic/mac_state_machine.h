@@ -167,8 +167,8 @@ typedef struct {
     /*!
      * Atomic snapshot of the current RTC time and date.
      *
-     * \details Called at Sync Phase entry (C3/C2 TX path) to capture the epoch
-     *          for the outgoing SyncPayload, and immediately after \c rtc_set
+     * \details Called at Sync Phase entry (C3) to capture the date of the
+     *          outgoing SyncPayload, and immediately after \c rtc_set
      *          (C2 Packet 1 path) to read the new RTC domain. A single call
      *          avoids the race where two separate reads straddle midnight.
      *
@@ -235,12 +235,17 @@ void MAC_Init(const MAC_Hooks_t *hooks);
  * \param   [in] phase  - Phase descriptor for the current slot. Passed
  *                        directly by the TDMA Machine; the MAC must not
  *                        look it up again from the TDMA Table.
+ * \param   [in] slot_start_ms - Nominal start of the current slot
+ *                        (ms-since-midnight): the instant a packet sent in
+ *                        this slot starts on air. C3 derives the Sync Phase
+ *                        Epoch from it; C1/C2 ignore it.
  *
  * \retval  \ref SlotDecision_t Radio action:
  *          \ref SLOT_TX, \ref SLOT_RX, or \ref SLOT_SKIP.
  */
 SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
-                                      const Phase_t       *phase);
+                                      const Phase_t       *phase,
+                                      uint32_t             slot_start_ms);
 
 /*!
  * \brief   Called by the CM0+ RxDone wrapper when a Sync packet is decoded.
@@ -398,7 +403,8 @@ uint8_t MAC_GetSyncTxBudget(void);
 /*!
  * \brief   Return the Sync Phase Epoch captured for TX relay.
  *
- * \details C3: \c get_rtc_snapshot().ms captured at Sync Phase entry.
+ * \details C3: the nominal start of the Sync Phase occurrence, from the
+ *          schedule (not an RTC reading), set at Sync Phase entry.
  *          C2: \c ms_since_midnight_sync_phase received in Cell 0 (Tier 1 only).
  *          Written into the outgoing \c SyncPayload_t.ms_since_midnight_sync_phase.
  *

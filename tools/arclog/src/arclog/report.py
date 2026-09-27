@@ -150,7 +150,10 @@ class NodeResult:
     rx: list[RxRecord] = field(default_factory=list)
     tx: list[TxRecord] = field(default_factory=list)
     tx_latency: Stats = field(default_factory=Stats)   # radio start - plan
+    tx_latency_by_cell: dict[int, Stats] = field(default_factory=dict)
     send_latency: Stats = field(default_factory=Stats)  # send - plan
+    tx_ramp: Stats = field(default_factory=Stats)       # radio start - send
+    tx_lates: int = 0
 
 
 def _seconds(t: datetime) -> float:
@@ -204,6 +207,8 @@ def analyse_node(node: str, lines: list[Line]) -> NodeResult:
                 res.rtc_shifts += 1
         elif ev == "SLOT_SUSPECT":
             res.suspects += 1
+        elif ev == "TX_LATE":
+            res.tx_lates += 1
     if acq is not None:
         res.acquisitions.append(acq)
 
@@ -228,6 +233,14 @@ def analyse_node(node: str, lines: list[Line]) -> NodeResult:
                                if t.start is not None and t.plan is not None])
     res.send_latency = Stats.of([t.tx.int("send") - t.plan for t in res.tx
                                  if t.tx.int("send") is not None and t.plan is not None])
+    res.tx_ramp = Stats.of([t.start - t.tx.int("send") for t in res.tx
+                            if t.start is not None and t.tx.int("send") is not None])
+    by_cell: dict[int, list[float]] = {}
+    for t in res.tx:
+        ce = t.tx.int("ce")
+        if t.start is not None and t.plan is not None and ce is not None:
+            by_cell.setdefault(ce, []).append(t.start - t.plan)
+    res.tx_latency_by_cell = {ce: Stats.of(v) for ce, v in sorted(by_cell.items())}
     return res
 
 
@@ -306,9 +319,16 @@ def to_markdown(run: RunResult, title: str = "Sync run report") -> str:
             continue
         w(f"## Node {nr.node}\n\n")
         if nr.tx:
-            w(f"Sync packets sent: {len(nr.tx)}.\n\n")
-            w("Radio TX start minus nominal slot start (ms):\n\n")
+            w(f"Sync packets sent: {len(nr.tx)}. TX_LATE: {nr.tx_lates}.\n\n")
+            w("Radio TX start minus nominal slot start (ms), 0 in every cell when "
+              "the Tx start is deterministic (ADR-0016):\n\n")
             w(STATS_HEADER + "\n" + nr.tx_latency.row() + "\n\n")
+            w("| ce " + STATS_HEADER.replace("\n", "\n|---"))
+            for ce, st in nr.tx_latency_by_cell.items():
+                w(f"\n| {ce} " + st.row())
+            w("\n\n")
+            w("Tx ramp, radio TX start minus Radio.Send (ms), the platform's TX_RAMP_MS:\n\n")
+            w(STATS_HEADER + "\n" + nr.tx_ramp.row() + "\n\n")
         if not nr.acts:
             continue
         locked = [a for a in nr.acquisitions if a.locked]

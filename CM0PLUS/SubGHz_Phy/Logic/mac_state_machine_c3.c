@@ -5,8 +5,8 @@
  *
  * \details   C3 boots directly into \ref MAC_STATE_ACTIVE — it requires no
  *            Sync acquisition. It is the sole epoch authority for the network:
- *            at each Sync Phase entry it calls \c get_rtc_snapshot to capture
- *            the epoch that all C2 relay nodes will forward verbatim.
+ *            at each Sync Phase entry it sets the epoch, the phase's nominal
+ *            start, that all C2 relay nodes will forward verbatim.
  *            BeaconTxBudget is bypassed; phase_tx_flag is always 1.
  *
  * \code
@@ -72,16 +72,27 @@ void MAC_Init(const MAC_Hooks_t *hooks)
 }
 
 SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
-                                      const Phase_t       *phase)
+                                      const Phase_t       *phase,
+                                      uint32_t             slot_start_ms)
 {
-    /* Detect phase entry — capture epoch at Sync Phase start */
+    /* Detect phase entry — set the epoch at Sync Phase start */
     if (cursor->phase_index != s_last_phase_idx) {
         s_last_phase_idx = cursor->phase_index;
         if (phase->type == PHASE_TYPE_SYNC) {
             s_phase_tx_flag = 1u;
             s_sync_tx_remaining = SYNC_TX_BUDGET;
+            /* The epoch is the phase's nominal start from the schedule, the
+             * instant cell 0's packet starts on air: an RTC reading here is
+             * taken a Tx lead early plus the wake latency. The RTC gives the
+             * date only. */
+            uint32_t per_cell = (uint32_t)phase->slot_active_ms
+                                + phase->gap_after_slot_ms;
+            s_sync_phase_epoch_ms = (slot_start_ms + MS_PER_DAY
+                                     - (uint32_t)cursor->cell_index * per_cell)
+                                    % MS_PER_DAY;
             if (s_hooks.get_rtc_snapshot != NULL) {
-                s_hooks.get_rtc_snapshot(&s_sync_phase_epoch_ms,
+                uint32_t now_ms;
+                s_hooks.get_rtc_snapshot(&now_ms,
                                           &s_sync_phase_day,
                                           &s_sync_phase_month,
                                           &s_sync_phase_year);

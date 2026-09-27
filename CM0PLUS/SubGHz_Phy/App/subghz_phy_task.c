@@ -67,6 +67,15 @@
  * the cap. Recompute if the modem parameters change. */
 #define RX_PREAMBLE_DETECT_MARGIN_MS  262u
 
+/* Time from Radio.Send to the first preamble symbol on air, the radio in
+ * standby with its oscillator running (plat_radio_prepare_tx): a fixed
+ * sequence of SPI commands (packet params, 10-byte buffer, SetTx), then PLL
+ * lock and PA ramp-up, both well under a millisecond. 0 until measured as
+ * TX_DONE start - SYNC_TX send on the bench. */
+#ifndef TX_RAMP_MS
+#define TX_RAMP_MS  0u
+#endif
+
 /* Largest hardware Rx timeout: 24-bit count of 15.625 us steps. */
 #define RX_HW_TIMEOUT_MAX_MS  (0xFFFFFFu >> 6)
 
@@ -209,6 +218,15 @@ static void plat_program_alarm_a(uint32_t abs_ms)
 }
 
 static void     plat_radio_set_channel(uint32_t hz)            { Radio.SetChannel(hz);              }
+
+/* Wake the radio into standby with its oscillator (TCXO) running, so that
+ * Radio.Send only has to write the packet and fire: no radio wake-up and no
+ * TCXO start-up (RF_WAKEUP_TIME) left between the send and the air. */
+static void plat_radio_prepare_tx(void)
+{
+    SUBGRF_SetStandby(STDBY_XOSC);
+}
+
 static void plat_radio_send(const uint8_t *b, uint8_t l)
 {
     s_last_tx_len = l;
@@ -270,12 +288,12 @@ static void on_rx_cap(void *context)
     TdmaMachine_OnRxEnd();  /* puts the radio to sleep */
 }
 
-/* Block until the RTC reaches abs_ms. The TDMA Machine calls it only after
- * a guarded (early) wake in a slot the MAC then made Tx, so the wait is at
- * most one guard time; a target already passed, or further away than that
- * (not a guarded wake), returns at once. Normally unused: the next wake is
- * re-decided at Rx end (TdmaMachine_OnRxEnd), so a Tx slot is not woken
- * early. Midnight-safe. */
+/* Block until the RTC reaches abs_ms: the fire instant of a transmission.
+ * The node woke at most MAX_GUARD_TIME_MS early (a Tx lead, or a guard when
+ * the slot was predicted Rx), so a target further away than that is not a
+ * fire instant and returns at once, as does one already passed. The RTC
+ * reads in 1/4096 s ticks, so the wait ends within one tick of the target.
+ * Midnight-safe. */
 static void plat_wait_until_ms(uint32_t abs_ms)
 {
     for (;;) {
@@ -538,12 +556,14 @@ void SubGhzPhyTask_Init(void)
         .ProgramAlarmA   = plat_program_alarm_a,
         .CancelAlarmA    = plat_cancel_alarm_a,
         .RadioSetChannel = plat_radio_set_channel,
+        .RadioPrepareTx  = plat_radio_prepare_tx,
         .RadioSend       = plat_radio_send,
         .RadioSetRx      = plat_radio_set_rx,
         .RadioScan       = plat_radio_scan,
         .RadioSleep      = plat_radio_sleep,
         .RadioTimeOnAir  = plat_radio_toa,
         .WaitUntilMs     = plat_wait_until_ms,
+        .tx_ramp_ms      = TX_RAMP_MS,
     };
     TdmaMachine_Init(&plat);
 

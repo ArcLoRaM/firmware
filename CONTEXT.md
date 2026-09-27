@@ -169,8 +169,9 @@ Only when the next slot is deterministically Tx is guard withheld. In theory
 all cases are deterministic; the conservative Rx default is a safety net.
 
 When a node wakes early (guard applied) and the MAC then decides Tx, the
-TDMA Machine must delay transmission until nominal slot start — the Tx
-node always transmits at nominal time regardless of when it woke.
+TDMA Machine holds the transmission until its fire instant, as for any Tx:
+the packet starts on air at the nominal slot start regardless of when the
+node woke (see Tx Start).
 
 - `DIRECTION_CELL_SKIP`: queries `MAC_GetCellEligibilityMask_Uplink()` or
   `MAC_GetCellEligibilityMask_Downlink()` (selected by `phase->type`) +
@@ -197,16 +198,16 @@ node always transmits at nominal time regardless of when it woke.
     (`TdmaMachine_OnRxEnd`, logged as `WAKE_ADJ`), so the prediction
     reflects the MAC state after the current cell's packet:
     - C1: always Rx in every cell → guard. Deterministic.
-    - C3: first `SYNC_TX_BUDGET` cells = Tx → no guard; remaining cells = Skip → no alarm. Deterministic.
+    - C3: first `SYNC_TX_BUDGET` cells = Tx → Tx lead, no guard; remaining cells = Skip → Tx lead. Deterministic.
     - C2: the epoch may be received in any cell (Cell 0 for hop-1, Cell 1
       for hop-2, Cell N for hop-(N+1)) depending on the node's depth in the
       relay chain. Before the epoch is received → Rx → guard. After the
-      epoch is received (flag set) and `SyncTxBudget > 0` → Tx → no guard.
+      epoch is received (flag set) and `SyncTxBudget > 0` → Tx → Tx lead.
       When `SyncTxBudget == 0` (budget exhausted) → Rx → guard. Because the
       flag and budget are re-read when the current cell's Rx ends, the
       prediction for the next cell is always deterministic.
-      Should a Tx cell still be woken early, the TDMA Machine waits for the
-      nominal start before sending (`WaitUntilMs`, at most one guard time).
+      Should a Tx cell still be woken a guard early, the TDMA Machine waits
+      for the fire instant as for any Tx (`WaitUntilMs`, at most one guard time).
     Node class is a compile-time constant, so the prediction branches at
     compile time — no runtime class check.
 
@@ -219,9 +220,10 @@ entry (in `MAC_OnSlotOpportunity`), so it is never stale when consulted
 for the next cell's prediction. K is conserved across Mesh_Beacon phase
 occurrences, so it is never stale either.
 
-The Tx node always transmits at nominal time (no guard adjustment on Tx
-side). The Rx guard must therefore absorb bilateral drift — both the local
-and the peer's RTC divergence from true time.
+A packet always starts on air at its slot's nominal start (see Tx Start): the
+Tx side applies no guard, only its Tx lead, which receivers never see. The Rx
+guard must therefore absorb bilateral drift — both the local and the peer's
+RTC divergence from true time.
 
 **Version 2** (deferred) will replace the constant with a variable value based
 on estimated clock drift, duration without receiving synchronization, and
@@ -248,6 +250,24 @@ Preamble rather than header detection is a deliberate choice (issue #39): it is 
 Sync timing does not use the preamble detection time (see SyncStamp).
 The radio's symbol timeout is off: noise never closes a window early.
 _Avoid_: Rx extension, `slot_active_ms + 2 × guard`
+
+### Tx Start
+Every scheduled packet starts on air exactly at its slot's nominal start, whatever the phase, the node class or the hop (ADR-0016).
+Receivers therefore expect every packet at the nominal start: no constant is added or subtracted on the receiving side, and the lateness of a Sync packet can only be clock error.
+The sender makes it so:
+
+- **Tx lead** (`TX_LEAD_MS`, 20 ms): a Tx slot is woken this early, as an Rx slot is woken one guard early.
+  The lead absorbs all variable work before the radio fires: Stop2 exit, slot task, logs, compliance, payload build, and the radio's own wake-up (`RadioPrepareTx`: standby with the oscillator running).
+  It is at most `MAX_GUARD_TIME_MS`, so the gaps sized for the guard hold it.
+- **Fire instant**: the nominal start minus the **Tx ramp** (`tx_ramp_ms`, the time from `Radio.Send` to the first preamble symbol with the radio prepared, a platform constant measured as `TX_DONE` start − `SYNC_TX` send).
+  The node busy-waits for it (`WaitUntilMs`, to within one RTC tick) and sends.
+- **Late fire instant** (`TX_LATE`): the lead was too short.
+  A Sync packet is dropped, since receivers would read its lateness as clock error; any other packet is sent late, the slot margin absorbing it.
+
+Both constants are sender-local: a board with a different software path or radio may use different values without affecting any other node.
+Skip slots are woken like Tx slots: the look-ahead does not tell them apart, and a slot with no radio action has nothing to time.
+At boot, C3's first slot starts one Tx lead after the boot wake.
+_Avoid_: `TX_START_DELAY_MS` (the rejected alternative: transmit a fixed delay after the nominal start and have receivers add it to every expected arrival)
 
 ### Scanning Rx
 How a `CLOCK_COLD` node (C1/C2) listens: continuously on the **discovery channel** (`SCAN_FREQ_HZ`, 868.3 MHz, the frequency the SyncAnchor transmits Sync on), with no timeout, re-armed after every reception.
@@ -512,8 +532,11 @@ C3 generates the epoch; C2 relays C3's received epoch verbatim (never self-gener
 typedef struct __attribute__((packed)) {
     uint8_t  packet_type_id;               /* Packet type discriminator */
     uint32_t ms_since_midnight_sync_phase; /* Sync phase start time, binary ms,
-                                              range 0–86,399,999. C3: GetTimerTicks()
-                                              at phase entry. Receiver: target_ms =
+                                              range 0–86,399,999. C3: the phase's
+                                              nominal start from the schedule (cell 0
+                                              on air), not an RTC reading; the date
+                                              is read from the RTC at phase entry.
+                                              Receiver: target_ms =
                                               this + sync_cell_index × per_cell_ms;
                                               decompose → H:M:S for HAL_RTC_SetTime. */
     uint8_t  day;                          /* BCD 01–31 */
@@ -1272,7 +1295,7 @@ Format strings go through `tiny_vsnprintf_like` built with `TINY_PRINTF`: no len
 In host unit tests the lines are captured instead (`Tests/stubs/arclog_capture.h`, `TEST_ASSERT_ARCLOG`), so the events a state machine emits are part of its tested contract.
 ST-generated trace lines outside CubeMX USER CODE regions keep their free text; the host tool classifies them as LEGACY.
 
-Key sync events: `CLK` and `MAC_ST` (every ClockState / MacState transition, with `why`), `SYNC_RX` (one per received Sync packet: stamp, expected, signed error, decision), `SYNC_TX` (nominal vs actual send), `RX_DONE` (`pre`, `hdr`, `rxd` IRQ stamps and the SyncStamp `st`), `TX_DONE` (radio TX start = end − ToA), `RTC_SET` / `RTC_SHIFT` (every clock correction).
+Key sync events: `CLK` and `MAC_ST` (every ClockState / MacState transition, with `why`), `SYNC_RX` (one per received Sync packet: stamp, expected, signed error, decision), `SYNC_TX` (`plan` = nominal start = intended on-air start, `send` = RTC at `Radio.Send`, `ep` = epoch carried), `TX_LATE` (fire instant passed before the slot task reached it, see Tx Start), `RX_DONE` (`pre`, `hdr`, `rxd` IRQ stamps and the SyncStamp `st`), `TX_DONE` (radio TX start = end − ToA), `RTC_SET` / `RTC_SHIFT` (every clock correction).
 Rx timing events: `SCAN` (alarm chain stopped, Scanning Rx starts, `why=boot|lost`), `RX_WIN` (Rx Window opened: latest packet start and cap), `RX_LATE` (woke after the latest packet start), `RX_TIMEOUT` (no preamble in time), `RX_CAP` (reception aborted at the cap), `SYNC_REJ` (Sync packet with a non-Sync phase dropped).
 Sync packets are matched across nodes by `(ep, ph, ce)`, which both sender and receiver log.
 The event table, host capture, viewer, merge and sync report live in `tools/arclog/` (see its README); a test there fails when the firmware's `ARCLOG()` calls and the tool's schema disagree.

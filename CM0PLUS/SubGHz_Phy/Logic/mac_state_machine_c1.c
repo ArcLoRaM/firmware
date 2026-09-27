@@ -155,8 +155,10 @@ void MAC_Init(const MAC_Hooks_t *hooks)
 }
 
 SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
-                                      const Phase_t       *phase)
+                                      const Phase_t       *phase,
+                                      uint32_t             slot_start_ms)
 {
+    (void)slot_start_ms;
     if (s_mac_state == MAC_STATE_SCANNING) {
         return SLOT_RX;
     }

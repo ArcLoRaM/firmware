@@ -41,13 +41,33 @@
 #define TX_POWER_DBM  0
 #endif
 
+#ifndef TX_LEAD_MS
+/*!
+ * How early a node wakes before the nominal start of a slot it will
+ * transmit in (ADR-0016).
+ *
+ * \details Every scheduled packet starts on air exactly at its slot's nominal
+ *          start. The lead covers the variable work before the radio fires:
+ *          wake from Stop2, slot task, logs, compliance, payload build, radio
+ *          wake. The node then waits for the nominal start minus the
+ *          platform's \c tx_ramp_ms and fires. A slot task that reaches the
+ *          fire instant late logs \c TX_LATE (and drops a Sync packet).
+ *          Sender-local: receivers never use it. Bench worst case 13 ms from
+ *          wake to on-air, cell 0 of the Sync phase (2026-09-26).
+ *
+ * \remark Must not exceed \ref MAX_GUARD_TIME_MS: gaps are sized for wakes up
+ *         to that early (every gap >= 2 x \ref MAX_GUARD_TIME_MS).
+ */
+#define TX_LEAD_MS  20u
+#endif
+
 /* =========================================================================
  * Platform abstraction
  * ========================================================================= */
 
 /*!
- * \brief   Struct of hardware function pointers injected at
- *          \ref TdmaMachine_Init.
+ * \brief   Struct of hardware function pointers (and the radio's Tx ramp)
+ *          injected at \ref TdmaMachine_Init.
  *
  * \details All hardware interactions go through this struct, making
  *          \c tdma_machine.c completely free of HAL, radio-driver, and
@@ -68,7 +88,18 @@ typedef struct {
     /*! Tune the radio to the specified frequency in Hz. */
     void     (*RadioSetChannel)(uint32_t freq_hz);
 
-    /*! Transmit \c len bytes from \c buf. */
+    /*!
+     * Get the radio ready to transmit without delay: out of sleep, oscillator
+     * running. Called at the start of a Tx slot, before any other work, so
+     * the radio's own wake-up overlaps it and \c RadioSend has a fixed
+     * latency (\c tx_ramp_ms).
+     */
+    void     (*RadioPrepareTx)(void);
+
+    /*!
+     * Transmit \c len bytes from \c buf. After \c RadioPrepareTx the packet
+     * starts on air \c tx_ramp_ms after the call.
+     */
     void     (*RadioSend)(const uint8_t *buf, uint8_t len);
 
     /*!
@@ -108,16 +139,24 @@ typedef struct {
     /*!
      * Block until the RTC reaches the given absolute millisecond value.
      *
-     * \details Used when the node woke early (guard-time look-ahead applied an
-     *          Rx prediction that turned out to be Tx) and must delay
-     *          transmission to the nominal slot start. May be NULL — in that
-     *          case the delay is skipped (the TX proceeds at the current time).
-     *          In production, implement as a busy-wait or low-power wait on
-     *          \c GetRtcMs. In unit tests, advance the simulated RTC.
+     * \details Holds every transmission until its fire instant, the nominal
+     *          slot start minus \c tx_ramp_ms. The node woke up to
+     *          \ref TX_LEAD_MS early, or up to one guard early when the slot
+     *          was predicted Rx. In production, a busy-wait on \c GetRtcMs
+     *          (the resolution is one RTC tick, 1/4096 s). In unit tests,
+     *          advance the simulated RTC.
      *
      * \param abs_rtc_ms  Absolute RTC time to wait until (ms-since-midnight).
      */
     void     (*WaitUntilMs)(uint32_t abs_rtc_ms);
+
+    /*!
+     * Time from the \c RadioSend call to the packet's first preamble symbol
+     * on air, with the radio prepared (\c RadioPrepareTx), in ms. A property
+     * of the radio and its driver, measured on the bench as \c TX_DONE
+     * \c start minus \c SYNC_TX \c send.
+     */
+    uint32_t tx_ramp_ms;
 } TdmaPlatform_t;
 
 /* =========================================================================
@@ -144,8 +183,9 @@ void TdmaMachine_Init(const TdmaPlatform_t *platform);
  *          \c CLOCK_COLD. A C1/C2 node boots cold: it enters scanning
  *          (continuous Rx on \ref SCAN_FREQ_HZ, no alarm) and the chain is
  *          started by \ref TdmaMachine_BootstrapFromSync on the first Sync
- *          packet. C3 is never cold: its chain starts at the current RTC
- *          time.
+ *          packet. C3 is never cold: its chain starts now, with the first
+ *          slot starting \ref TX_LEAD_MS from now so that a first Tx slot
+ *          has its full lead.
  *
  * \retval  true   The alarm chain is running: the caller must schedule the
  *                 first \ref TdmaMachine_SlotTask now.

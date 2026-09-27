@@ -154,13 +154,13 @@ void test_c2_boot_clock_state_is_cold(void)
 void test_c2_scanning_returns_rx_for_sync_phase(void)
 {
     FrameCursor_t c = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u)));
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u), 0u));
 }
 
 void test_c2_scanning_returns_rx_for_beacon_phase(void)
 {
     FrameCursor_t c = {.phase_index = 5u, .cell_index = 0u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, &s_beacon_phase));
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, &s_beacon_phase, 0u));
 }
 
 /* ------- Packet 1: RTC set with binary target_ms -------------------------- */
@@ -345,7 +345,7 @@ void test_c2_sync_cell0_always_rx_when_warm(void)
 {
     sync_mac();
     FrameCursor_t c = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u)));
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u), 0u));
 }
 
 void test_c2_sync_cell1_tx_when_epoch_received(void)
@@ -355,7 +355,7 @@ void test_c2_sync_cell1_tx_when_epoch_received(void)
     FrameCursor_t c1 = {.phase_index = 0u, .cell_index = 1u, .slot_index = 0u};
 
     /* Step 1: SlotOpportunity at cell 0 → phase entry detected, epoch_received=false */
-    MAC_OnSlotOpportunity(&c0, TdmaTable_GetPhase(0u));
+    MAC_OnSlotOpportunity(&c0, TdmaTable_GetPhase(0u), 0u);
 
     /* Step 2: radio receives sync packet in that RX window → Tier 1 → epoch armed */
     SyncPayload_t p;
@@ -363,7 +363,7 @@ void test_c2_sync_cell1_tx_when_epoch_received(void)
     MAC_OnSyncPacketReceived(&p, 0u);  /* error=0 → Tier 1, epoch stored */
 
     /* Step 3: SlotOpportunity at cell 1 → epoch received → SLOT_TX */
-    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c1, TdmaTable_GetPhase(0u)));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c1, TdmaTable_GetPhase(0u), 0u));
 }
 
 void test_c2_sync_cell1_rx_when_no_epoch(void)
@@ -372,11 +372,11 @@ void test_c2_sync_cell1_rx_when_no_epoch(void)
     /* No new cell-0 reception this occurrence — epoch_received = false */
     /* Force a new phase entry to reset the epoch flag */
     FrameCursor_t co = {.phase_index = 1u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&co, &s_other_phase);
+    MAC_OnSlotOpportunity(&co, &s_other_phase, 0u);
     FrameCursor_t c0 = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
     FrameCursor_t c1 = {.phase_index = 0u, .cell_index = 1u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0, TdmaTable_GetPhase(0u));  /* cell 0 = RX, no pkt received */
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c1, TdmaTable_GetPhase(0u)));
+    MAC_OnSlotOpportunity(&c0, TdmaTable_GetPhase(0u), 0u);  /* cell 0 = RX, no pkt received */
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c1, TdmaTable_GetPhase(0u), 0u));
 }
 
 /* ------- CellEligibilityMask for hop 0–5 ---------------------------------- */
@@ -416,7 +416,7 @@ void test_c2_beacon_tx_budget_set_on_first_beacon(void)
     MAC_OnBeaconReceived(&b);
 
     FrameCursor_t c = {.phase_index = 5u, .cell_index = 0u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c, &s_beacon_phase));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c, &s_beacon_phase, 0u));
 }
 
 void test_c2_beacon_tx_budget_decrements_on_tx(void)
@@ -427,13 +427,13 @@ void test_c2_beacon_tx_budget_decrements_on_tx(void)
 
     FrameCursor_t c0 = {.phase_index = 5u, .cell_index = 0u, .slot_index = 0u};
     FrameCursor_t c1 = {.phase_index = 5u, .cell_index = 1u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0, &s_beacon_phase);
-    MAC_OnSlotOpportunity(&c1, &s_beacon_phase);
+    MAC_OnSlotOpportunity(&c0, &s_beacon_phase, 0u);
+    MAC_OnSlotOpportunity(&c1, &s_beacon_phase, 0u);
 
     FrameCursor_t nc0 = {.phase_index = 6u, .cell_index = 0u, .slot_index = 0u};
     FrameCursor_t nc1 = {.phase_index = 6u, .cell_index = 1u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&nc0, &s_beacon_phase));
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&nc1, &s_beacon_phase));
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&nc0, &s_beacon_phase, 0u));
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&nc1, &s_beacon_phase, 0u));
 }
 
 void test_c2_beacon_tx_budget_resets_on_hop_change(void)
@@ -444,14 +444,14 @@ void test_c2_beacon_tx_budget_resets_on_hop_change(void)
 
     FrameCursor_t c0 = {.phase_index = 5u, .cell_index = 0u};
     FrameCursor_t c1 = {.phase_index = 5u, .cell_index = 1u};
-    MAC_OnSlotOpportunity(&c0, &s_beacon_phase);
-    MAC_OnSlotOpportunity(&c1, &s_beacon_phase);
+    MAC_OnSlotOpportunity(&c0, &s_beacon_phase, 0u);
+    MAC_OnSlotOpportunity(&c1, &s_beacon_phase, 0u);
 
     BeaconPayload_t b2 = {.hop_count = 2u, .node_id = 42u, .route_cost = 100u};
     MAC_OnBeaconReceived(&b2);
 
     FrameCursor_t nc0 = {.phase_index = 7u, .cell_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&nc0, &s_beacon_phase));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&nc0, &s_beacon_phase, 0u));
 }
 
 /* ------- Beacon Tx at cell 3+ (relative to beacon reception) -------------- */
@@ -465,12 +465,12 @@ void test_c2_beacon_tx_at_cell_3_after_beacon_received(void)
     /* Consume budget at cells 0 and 1 */
     FrameCursor_t c0 = {.phase_index = 5u, .cell_index = 0u, .slot_index = 0u};
     FrameCursor_t c1 = {.phase_index = 5u, .cell_index = 1u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0, &s_beacon_phase);
-    MAC_OnSlotOpportunity(&c1, &s_beacon_phase);
+    MAC_OnSlotOpportunity(&c0, &s_beacon_phase, 0u);
+    MAC_OnSlotOpportunity(&c1, &s_beacon_phase, 0u);
 
     /* Cell 2: budget exhausted → Rx */
     FrameCursor_t c2 = {.phase_index = 5u, .cell_index = 2u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c2, &s_beacon_phase));
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c2, &s_beacon_phase, 0u));
 
     /* Receive new beacon at cell 3 with different hop → structural change → budget reset */
     BeaconPayload_t b2 = {.hop_count = 5u, .node_id = 42u, .route_cost = 100u};
@@ -478,15 +478,15 @@ void test_c2_beacon_tx_at_cell_3_after_beacon_received(void)
 
     /* Cell 3: budget > 0 → Tx (old code would fail: 3 < 2 is false) */
     FrameCursor_t c3 = {.phase_index = 5u, .cell_index = 3u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c3, &s_beacon_phase));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c3, &s_beacon_phase, 0u));
 
     /* Cell 4: budget > 0 → Tx */
     FrameCursor_t c4 = {.phase_index = 5u, .cell_index = 4u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c4, &s_beacon_phase));
+    TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c4, &s_beacon_phase, 0u));
 
     /* Cell 5: budget exhausted → Rx */
     FrameCursor_t c5 = {.phase_index = 5u, .cell_index = 5u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c5, &s_beacon_phase));
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c5, &s_beacon_phase, 0u));
 }
 
 void test_c2_beacon_tx_budget_getter(void)
@@ -501,7 +501,7 @@ void test_c2_beacon_tx_budget_getter(void)
 
     /* Consume one budget */
     FrameCursor_t c0 = {.phase_index = 5u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0, &s_beacon_phase);
+    MAC_OnSlotOpportunity(&c0, &s_beacon_phase, 0u);
     TEST_ASSERT_EQUAL(BEACON_K_TX_CELLS - 1u, MAC_GetBeaconTxBudget());
 }
 
@@ -512,7 +512,7 @@ void test_c2_sync_tx_budget_limits_to_3_per_occurrence(void)
     sync_mac();
     /* Enter a 6-cell sync phase at cell 0 */
     FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);  /* cell 0 = RX, phase entry */
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6, 0u);  /* cell 0 = RX, phase entry */
 
     /* Receive epoch at cell 0 - Tier 1 */
     SyncPayload_t p;
@@ -522,12 +522,12 @@ void test_c2_sync_tx_budget_limits_to_3_per_occurrence(void)
     /* Cells 1-3: SLOT_TX (budget = 3) */
     for (uint8_t cell = 1u; cell <= 3u; cell++) {
         FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
-        TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c, &s_sync_phase_6));
+        TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c, &s_sync_phase_6, 0u));
     }
     /* Cells 4-5: SLOT_RX (budget exhausted) */
     for (uint8_t cell = 4u; cell <= 5u; cell++) {
         FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
-        TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, &s_sync_phase_6));
+        TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, &s_sync_phase_6, 0u));
     }
 }
 
@@ -536,7 +536,7 @@ void test_c2_sync_tx_budget_resets_on_next_occurrence(void)
     sync_mac();
     /* First occurrence: exhaust budget in 6-cell phase */
     FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6, 0u);
 
     SyncPayload_t p;
     make_sync_pkt(&p, 0u, 0u);
@@ -544,15 +544,15 @@ void test_c2_sync_tx_budget_resets_on_next_occurrence(void)
 
     for (uint8_t cell = 1u; cell <= 5u; cell++) {
         FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
-        MAC_OnSlotOpportunity(&c, &s_sync_phase_6);
+        MAC_OnSlotOpportunity(&c, &s_sync_phase_6, 0u);
     }
 
     /* Second occurrence: enter a different phase, then re-enter sync phase */
     FrameCursor_t co = {.phase_index = 11u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&co, &s_other_phase);
+    MAC_OnSlotOpportunity(&co, &s_other_phase, 0u);
 
     FrameCursor_t c0b = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0b, &s_sync_phase_6);  /* phase entry → budget reset */
+    MAC_OnSlotOpportunity(&c0b, &s_sync_phase_6, 0u);  /* phase entry → budget reset */
 
     /* Receive epoch again */
     make_sync_pkt(&p, 0u, 0u);
@@ -561,10 +561,10 @@ void test_c2_sync_tx_budget_resets_on_next_occurrence(void)
     /* Budget should be restored: cells 1-3 TX, cell 4 RX */
     for (uint8_t cell = 1u; cell <= 3u; cell++) {
         FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
-        TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c, &s_sync_phase_6));
+        TEST_ASSERT_EQUAL(SLOT_TX, MAC_OnSlotOpportunity(&c, &s_sync_phase_6, 0u));
     }
     FrameCursor_t c4 = {.phase_index = 10u, .cell_index = 4u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c4, &s_sync_phase_6));
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c4, &s_sync_phase_6, 0u));
 }
 
 void test_c2_sync_tx_budget_getter_after_init(void)
@@ -576,18 +576,18 @@ void test_c2_sync_tx_budget_getter_decrements_on_tx(void)
 {
     sync_mac();
     FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6, 0u);
 
     SyncPayload_t p;
     make_sync_pkt(&p, 0u, 0u);
     MAC_OnSyncPacketReceived(&p, 0u);
 
     FrameCursor_t c1 = {.phase_index = 10u, .cell_index = 1u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c1, &s_sync_phase_6);
+    MAC_OnSlotOpportunity(&c1, &s_sync_phase_6, 0u);
     TEST_ASSERT_EQUAL(SYNC_TX_BUDGET - 1u, MAC_GetSyncTxBudget());
 
     FrameCursor_t c2 = {.phase_index = 10u, .cell_index = 2u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c2, &s_sync_phase_6);
+    MAC_OnSlotOpportunity(&c2, &s_sync_phase_6, 0u);
     TEST_ASSERT_EQUAL(SYNC_TX_BUDGET - 2u, MAC_GetSyncTxBudget());
 }
 
@@ -595,7 +595,7 @@ void test_c2_sync_tx_budget_getter_zero_after_exhaustion(void)
 {
     sync_mac();
     FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6, 0u);
 
     SyncPayload_t p;
     make_sync_pkt(&p, 0u, 0u);
@@ -603,7 +603,7 @@ void test_c2_sync_tx_budget_getter_zero_after_exhaustion(void)
 
     for (uint8_t cell = 1u; cell <= 3u; cell++) {
         FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
-        MAC_OnSlotOpportunity(&c, &s_sync_phase_6);
+        MAC_OnSlotOpportunity(&c, &s_sync_phase_6, 0u);
     }
     TEST_ASSERT_EQUAL(0u, MAC_GetSyncTxBudget());
 }
@@ -612,7 +612,7 @@ void test_c2_sync_tx_budget_getter_resets_on_phase_entry(void)
 {
     sync_mac();
     FrameCursor_t c0 = {.phase_index = 10u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6);
+    MAC_OnSlotOpportunity(&c0, &s_sync_phase_6, 0u);
 
     SyncPayload_t p;
     make_sync_pkt(&p, 0u, 0u);
@@ -620,13 +620,13 @@ void test_c2_sync_tx_budget_getter_resets_on_phase_entry(void)
 
     for (uint8_t cell = 1u; cell <= 3u; cell++) {
         FrameCursor_t c = {.phase_index = 10u, .cell_index = cell, .slot_index = 0u};
-        MAC_OnSlotOpportunity(&c, &s_sync_phase_6);
+        MAC_OnSlotOpportunity(&c, &s_sync_phase_6, 0u);
     }
     TEST_ASSERT_EQUAL(0u, MAC_GetSyncTxBudget());
 
     /* Phase entry to a different phase resets the budget */
     FrameCursor_t co = {.phase_index = 11u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&co, &s_other_phase);
+    MAC_OnSlotOpportunity(&co, &s_other_phase, 0u);
     TEST_ASSERT_EQUAL(SYNC_TX_BUDGET, MAC_GetSyncTxBudget());
 }
 
@@ -653,7 +653,7 @@ void test_c2_epoch_received_resets_on_phase_entry(void)
 
     /* First slot opportunity at phase 0 — triggers phase entry */
     FrameCursor_t c0 = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c0, TdmaTable_GetPhase(0u));
+    MAC_OnSlotOpportunity(&c0, TdmaTable_GetPhase(0u), 0u);
 
     /* Receive Tier 1 — epoch received = true */
     SyncPayload_t p;
@@ -663,7 +663,7 @@ void test_c2_epoch_received_resets_on_phase_entry(void)
 
     /* Phase entry to a different phase resets the flag */
     FrameCursor_t c1 = {.phase_index = 1u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c1, &s_other_phase);
+    MAC_OnSlotOpportunity(&c1, &s_other_phase, 0u);
     TEST_ASSERT_FALSE(MAC_GetEpochReceivedThisPhase());
 }
 

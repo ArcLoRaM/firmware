@@ -42,6 +42,9 @@
 #  define NODE_CLASS_BIT  PARTICIPANT_C3
 #endif
 
+_Static_assert(TX_LEAD_MS <= MAX_GUARD_TIME_MS,
+               "a Tx wake must stay within the gap sized for MAX_GUARD_TIME_MS");
+
 /* =========================================================================
  * Module state
  * ========================================================================= */
@@ -218,24 +221,81 @@ static void open_rx_window(const Phase_t *phase, uint32_t now_ms)
     s_platform.RadioSetRx(last_ms - now_ms, cap_ms - now_ms);
 }
 
+/* Transmit in the current slot: the packet starts on air exactly at the
+ * nominal slot start (ADR-0016). All variable work happens first, inside the
+ * Tx lead; then the node waits for the fire instant (nominal start minus the
+ * radio's ramp) and fires. A late fire instant means the lead was too short:
+ * a Sync packet is then dropped, since receivers would take its lateness for
+ * clock error. */
+static void transmit(const Phase_t *phase, uint32_t freq_hz)
+{
+    s_platform.RadioPrepareTx();
+
+    ComplianceResult_t result =
+        ComplianceEngine_RequestChannel(freq_hz, phase->slot_active_ms,
+                                        TX_POWER_DBM);
+    if (result != COMPLIANCE_GRANTED) {
+        ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_M, "TX_DENIED", "res=%u freq=%u",
+               (unsigned)result, (unsigned)freq_hz);
+        s_platform.RadioSleep();
+        return;
+    }
+
+    SyncPayload_t pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.ms_since_midnight_sync_phase = MAC_GetSyncPhaseEpochMs();
+    MAC_GetSyncPhaseDate(&pkt.day, &pkt.month, &pkt.year);
+    pkt.sync_phase_index = (uint8_t)s_cursor.phase_index;
+    pkt.sync_cell_index  = (uint8_t)s_cursor.cell_index;
+
+    uint32_t fire_ms = s_slot_start_ms - s_platform.tx_ramp_ms;
+    uint32_t now_ms  = s_platform.GetRtcMs();
+    int32_t  late_ms = (int32_t)(now_ms - fire_ms);
+    if (late_ms > 0) {
+        ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_L, "TX_LATE", "plan=%u fire=%u now=%u",
+               (unsigned)s_slot_start_ms, (unsigned)fire_ms, (unsigned)now_ms);
+        if (phase->type == PHASE_TYPE_SYNC) {
+            ComplianceEngine_ReportTxDone(freq_hz, 0u);  /* refund: not sent */
+            s_platform.RadioSleep();
+            return;
+        }
+    } else {
+        s_platform.WaitUntilMs(fire_ms);
+    }
+
+    uint32_t send_ms = s_platform.GetRtcMs();
+    s_platform.RadioSend((const uint8_t *)&pkt, (uint8_t)sizeof(pkt));
+    /* plan = nominal slot start, the instant the packet should start on
+     * air; send = RTC at Radio.Send. The radio's own TX start is logged by
+     * TX_DONE (end - toa): start - send measures the ramp. */
+    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "SYNC_TX",
+           "ph=%u ce=%u ep=%u plan=%u send=%u freq=%u",
+           (unsigned)pkt.sync_phase_index, (unsigned)pkt.sync_cell_index,
+           (unsigned)pkt.ms_since_midnight_sync_phase,
+           (unsigned)s_slot_start_ms, (unsigned)send_ms, (unsigned)freq_hz);
+    ComplianceEngine_ReportTxDone(freq_hz,
+                                  s_platform.RadioTimeOnAir((uint8_t)sizeof(pkt)));
+}
+
 static bool next_slot_is_rx(const Phase_t *phase);
 
 /* Wake time for the slot at s_slot_start_ms (the cursor already points at
- * it): guard-time look-ahead, early by the guard if the slot will be Rx. */
+ * it): early by the guard if the slot will be Rx, by the Tx lead otherwise.
+ * A Skip slot is woken like a Tx slot: the prediction does not tell them
+ * apart, and a Skip wake has no radio action to time. */
 static uint32_t next_wake_ms(void)
 {
-    uint32_t wake_ms = s_slot_start_ms;
     const Phase_t *next_phase = TdmaTable_GetPhase(s_cursor.phase_index);
     if (next_phase != NULL && next_slot_is_rx(next_phase)) {
-        wake_ms -= GuardTimeResolver_GetGuardMs();
+        return s_slot_start_ms - GuardTimeResolver_GetGuardMs();
     }
-    return wake_ms;
+    return s_slot_start_ms - TX_LEAD_MS;
 }
 
 /* Determine whether the next slot opportunity will be RX (for guard-time
    look-ahead).  Guard is applied when the next slot is deterministically Rx
    or when its role is uncertain (conservative Rx default).  Guard is withheld
-   only when the next slot is deterministically Tx. */
+   (Tx lead instead) only when the next slot is deterministically Tx or Skip. */
 static bool next_slot_is_rx(const Phase_t *phase)
 {
     switch (phase->direction_mode) {
@@ -316,9 +376,10 @@ bool TdmaMachine_Start(void)
         enter_scanning("boot");
         return false;
     }
-    /* Never cold (C3): the chain starts now, from {0,0,0}. */
-    s_slot_start_ms    = s_platform.GetRtcMs();
-    s_expected_wake_ms = s_slot_start_ms;
+    /* Never cold (C3): the chain starts now, from {0,0,0}. This wake is
+     * the first slot's Tx lead. */
+    s_expected_wake_ms = s_platform.GetRtcMs();
+    s_slot_start_ms    = s_expected_wake_ms + TX_LEAD_MS;
     s_running          = true;
     return true;
 }
@@ -339,7 +400,7 @@ void TdmaMachine_OnRxEnd(void)
     /* The next wake was programmed at the start of this slot, before its
      * packet arrived. Re-decide it now that the MAC has seen the packet:
      * e.g. a Tier 1 epoch turns C2's next Sync cell from Rx into Tx, which
-     * needs no guard. The Rx window ends by slot end + MAX_GUARD_TIME_MS and
+     * wakes a Tx lead early instead of a guard. The Rx window ends by slot end + MAX_GUARD_TIME_MS and
      * gaps are >= 2 x MAX_GUARD_TIME_MS, so the early wake is still ahead. */
     if (s_running) {
         uint32_t wake_ms = next_wake_ms();
@@ -440,7 +501,7 @@ void TdmaMachine_SlotTask(void)
     }
 
     /* ---- Step 7: MAC decision ---- */
-    decision = MAC_OnSlotOpportunity(&s_cursor, phase);
+    decision = MAC_OnSlotOpportunity(&s_cursor, phase, s_slot_start_ms);
     /* wake = actual minus programmed wake time: local timing deviation. */
     ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_H, "SLOT",
            "ph=%u ty=%s ce=%u sl=%u pos=%s dec=%s wake=%d nom=%u",
@@ -452,40 +513,7 @@ void TdmaMachine_SlotTask(void)
 
     /* ---- Step 8: radio action ---- */
     if (decision == SLOT_TX) {
-        /* If we woke early (guard applied) and MAC decided Tx, delay to
-         * nominal slot start before transmitting. */
-        if (s_platform.WaitUntilMs != NULL && now_ms < s_slot_start_ms) {
-            s_platform.WaitUntilMs(s_slot_start_ms);
-        }
-        ComplianceResult_t result =
-            ComplianceEngine_RequestChannel(freq_hz,
-                                            phase->slot_active_ms,
-                                            TX_POWER_DBM);
-        if (result != COMPLIANCE_GRANTED) {
-            ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_M, "TX_DENIED", "res=%u freq=%u",
-                   (unsigned)result, (unsigned)freq_hz);
-        }
-        if (result == COMPLIANCE_GRANTED) {
-            SyncPayload_t pkt;
-            memset(&pkt, 0, sizeof(pkt));
-            pkt.ms_since_midnight_sync_phase = MAC_GetSyncPhaseEpochMs();
-            MAC_GetSyncPhaseDate(&pkt.day, &pkt.month, &pkt.year);
-            pkt.sync_phase_index = (uint8_t)s_cursor.phase_index;
-            pkt.sync_cell_index  = (uint8_t)s_cursor.cell_index;
-            uint32_t send_ms = s_platform.GetRtcMs();
-            s_platform.RadioSend((const uint8_t *)&pkt, (uint8_t)sizeof(pkt));
-            /* plan = nominal slot start, send = RTC just before Radio.Send.
-             * The radio's own TX start is logged by TX_DONE (end - toa). */
-            ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "SYNC_TX",
-                   "ph=%u ce=%u ep=%u plan=%u send=%u freq=%u",
-                   (unsigned)pkt.sync_phase_index, (unsigned)pkt.sync_cell_index,
-                   (unsigned)pkt.ms_since_midnight_sync_phase,
-                   (unsigned)s_slot_start_ms, (unsigned)send_ms,
-                   (unsigned)freq_hz);
-            uint32_t actual_toa = s_platform.RadioTimeOnAir((uint8_t)sizeof(pkt));
-            ComplianceEngine_ReportTxDone(freq_hz, actual_toa);
-        }
-        /* On non-GRANTED: fall through to alarm programming without TX */
+        transmit(phase, freq_hz);
     } else if (decision == SLOT_RX) {
         open_rx_window(phase, now_ms);
     } else {

@@ -42,7 +42,7 @@ EVENTS: dict[str, Event] = {
     "SYNC_TX": Event(
         "Y",
         ("ph", "ce", "ep", "plan", "send", "freq"),
-        "Sync packet handed to the radio: plan = nominal slot start, send = RTC at Radio.Send.",
+        "Sync packet handed to the radio: plan = nominal slot start (intended on-air start), send = RTC at Radio.Send.",
     ),
     "SYNC_EPOCH": Event("Y", ("ph", "ep"), "C3: Sync Phase Epoch captured at phase entry."),
     "SYNC_SILENCE": Event("Y", ("last", "now"), "Sync silence timeout expired (ADR-0013)."),
@@ -60,6 +60,10 @@ EVENTS: dict[str, Event] = {
     "SLOT_SUSPECT": Event("T", ("exp", "now"), "Wake far from expected: cursor untrusted, MAC re-acquires."),
     "CURSOR_CORRUPT": Event("T", ("pos",), "FrameCursor slot position corrupted."),
     "TX_DENIED": Event("T", ("res", "freq"), "Compliance engine refused a TX."),
+    "TX_LATE": Event(
+        "T", ("plan", "fire", "now"),
+        "Slot task reached the fire instant (plan - Tx ramp) after it passed: a Sync packet is dropped, others go late.",
+    ),
     "BOOTSTRAP": Event(
         "T", ("ph", "ce", "nom"), "Cursor re-anchored on a received Sync cell; the alarm chain (re)starts."
     ),
@@ -77,7 +81,7 @@ EVENTS: dict[str, Event] = {
     "RX_LATE": Event("T", ("now", "last"), "Woke after the latest packet start: no Rx window opened."),
     "WAKE_ADJ": Event(
         "T", ("from", "to"),
-        "Next wake re-decided at Rx end (e.g. guard dropped: next Sync cell became Tx).",
+        "Next wake re-decided at Rx end (e.g. guard replaced by the Tx lead: next Sync cell became Tx).",
     ),
     # --- Radio ---------------------------------------------------------------
     "TX_DONE": Event("R", ("sz", "toa", "end", "start"), "TX finished at end; start = end - toa."),

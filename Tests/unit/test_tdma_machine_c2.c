@@ -19,6 +19,7 @@ static int      s_alarm_calls;
 static uint32_t s_channel_set;
 static int      s_channel_calls;
 static int      s_radio_send_calls;
+static int      s_radio_prepare_tx_calls;
 static uint8_t  s_last_sent_buf[32];
 static uint8_t  s_last_sent_len;
 static uint32_t s_rx_start_window_ms;
@@ -35,6 +36,7 @@ static uint32_t stub_GetRtcMs(void)                          { return s_rtc_ms; 
 static void     stub_ProgramAlarmA(uint32_t t)               { s_alarm_programmed = t; s_alarm_calls++;              }
 static void     stub_CancelAlarmA(void)                      { s_cancel_alarm_calls++;                               }
 static void     stub_RadioSetChannel(uint32_t f)             { s_channel_set = f; s_channel_calls++;                 }
+static void     stub_RadioPrepareTx(void)                    { s_radio_prepare_tx_calls++;              }
 static void     stub_RadioSend(const uint8_t *b, uint8_t l)
 {
     if (l <= (uint8_t)sizeof(s_last_sent_buf)) {
@@ -59,6 +61,7 @@ static const TdmaPlatform_t k_platform = {
     .ProgramAlarmA  = stub_ProgramAlarmA,
     .CancelAlarmA   = stub_CancelAlarmA,
     .RadioSetChannel= stub_RadioSetChannel,
+    .RadioPrepareTx = stub_RadioPrepareTx,
     .RadioSend      = stub_RadioSend,
     .RadioSetRx     = stub_RadioSetRx,
     .RadioScan      = stub_RadioScan,
@@ -108,6 +111,8 @@ static MAC_Hooks_t s_mac_hooks = {
 #define SLOT_ACTIVE_MS   2500u
 #define GAP_MS            500u
 #define SLOT_STEP_MS     3000u   /* SLOT_ACTIVE_MS + GAP_MS */
+/* TdmaMachine_Start: the first slot starts one Tx lead after the wake. */
+#define T0               TX_LEAD_MS
 /* 10-byte SyncPayload at SF12/BW125/CR4-5, 8-symbol preamble (Radio.TimeOnAir) */
 #define SYNC_TOA_MS       991u
 /* Synced Rx window of a slot starting at 0: the latest packet start is
@@ -125,6 +130,7 @@ static void init_all(void)
     s_channel_set         = 0u;
     s_channel_calls       = 0;
     s_radio_send_calls    = 0;
+    s_radio_prepare_tx_calls = 0;
     s_rx_start_window_ms  = 0u;
     s_rx_cap_ms           = 0u;
     s_radio_set_rx_calls  = 0;
@@ -230,9 +236,9 @@ void test_slot_task_programs_alarm_nominal_for_tx_slot(void)
     /*
      * Cell 0 of Sync phase: always SLOT_RX for C2 (epoch not yet received).
      * DIRECTION_MAC_CELL + epoch not received → next_slot_is_rx=true → guard.
-     * next_alarm = 0 + 2500 + 500 - MAX_GUARD_TIME_MS = 2995.
+     * next_alarm = T0 + 2500 + 500 - MAX_GUARD_TIME_MS.
      */
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(T0 + SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 /* =========================================================================
@@ -247,9 +253,9 @@ void test_slot_task_rx_alarm_early_by_guard(void)
     TdmaMachine_SlotTask();
     /*
      * Decision = RX.  DIRECTION_MAC_CELL + epoch not received → next slot Rx.
-     * alarm = 0 + SLOT_STEP_MS - MAX_GUARD_TIME_MS = 3000 - 5 = 2995.
+     * alarm = T0 + SLOT_STEP_MS - MAX_GUARD_TIME_MS.
      */
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(T0 + SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 /* =========================================================================
@@ -263,11 +269,12 @@ void test_rx_window_ends_at_latest_packet_start(void)
     start_chain();
     ArcLog_CaptureReset();
     TdmaMachine_SlotTask();
-    /* last = 2500 + 200 - 991 = 1709, cap = 2700 (from now = slot start) */
+    /* Slot at T0 = 20, woken at 0: last = 20 + 2500 + 200 - 991 = 1729,
+     * cap = 2720 (both from now = 0) */
     TEST_ASSERT_EQUAL(1, s_radio_set_rx_calls);
-    TEST_ASSERT_EQUAL(WIN_LAST_MS, s_rx_start_window_ms);
-    TEST_ASSERT_EQUAL(WIN_CAP_MS, s_rx_cap_ms);
-    TEST_ASSERT_ARCLOG("RX_WIN last=1709 cap=2700");
+    TEST_ASSERT_EQUAL(T0 + WIN_LAST_MS, s_rx_start_window_ms);
+    TEST_ASSERT_EQUAL(T0 + WIN_CAP_MS, s_rx_cap_ms);
+    TEST_ASSERT_ARCLOG("RX_WIN last=1729 cap=2720");
 }
 
 void test_rx_window_measured_from_early_wake(void)
@@ -290,14 +297,14 @@ void test_rx_window_uses_max_guard_not_current_guard(void)
     start_chain();
     s_rtc_ms = 40u;                   /* 40 ms late, within the checkpoint */
     TdmaMachine_SlotTask();
-    TEST_ASSERT_EQUAL(WIN_LAST_MS - 40u, s_rx_start_window_ms);
-    TEST_ASSERT_EQUAL(WIN_CAP_MS - 40u, s_rx_cap_ms);
+    TEST_ASSERT_EQUAL(T0 + WIN_LAST_MS - 40u, s_rx_start_window_ms);
+    TEST_ASSERT_EQUAL(T0 + WIN_CAP_MS - 40u, s_rx_cap_ms);
 }
 
 void test_rx_window_too_late_sleeps_radio(void)
 {
     /* A ToA longer than the slot plus max guard leaves no start instant. */
-    s_toa_ms = WIN_CAP_MS + 1u;
+    s_toa_ms = T0 + WIN_CAP_MS + 1u;
     s_rtc_ms = 0u;
     start_chain();
     ArcLog_CaptureReset();
@@ -548,17 +555,17 @@ void test_no_guard_when_epoch_received(void)
 
     step_slot();   /* cell 1 → TX (epoch received) */
     /*
-     * Alarm for cell 2: epoch received → next slot is Tx → no guard.
-     * alarm = 2 × SLOT_STEP_MS = 6000 (nominal, no guard subtraction).
+     * Alarm for cell 2: epoch received → next slot is Tx → no guard, one
+     * Tx lead: alarm = T0 + 2 × SLOT_STEP_MS - TX_LEAD_MS.
      */
-    TEST_ASSERT_EQUAL(2u * SLOT_STEP_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(T0 + 2u * SLOT_STEP_MS - TX_LEAD_MS, s_alarm_programmed);
 }
 
 /* =========================================================================
  * Next wake re-decided at Rx end: the alarm for the next cell is programmed
  * at the start of the current one, before its packet arrives. A Tier 1
- * epoch received in this cell turns the next cell into Tx, so the guard is
- * dropped and the node wakes at the nominal start instead of waiting.
+ * epoch received in this cell turns the next cell into Tx, so the node wakes
+ * one Tx lead early instead of one guard early.
  * ========================================================================= */
 
 void test_rx_end_with_epoch_drops_guard_from_next_wake(void)
@@ -566,22 +573,27 @@ void test_rx_end_with_epoch_drops_guard_from_next_wake(void)
     sync_mac();
     s_rtc_ms = 0u;
     start_chain();
-    TdmaMachine_SlotTask();   /* cell 0 → RX, alarm = SLOT_STEP_MS - guard */
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
+    TdmaMachine_SlotTask();   /* cell 0 → RX, alarm = T0 + SLOT_STEP_MS - guard */
+    TEST_ASSERT_EQUAL(T0 + SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 
     SyncPayload_t arm;
     memset(&arm, 0, sizeof(arm));
-    MAC_OnSyncPacketReceived(&arm, 0u);  /* Tier 1 → epoch armed */
+    arm.ms_since_midnight_sync_phase = T0;
+    MAC_OnSyncPacketReceived(&arm, T0);  /* Tier 1 → epoch armed */
     ArcLog_CaptureReset();
     s_rtc_ms = 1000u;                    /* RxDone, ~one airtime later */
     TdmaMachine_OnRxEnd();
 
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS, s_alarm_programmed);
-    TEST_ASSERT_ARCLOG("WAKE_ADJ from=2800 to=3000");
+    TEST_ASSERT_EQUAL(T0 + SLOT_STEP_MS - TX_LEAD_MS, s_alarm_programmed);
+    TEST_ASSERT_ARCLOG("WAKE_ADJ from=2820 to=3000");
 
-    step_slot();              /* cell 1 → TX at the nominal start */
-    TEST_ASSERT_EQUAL(0, s_wait_until_ms_calls);
+    step_slot();              /* cell 1 → TX: prepared, fired at the nominal start */
+    TEST_ASSERT_EQUAL(1, s_radio_prepare_tx_calls);
+    TEST_ASSERT_EQUAL(1, s_wait_until_ms_calls);
+    TEST_ASSERT_EQUAL(T0 + SLOT_STEP_MS, s_wait_until_ms_target);
     TEST_ASSERT_EQUAL(1, s_radio_send_calls);
+    TEST_ASSERT_ARCLOG("SYNC_TX ph=0 ce=1 ep=20 plan=3020 send=3020");
+    TEST_ASSERT_NO_ARCLOG("TX_LATE");
 }
 
 void test_rx_end_without_epoch_keeps_guarded_wake(void)
@@ -595,7 +607,7 @@ void test_rx_end_without_epoch_keeps_guarded_wake(void)
     TdmaMachine_OnRxEnd();
 
     TEST_ASSERT_EQUAL(calls, s_alarm_calls);
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(T0 + SLOT_STEP_MS - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 /* =========================================================================
@@ -607,7 +619,7 @@ void test_tx_delayed_to_nominal_when_woke_early(void)
     sync_mac();
     s_rtc_ms = 0u;
     start_chain();
-    TdmaMachine_SlotTask();   /* cell 0 → RX, alarm = SLOT_STEP_MS - GUARD */
+    TdmaMachine_SlotTask();   /* cell 0 → RX, alarm = T0 + SLOT_STEP_MS - GUARD */
 
     /* Arm epoch */
     SyncPayload_t arm;
@@ -619,11 +631,11 @@ void test_tx_delayed_to_nominal_when_woke_early(void)
 
     step_slot();   /* cell 1: woke early (guard), MAC decides Tx */
     /*
-     * WaitUntilMs must be called with nominal slot start (3000).
-     * The stub advances s_rtc_ms to 3000.
+     * WaitUntilMs must be called with the nominal slot start (T0 + 3000),
+     * the platform's Tx ramp being 0. The stub advances s_rtc_ms to it.
      */
     TEST_ASSERT_EQUAL(1, s_wait_until_ms_calls);
-    TEST_ASSERT_EQUAL(SLOT_STEP_MS, s_wait_until_ms_target);
+    TEST_ASSERT_EQUAL(T0 + SLOT_STEP_MS, s_wait_until_ms_target);
     TEST_ASSERT_EQUAL(1, s_radio_send_calls);
 }
 
@@ -658,7 +670,7 @@ void test_suspect_wake_drops_to_cold_without_rtc_write(void)
 
     s_rtc_ms = 0u;
     start_chain();
-    TdmaMachine_SlotTask();                  /* next alarm 3000 - guard = 2800 */
+    TdmaMachine_SlotTask();                  /* next alarm 3020 - guard = 2820 */
     s_rtc_ms = s_alarm_programmed + 4000u;   /* 4000 ms late > 3750 */
     ArcLog_CaptureReset();
     TdmaMachine_SlotTask();
@@ -667,7 +679,7 @@ void test_suspect_wake_drops_to_cold_without_rtc_write(void)
     TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
     TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
     TEST_ASSERT_EQUAL(rtc_sets_before, s_mac_rtc_set_calls);
-    TEST_ASSERT_ARCLOG("SLOT_SUSPECT exp=2800 now=6800");
+    TEST_ASSERT_ARCLOG("SLOT_SUSPECT exp=2820 now=6820");
     TEST_ASSERT_ARCLOG("CLK from=WARM to=COLD why=suspect");
 }
 
@@ -678,7 +690,7 @@ void test_suspect_wake_stops_chain_and_scans(void)
     TdmaMachine_SlotTask();
     int alarms_before = s_alarm_calls;
 
-    s_rtc_ms = s_alarm_programmed + 4000u;   /* 2800 + 4000 = 6800 */
+    s_rtc_ms = s_alarm_programmed + 4000u;   /* 2820 + 4000 = 6820 */
     ArcLog_CaptureReset();
     TdmaMachine_SlotTask();
 

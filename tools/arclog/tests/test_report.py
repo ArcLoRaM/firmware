@@ -88,6 +88,19 @@ def test_packets_are_paired_across_nodes():
     assert tx.tx_latency.mean == pytest.approx(5)
 
 
+def test_tx_start_per_cell_and_ramp():
+    c3, c2 = build_run(drift_ppm=0.0, frames=10, tx_start_lag=5)
+    run = analyse(streams(c3, c2))
+    tx = node(run, "c3")
+    # Fixture: send = plan + 2, radio start = plan + 5.
+    assert tx.tx_ramp.mean == pytest.approx(3)
+    assert set(tx.tx_latency_by_cell) == {0, 1, 2}
+    assert all(st.mean == pytest.approx(5) for st in tx.tx_latency_by_cell.values())
+    md = to_markdown(run)
+    assert "TX_LATE: 0." in md
+    assert "| ce | n | mean |" in md
+
+
 def test_csv_has_one_row_per_received_packet(run_files):
     c3_path, c2_path = run_files
     run = analyse({"c3": list(read_lines(c3_path)), "c2": list(read_lines(c2_path))})

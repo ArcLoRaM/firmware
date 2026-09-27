@@ -83,7 +83,7 @@ void test_c1_boot_clock_state_is_cold(void)
 void test_c1_scanning_returns_rx_for_sync_phase(void)
 {
     FrameCursor_t c = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u)));
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u), 0u));
 }
 
 void test_c1_scanning_returns_rx_for_any_phase(void)
@@ -95,7 +95,7 @@ void test_c1_scanning_returns_rx_for_any_phase(void)
         .slot_active_ms = 1000u,
     };
     FrameCursor_t c = {.phase_index = 1u, .cell_index = 0u, .slot_index = 0u};
-    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, &s_cluster));
+    TEST_ASSERT_EQUAL(SLOT_RX, MAC_OnSlotOpportunity(&c, &s_cluster, 0u));
 }
 
 /* ------- Sync acquisition ------------------------------------------------- */
@@ -207,15 +207,15 @@ void test_c1_phase_tx_flag_always_zero(void)
 {
     three_sync_packets();
     FrameCursor_t c = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u));
+    MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u), 0u);
     TEST_ASSERT_EQUAL(0u, MAC_GetPhaseTxFlag());
 
     FrameCursor_t c2 = {.phase_index = 1u, .cell_index = 0u, .slot_index = 0u};
     static const Phase_t s_other = {
         .type = PHASE_TYPE_MESH_BEACON, .direction_mode = DIRECTION_MAC_CELL, .cell_count = 3u
     };
-    MAC_OnSlotOpportunity(&c2, &s_other);
-    MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u));
+    MAC_OnSlotOpportunity(&c2, &s_other, 0u);
+    MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u), 0u);
     TEST_ASSERT_EQUAL(0u, MAC_GetPhaseTxFlag());
 }
 
@@ -263,7 +263,7 @@ void test_c1_epoch_received_resets_on_phase_entry(void)
     three_sync_packets();
     /* Trigger phase entry at Sync phase */
     FrameCursor_t c = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u));
+    MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u), 0u);
 
     /* Receive Tier 1 — epoch received = true */
     SyncPayload_t p;
@@ -279,7 +279,7 @@ void test_c1_epoch_received_resets_on_phase_entry(void)
     static const Phase_t s_other = {
         .type = PHASE_TYPE_MESH_BEACON, .direction_mode = DIRECTION_MAC_CELL, .cell_count = 3u
     };
-    MAC_OnSlotOpportunity(&c1, &s_other);
+    MAC_OnSlotOpportunity(&c1, &s_other, 0u);
     TEST_ASSERT_FALSE(MAC_GetEpochReceivedThisPhase());
 }
 
