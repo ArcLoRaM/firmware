@@ -223,8 +223,6 @@ static void open_rx_window(const Phase_t *phase, uint32_t now_ms)
  * clock error. */
 static void transmit(const Phase_t *phase, uint32_t freq_hz)
 {
-    s_platform.RadioPrepareTx();
-
     ComplianceResult_t result =
         ComplianceEngine_RequestChannel(freq_hz, phase->slot_active_ms,
                                         TX_POWER_DBM);

@@ -24,7 +24,6 @@
 static uint32_t s_rtc_ms;
 static uint32_t s_alarm_programmed;
 static int      s_radio_send_calls;
-static int      s_radio_prepare_tx_calls;
 static int      s_wait_calls;
 static uint32_t s_wait_target;
 
@@ -32,7 +31,6 @@ static uint32_t stub_GetRtcMs(void)                          { return s_rtc_ms; 
 static void     stub_ProgramAlarmA(uint32_t t)               { s_alarm_programmed = t;                 }
 static void     stub_CancelAlarmA(void)                      {                                         }
 static void     stub_RadioSetChannel(uint32_t f)             { (void)f;                                }
-static void     stub_RadioPrepareTx(void)                    { s_radio_prepare_tx_calls++;             }
 static void     stub_RadioSend(const uint8_t *b, uint8_t l)  { (void)b; (void)l; s_radio_send_calls++; }
 static void     stub_RadioSetRx(uint32_t w, uint32_t c)      { (void)w; (void)c;                       }
 static void     stub_RadioScan(void)                         {                                         }
@@ -45,7 +43,6 @@ static const TdmaPlatform_t k_platform = {
     .ProgramAlarmA   = stub_ProgramAlarmA,
     .CancelAlarmA    = stub_CancelAlarmA,
     .RadioSetChannel = stub_RadioSetChannel,
-    .RadioPrepareTx  = stub_RadioPrepareTx,
     .RadioSend       = stub_RadioSend,
     .RadioSetRx      = stub_RadioSetRx,
     .RadioScan       = stub_RadioScan,
@@ -72,7 +69,6 @@ void setUp(void)
     s_rtc_ms                 = 0u;
     s_alarm_programmed       = 0u;
     s_radio_send_calls       = 0;
-    s_radio_prepare_tx_calls = 0;
     s_wait_calls             = 0;
     s_wait_target            = 0u;
     ArcLog_CaptureReset();
@@ -102,7 +98,6 @@ void test_beacon_tx_woken_one_lead_early_and_fired_at_nominal(void)
 
     s_rtc_ms = s_alarm_programmed;               /* beacon cell 1 */
     TdmaMachine_SlotTask();
-    TEST_ASSERT_EQUAL(2, s_radio_prepare_tx_calls);
     TEST_ASSERT_EQUAL(2, s_radio_send_calls);
     TEST_ASSERT_EQUAL(TX_LEAD_MS + SLOT_STEP_MS, s_wait_target);
     TEST_ASSERT_NO_ARCLOG("TX_LATE");

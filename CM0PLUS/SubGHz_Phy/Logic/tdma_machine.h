@@ -48,8 +48,8 @@
  *
  * \details Every scheduled packet starts on air exactly at its slot's nominal
  *          start. The lead covers the variable work before the radio fires:
- *          wake from Stop2, slot task, logs, compliance, payload build, radio
- *          wake. The node then waits for the nominal start minus the
+ *          wake from Stop2, slot task, logs, compliance, payload build. The
+ *          radio's own start-up is in the platform's Tx ramp. The node then waits for the nominal start minus the
  *          platform's \c tx_ramp_ms and fires. A slot task that reaches the
  *          fire instant late logs \c TX_LATE (and drops a Sync packet).
  *          Sender-local: receivers never use it. Bench worst case 13 ms from
@@ -89,16 +89,8 @@ typedef struct {
     void     (*RadioSetChannel)(uint32_t freq_hz);
 
     /*!
-     * Get the radio ready to transmit without delay: out of sleep, oscillator
-     * running. Called at the start of a Tx slot, before any other work, so
-     * the radio's own wake-up overlaps it and \c RadioSend has a fixed
-     * latency (\c tx_ramp_ms).
-     */
-    void     (*RadioPrepareTx)(void);
-
-    /*!
-     * Transmit \c len bytes from \c buf. After \c RadioPrepareTx the packet
-     * starts on air \c tx_ramp_ms after the call.
+     * Transmit \c len bytes from \c buf. The packet starts on air
+     * \c tx_ramp_ms after the call.
      */
     void     (*RadioSend)(const uint8_t *buf, uint8_t len);
 
@@ -152,9 +144,9 @@ typedef struct {
 
     /*!
      * Time from the \c RadioSend call to the packet's first preamble symbol
-     * on air, with the radio prepared (\c RadioPrepareTx), in ms. A property
-     * of the radio and its driver, measured on the bench as \c TX_DONE
-     * \c start minus \c SYNC_TX \c send.
+     * on air, in ms (radio wake-up, oscillator start-up, PLL lock, PA ramp).
+     * A property of the radio and its driver, measured on the bench as
+     * \c TX_DONE \c start minus \c SYNC_TX \c send.
      */
     uint32_t tx_ramp_ms;
 } TdmaPlatform_t;

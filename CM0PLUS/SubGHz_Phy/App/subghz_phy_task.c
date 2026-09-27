@@ -68,13 +68,13 @@
  * the cap. Recompute if the modem parameters change. */
 #define RX_PREAMBLE_DETECT_MARGIN_MS  262u
 
-/* Time from Radio.Send to the first preamble symbol on air, the radio in
- * standby with its oscillator running (plat_radio_prepare_tx): a fixed
- * sequence of SPI commands (packet params, 10-byte buffer, SetTx), then PLL
- * lock and PA ramp-up, both well under a millisecond. 0 until measured as
- * TX_DONE start - SYNC_TX send on the bench. */
+/* Time from Radio.Send to the first preamble symbol on air: SPI commands
+ * (packet params, 10-byte buffer, SetTx), TCXO start-up (RF_WAKEUP_TIME),
+ * PLL lock and PA ramp-up, the radio in standby after RadioSetChannel.
+ * Measured as TX_DONE start - SYNC_TX send: 4 ms on C3 and on a relaying C2,
+ * every cell (bench 2026-09-27, 66 of 68 packets; the other two +6 / +7). */
 #ifndef TX_RAMP_MS
-#define TX_RAMP_MS  0u
+#define TX_RAMP_MS  4u
 #endif
 
 /* Largest hardware Rx timeout: 24-bit count of 15.625 us steps. */
@@ -221,14 +221,6 @@ static void plat_program_alarm_a(uint32_t abs_ms)
 }
 
 static void     plat_radio_set_channel(uint32_t hz)            { Radio.SetChannel(hz);              }
-
-/* Wake the radio into standby with its oscillator (TCXO) running, so that
- * Radio.Send only has to write the packet and fire: no radio wake-up and no
- * TCXO start-up (RF_WAKEUP_TIME) left between the send and the air. */
-static void plat_radio_prepare_tx(void)
-{
-    SUBGRF_SetStandby(STDBY_XOSC);
-}
 
 static void plat_radio_send(const uint8_t *b, uint8_t l)
 {
@@ -604,7 +596,6 @@ void SubGhzPhyTask_Init(void)
         .ProgramAlarmA   = plat_program_alarm_a,
         .CancelAlarmA    = plat_cancel_alarm_a,
         .RadioSetChannel = plat_radio_set_channel,
-        .RadioPrepareTx  = plat_radio_prepare_tx,
         .RadioSend       = plat_radio_send,
         .RadioSetRx      = plat_radio_set_rx,
         .RadioScan       = plat_radio_scan,

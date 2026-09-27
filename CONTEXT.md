@@ -257,9 +257,9 @@ Receivers therefore expect every packet at the nominal start: no constant is add
 The sender makes it so:
 
 - **Tx lead** (`TX_LEAD_MS`, 20 ms): a Tx slot is woken this early, as an Rx slot is woken one guard early.
-  The lead absorbs all variable work before the radio fires: Stop2 exit, slot task, logs, compliance, payload build, and the radio's own wake-up (`RadioPrepareTx`: standby with the oscillator running).
+  The lead absorbs all variable work before the radio fires: Stop2 exit, slot task, logs, compliance, payload build.
   It is at most `MAX_GUARD_TIME_MS`, so the gaps sized for the guard hold it.
-- **Fire instant**: the nominal start minus the **Tx ramp** (`tx_ramp_ms`, the time from `Radio.Send` to the first preamble symbol with the radio prepared, a platform constant measured as `TX_DONE` start − `SYNC_TX` send).
+- **Fire instant**: the nominal start minus the **Tx ramp** (`tx_ramp_ms`, the time from `Radio.Send` to the first preamble symbol: radio wake-up, TCXO start-up, PLL lock, PA ramp; a platform constant, 4 ms on the bench, measured as `TX_DONE` start − `SYNC_TX` send).
   The node busy-waits for it (`WaitUntilMs`, to within one RTC tick) and sends.
 - **Late fire instant** (`TX_LATE`): the lead was too short.
   A Sync packet is dropped, since receivers would read its lateness as clock error; any other packet is sent late, the slot margin absorbing it.

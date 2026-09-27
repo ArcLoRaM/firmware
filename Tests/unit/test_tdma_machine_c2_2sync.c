@@ -29,14 +29,12 @@ static int      s_alarm_calls;
 static uint32_t s_channel_set;
 static int      s_channel_calls;
 static int      s_radio_send_calls;
-static int      s_radio_prepare_tx_calls;
 static int      s_radio_set_rx_calls;
 static int      s_radio_sleep_calls;
 
 static uint32_t stub_GetRtcMs(void)                          { return s_rtc_ms;                              }
 static void     stub_ProgramAlarmA(uint32_t t)               { s_alarm_programmed = t; s_alarm_calls++;      }
 static void     stub_RadioSetChannel(uint32_t f)             { s_channel_set = f; s_channel_calls++;         }
-static void     stub_RadioPrepareTx(void)                    { s_radio_prepare_tx_calls++;                   }
 static void     stub_RadioSend(const uint8_t *b, uint8_t l)  { (void)b; (void)l; s_radio_send_calls++;      }
 static void     stub_CancelAlarmA(void)                      {                                               }
 static void     stub_RadioSetRx(uint32_t w, uint32_t c)      { (void)w; (void)c; s_radio_set_rx_calls++;     }
@@ -50,7 +48,6 @@ static const TdmaPlatform_t k_platform = {
     .ProgramAlarmA   = stub_ProgramAlarmA,
     .CancelAlarmA    = stub_CancelAlarmA,
     .RadioSetChannel = stub_RadioSetChannel,
-    .RadioPrepareTx  = stub_RadioPrepareTx,
     .RadioSend       = stub_RadioSend,
     .RadioSetRx      = stub_RadioSetRx,
     .RadioScan       = stub_RadioScan,
@@ -104,7 +101,6 @@ static void init_all(void)
     s_channel_set       = 0u;
     s_channel_calls     = 0;
     s_radio_send_calls  = 0;
-    s_radio_prepare_tx_calls = 0;
     s_radio_set_rx_calls= 0;
     s_radio_sleep_calls = 0;
     s_mac_snapshot_ms   = 0u;

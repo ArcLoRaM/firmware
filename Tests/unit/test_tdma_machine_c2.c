@@ -19,7 +19,6 @@ static int      s_alarm_calls;
 static uint32_t s_channel_set;
 static int      s_channel_calls;
 static int      s_radio_send_calls;
-static int      s_radio_prepare_tx_calls;
 static uint8_t  s_last_sent_buf[32];
 static uint8_t  s_last_sent_len;
 static uint32_t s_rx_start_window_ms;
@@ -36,7 +35,6 @@ static uint32_t stub_GetRtcMs(void)                          { return s_rtc_ms; 
 static void     stub_ProgramAlarmA(uint32_t t)               { s_alarm_programmed = t; s_alarm_calls++;              }
 static void     stub_CancelAlarmA(void)                      { s_cancel_alarm_calls++;                               }
 static void     stub_RadioSetChannel(uint32_t f)             { s_channel_set = f; s_channel_calls++;                 }
-static void     stub_RadioPrepareTx(void)                    { s_radio_prepare_tx_calls++;              }
 static void     stub_RadioSend(const uint8_t *b, uint8_t l)
 {
     if (l <= (uint8_t)sizeof(s_last_sent_buf)) {
@@ -61,7 +59,6 @@ static const TdmaPlatform_t k_platform = {
     .ProgramAlarmA  = stub_ProgramAlarmA,
     .CancelAlarmA   = stub_CancelAlarmA,
     .RadioSetChannel= stub_RadioSetChannel,
-    .RadioPrepareTx = stub_RadioPrepareTx,
     .RadioSend      = stub_RadioSend,
     .RadioSetRx     = stub_RadioSetRx,
     .RadioScan      = stub_RadioScan,
@@ -130,7 +127,6 @@ static void init_all(void)
     s_channel_set         = 0u;
     s_channel_calls       = 0;
     s_radio_send_calls    = 0;
-    s_radio_prepare_tx_calls = 0;
     s_rx_start_window_ms  = 0u;
     s_rx_cap_ms           = 0u;
     s_radio_set_rx_calls  = 0;
@@ -588,8 +584,7 @@ void test_rx_end_with_epoch_drops_guard_from_next_wake(void)
     TEST_ASSERT_EQUAL(T0 + SLOT_STEP_MS - TX_LEAD_MS, s_alarm_programmed);
     TEST_ASSERT_ARCLOG("WAKE_ADJ from=2820 to=3000");
 
-    step_slot();              /* cell 1 → TX: prepared, fired at the nominal start */
-    TEST_ASSERT_EQUAL(1, s_radio_prepare_tx_calls);
+    step_slot();              /* cell 1 → TX, fired at the nominal start */
     TEST_ASSERT_EQUAL(1, s_wait_until_ms_calls);
     TEST_ASSERT_EQUAL(T0 + SLOT_STEP_MS, s_wait_until_ms_target);
     TEST_ASSERT_EQUAL(1, s_radio_send_calls);
