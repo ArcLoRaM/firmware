@@ -53,7 +53,7 @@ static void     stub_WaitUntilMs(uint32_t t)
     s_wait_calls++;
     s_wait_target = t;
     s_wait_seq    = ++s_seq;
-    s_rtc_ms      = t;
+    s_rtc_ms      = t % MS_PER_DAY;
 }
 
 static const TdmaPlatform_t k_platform = {
@@ -111,10 +111,11 @@ void setUp(void)
 
 void tearDown(void) {}
 
-/* Call SlotTask after advancing the simulated RTC to the programmed alarm. */
+/* Call SlotTask after advancing the simulated RTC to the programmed alarm.
+ * Like the RTC, the simulated clock wraps at midnight. */
 static void step_slot(void)
 {
-    s_rtc_ms = s_alarm_programmed;
+    s_rtc_ms = s_alarm_programmed % MS_PER_DAY;
     TdmaMachine_SlotTask();
 }
 
@@ -262,6 +263,45 @@ void test_c3_suspect_wake_rearms_alarm_from_actual_wake(void)
 }
 
 /* =========================================================================
+ * Midnight rollover (issue #54)
+ * ========================================================================= */
+
+void test_c3_tx_at_midnight_fires_at_nominal(void)
+{
+    /* Cell 0 at 23:59:57, cell 1 at 00:00:00, cell 2 at 00:00:03. */
+    s_rtc_ms = MS_PER_DAY - 3000u - TX_LEAD_MS;
+    TEST_ASSERT_TRUE(TdmaMachine_Start());
+    TdmaMachine_SlotTask();
+    TEST_ASSERT_EQUAL(MS_PER_DAY - TX_LEAD_MS, s_alarm_programmed);
+    ArcLog_CaptureReset();
+
+    step_slot();
+    TEST_ASSERT_EQUAL(0u, s_wait_target);
+    TEST_ASSERT_ARCLOG("SYNC_TX ph=0 ce=1 ep=86397000 plan=0 send=0");
+    TEST_ASSERT_EQUAL(SLOT_STEP_MS - TX_LEAD_MS, s_alarm_programmed);
+
+    step_slot();
+    TEST_ASSERT_ARCLOG("SYNC_TX ph=0 ce=2 ep=86397000 plan=3000 send=3000");
+    TEST_ASSERT_NO_ARCLOG("SLOT_SUSPECT");
+    TEST_ASSERT_NO_ARCLOG("TX_LATE");
+}
+
+void test_c3_late_tx_just_after_midnight_is_flagged(void)
+{
+    s_rtc_ms = MS_PER_DAY - 3000u - TX_LEAD_MS;
+    TEST_ASSERT_TRUE(TdmaMachine_Start());
+    TdmaMachine_SlotTask();
+    int sends = s_radio_send_calls;
+    s_rtc_ms = 5u;                               /* cell 1 due at 00:00:00 */
+    ArcLog_CaptureReset();
+    TdmaMachine_SlotTask();
+
+    TEST_ASSERT_FALSE(TdmaMachine_IsCursorSuspect());
+    TEST_ASSERT_ARCLOG("TX_LATE plan=0 fire=0 now=5");
+    TEST_ASSERT_EQUAL(sends, s_radio_send_calls);
+}
+
+/* =========================================================================
  * main
  * ========================================================================= */
 
@@ -277,5 +317,7 @@ int main(void)
     RUN_TEST(test_c3_tx_woken_at_fire_instant_is_not_late);
     RUN_TEST(test_c3_late_sync_tx_is_dropped);
     RUN_TEST(test_c3_suspect_wake_rearms_alarm_from_actual_wake);
+    RUN_TEST(test_c3_tx_at_midnight_fires_at_nominal);
+    RUN_TEST(test_c3_late_tx_just_after_midnight_is_flagged);
     return UNITY_END();
 }

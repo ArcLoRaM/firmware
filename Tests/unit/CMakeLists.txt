@@ -62,6 +62,10 @@ add_unity_test(test_tdma_table
     ../../Common/Protocol/tdma_table.c
 )
 
+add_unity_test(test_day_ms
+    test_day_ms.c
+)
+
 add_unity_test(test_protocol_types
     test_protocol_types.c
 )

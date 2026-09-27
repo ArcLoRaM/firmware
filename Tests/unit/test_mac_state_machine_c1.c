@@ -459,6 +459,41 @@ void test_c1_sync_pkt_with_non_sync_phase_is_rejected(void)
     TEST_ASSERT_ARCLOG("SYNC_REJ ph=255 ce=1");
 }
 
+/* ------- Midnight rollover (issue #54) ---------------------------------- */
+
+void test_c1_acquires_and_stays_warm_across_midnight(void)
+{
+    /* Phase at 23:59:54: cells at 23:59:54, 23:59:57, 00:00:00, 00:00:03. */
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.ms_since_midnight_sync_phase = MS_PER_DAY - 6000u;
+    p.sync_cell_index = 0u;  MAC_OnSyncPacketReceived(&p, MS_PER_DAY - 6000u);
+    p.sync_cell_index = 1u;  MAC_OnSyncPacketReceived(&p, MS_PER_DAY - 3000u);
+    p.sync_cell_index = 2u;  MAC_OnSyncPacketReceived(&p, 0u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+
+    p.sync_cell_index = 3u;  MAC_OnSyncPacketReceived(&p, 3001u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+}
+
+void test_c1_silence_timeout_spans_midnight(void)
+{
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    uint32_t ep = MS_PER_DAY - 66000u;
+    p.ms_since_midnight_sync_phase = ep;
+    p.sync_cell_index = 0u;  MAC_OnSyncPacketReceived(&p, ep);
+    p.sync_cell_index = 1u;  MAC_OnSyncPacketReceived(&p, ep + 3000u);
+    p.sync_cell_index = 2u;  MAC_OnSyncPacketReceived(&p, ep + 6000u);
+    uint32_t last = ep + 6000u;                    /* 23:59:00 */
+
+    MAC_CheckSyncTimeout((last + 840000u) % MS_PER_DAY);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    MAC_CheckSyncTimeout((last + 900000u) % MS_PER_DAY);
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -498,5 +533,7 @@ int main(void)
     RUN_TEST(test_c1_tier3_immediate_degradation_unchanged);
     RUN_TEST(test_c1_cursor_suspect_drops_to_cold_without_rtc_write);
     RUN_TEST(test_c1_sync_pkt_with_non_sync_phase_is_rejected);
+    RUN_TEST(test_c1_acquires_and_stays_warm_across_midnight);
+    RUN_TEST(test_c1_silence_timeout_spans_midnight);
     return UNITY_END();
 }

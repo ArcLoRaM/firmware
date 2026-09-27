@@ -33,6 +33,7 @@
 #include <stdbool.h>
 #include "protocol_types.h"
 #include "mac_types.h"
+#include "day_ms.h"          /* MS_PER_DAY, DayMs_* */
 
 /* =========================================================================
  * Constants
@@ -103,9 +104,6 @@
  */
 #define SYNC_STAMP_MAX_AGE_MS  5000u
 #endif
-
-/*! Milliseconds per day: the wrap of the ms-since-midnight RTC domain. */
-#define MS_PER_DAY  86400000u
 
 #ifndef SYNC_SILENCE_TIMEOUT_MS
 /*!

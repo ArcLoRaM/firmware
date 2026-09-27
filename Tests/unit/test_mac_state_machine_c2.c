@@ -955,6 +955,103 @@ void test_c2_sync_pkt_with_non_sync_phase_is_rejected(void)
     TEST_ASSERT_ARCLOG("SYNC_REJ ph=255 ce=1");
 }
 
+/* ------- Midnight rollover (issue #54) ------------------------------------
+ * The RTC reads ms since midnight and wraps at MS_PER_DAY. A Sync phase that
+ * starts before midnight has cells after it: their expected arrival must be
+ * taken modulo a day, and every comparison must be midnight-safe. */
+
+#define EP_BEFORE_MIDNIGHT  (MS_PER_DAY - 6000u)   /* 23:59:54.000 */
+
+/* P1 at cell 0 (23:59:54), P2 at cell 1 (23:59:57), P3 at cell 2 (00:00:00,
+ * stamped 0 by the wrapped RTC). */
+static void sync_mac_across_midnight(void)
+{
+    SyncPayload_t p;
+    make_sync_pkt(&p, 0u, EP_BEFORE_MIDNIGHT); MAC_OnSyncPacketReceived(&p, EP_BEFORE_MIDNIGHT);
+    make_sync_pkt(&p, 1u, EP_BEFORE_MIDNIGHT); MAC_OnSyncPacketReceived(&p, MS_PER_DAY - 3000u);
+    make_sync_pkt(&p, 2u, EP_BEFORE_MIDNIGHT); MAC_OnSyncPacketReceived(&p, 0u);
+}
+
+void test_c2_acquires_across_midnight(void)
+{
+    ArcLog_CaptureReset();
+    sync_mac_across_midnight();
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
+    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=2 ep=86394000 st=0 exp=0 err=0 clk=ACQ act=good");
+}
+
+void test_c2_warm_packet_after_midnight_is_tier1(void)
+{
+    sync_mac_across_midnight();
+    SyncPayload_t p;
+    make_sync_pkt(&p, 3u, EP_BEFORE_MIDNIGHT);
+    ArcLog_CaptureReset();
+    MAC_OnSyncPacketReceived(&p, 3002u);           /* cell 3 at 00:00:03, 2 ms late */
+    TEST_ASSERT_TRUE(MAC_GetEpochReceivedThisPhase());
+    TEST_ASSERT_ARCLOG("exp=3000 err=2 clk=WARM act=t1");
+}
+
+void test_c2_warm_packet_early_before_midnight_has_negative_error(void)
+{
+    sync_mac_across_midnight();
+    SyncPayload_t p;
+    make_sync_pkt(&p, 2u, EP_BEFORE_MIDNIGHT);
+    ArcLog_CaptureReset();
+    MAC_OnSyncPacketReceived(&p, MS_PER_DAY - 3u);  /* cell 2 due at 00:00:00, 3 ms early */
+    TEST_ASSERT_TRUE(MAC_GetEpochReceivedThisPhase());
+    TEST_ASSERT_ARCLOG("exp=0 err=-3 clk=WARM act=t1");
+}
+
+void test_c2_packet1_after_midnight_bootstraps_in_day_domain(void)
+{
+    SyncPayload_t p;
+    make_sync_pkt(&p, 2u, EP_BEFORE_MIDNIGHT);    /* cell 2 = 00:00:00 */
+    MAC_OnSyncPacketReceived(&p, 123456u);         /* old, unrelated RTC */
+    TEST_ASSERT_EQUAL(CLOCK_ACQUIRING, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0u, s_sync_bootstrapped_slot_start);
+}
+
+void test_c2_silence_timeout_spans_midnight(void)
+{
+    /* Last packet at 23:59:00; 15 min of silence ends at 00:14:00. */
+    SyncPayload_t p;
+    uint32_t ep = MS_PER_DAY - 66000u;
+    make_sync_pkt(&p, 0u, ep); MAC_OnSyncPacketReceived(&p, ep);
+    make_sync_pkt(&p, 1u, ep); MAC_OnSyncPacketReceived(&p, ep + 3000u);
+    make_sync_pkt(&p, 2u, ep); MAC_OnSyncPacketReceived(&p, ep + 6000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    uint32_t last = ep + 6000u;                    /* 23:59:00 */
+
+    MAC_CheckSyncTimeout((last + 840000u) % MS_PER_DAY);   /* 00:13:00 */
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    MAC_CheckSyncTimeout((last + 900000u) % MS_PER_DAY);   /* 00:14:00 */
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(1, s_sync_lost_calls);
+}
+
+static uint32_t s_align_stamp_ms;
+static uint32_t s_align_expected_ms;
+static void stub_rtc_align_subsecond(uint32_t stamp_ms, uint32_t expected_ms)
+{
+    s_align_stamp_ms    = stamp_ms;
+    s_align_expected_ms = expected_ms;
+}
+
+void test_c2_tier2_after_midnight_passes_day_domain_expected(void)
+{
+    MAC_Hooks_t hooks = k_hooks;
+    hooks.rtc_align_subsecond = stub_rtc_align_subsecond;
+    MAC_Init(&hooks);
+    sync_mac_across_midnight();
+
+    SyncPayload_t p;
+    make_sync_pkt(&p, 3u, EP_BEFORE_MIDNIGHT);    /* due at 00:00:03 */
+    MAC_OnSyncPacketReceived(&p, 3050u);           /* 50 ms late: Tier 2 */
+    TEST_ASSERT_EQUAL(3050u, s_align_stamp_ms);
+    TEST_ASSERT_EQUAL(3000u, s_align_expected_ms);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1029,5 +1126,11 @@ int main(void)
     RUN_TEST(test_c2_tier3_rtc_set_carries_time_since_stamp);
     RUN_TEST(test_c2_cold_rtc_set_carry_wraps_at_midnight);
     RUN_TEST(test_c2_sync_pkt_with_non_sync_phase_is_rejected);
+    RUN_TEST(test_c2_acquires_across_midnight);
+    RUN_TEST(test_c2_warm_packet_after_midnight_is_tier1);
+    RUN_TEST(test_c2_warm_packet_early_before_midnight_has_negative_error);
+    RUN_TEST(test_c2_packet1_after_midnight_bootstraps_in_day_domain);
+    RUN_TEST(test_c2_silence_timeout_spans_midnight);
+    RUN_TEST(test_c2_tier2_after_midnight_passes_day_domain_expected);
     return UNITY_END();
 }

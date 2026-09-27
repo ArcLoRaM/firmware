@@ -54,7 +54,7 @@ static void     stub_RadioSetRx(uint32_t win, uint32_t cap)
 static void     stub_RadioScan(void)                         { s_radio_scan_calls++;                                 }
 static void     stub_RadioSleep(void)                        { s_radio_sleep_calls++;                                }
 static uint32_t stub_RadioTimeOnAir(uint8_t len)             { (void)len; return s_toa_ms;                           }
-static void     stub_WaitUntilMs(uint32_t t)                  { s_wait_until_ms_target = t; s_wait_until_ms_calls++; s_rtc_ms = t; }
+static void     stub_WaitUntilMs(uint32_t t)                  { s_wait_until_ms_target = t; s_wait_until_ms_calls++; s_rtc_ms = t % MS_PER_DAY; }
 
 static const TdmaPlatform_t k_platform = {
     .GetRtcMs       = stub_GetRtcMs,
@@ -193,10 +193,11 @@ static void start_chain(void)
     TEST_ASSERT_TRUE(TdmaMachine_Start());
 }
 
-/* Call SlotTask after advancing simulated RTC to the last programmed alarm */
+/* Call SlotTask after advancing simulated RTC to the last programmed alarm.
+ * Like the RTC, the simulated clock wraps at midnight. */
 static void step_slot(void)
 {
-    s_rtc_ms = s_alarm_programmed;
+    s_rtc_ms = s_alarm_programmed % MS_PER_DAY;
     TdmaMachine_SlotTask();
 }
 
@@ -851,6 +852,50 @@ void test_bootstrap_alarm_uses_nominal_not_readback(void)
  * main
  * ========================================================================= */
 
+/* =========================================================================
+ * Midnight rollover (issue #54): the RTC wraps at MS_PER_DAY; slot times,
+ * alarms, windows and checks must stay in that day domain.
+ * ========================================================================= */
+
+void test_chain_runs_across_midnight(void)
+{
+    /* Packet 1 at cell 0 of a phase starting at 23:59:51: cells 1-5 start at
+     * 23:59:54, 23:59:57, 00:00:00, 00:00:03, 00:00:06. */
+    s_mac_hooks.sync_bootstrapped = stub_sync_bootstrapped;
+    MAC_Init(&s_mac_hooks);
+    SyncPayload_t p;
+    memset(&p, 0, sizeof(p));
+    p.ms_since_midnight_sync_phase = MS_PER_DAY - 9000u;
+    MAC_OnSyncPacketReceived(&p, MS_PER_DAY - 9000u);
+    TdmaMachine_OnRxEnd();
+    ArcLog_CaptureReset();
+
+    for (int i = 0; i < 5; i++) {
+        TEST_ASSERT_LESS_THAN_UINT32(MS_PER_DAY, s_alarm_programmed);
+        step_slot();
+        /* Woken one guard early: the window always spans the same length. */
+        TEST_ASSERT_EQUAL(WIN_LAST_MS + MAX_GUARD_TIME_MS, s_rx_start_window_ms);
+        TEST_ASSERT_EQUAL(WIN_CAP_MS + MAX_GUARD_TIME_MS, s_rx_cap_ms);
+    }
+    TEST_ASSERT_NO_ARCLOG("SLOT_SUSPECT");
+    TEST_ASSERT_NO_ARCLOG("RX_LATE");
+    TEST_ASSERT_EQUAL(CLOCK_ACQUIRING, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(6u, TdmaMachine_GetCursor().cell_index);
+    TEST_ASSERT_EQUAL(9000u - MAX_GUARD_TIME_MS, s_alarm_programmed);  /* cell 6 */
+}
+
+void test_bootstrap_just_before_midnight_wakes_before_it(void)
+{
+    /* Packet 1 at 23:59:57.100: the next cell starts at 00:00:00.100, so
+     * its guarded wake is 23:59:59.900, in the day domain. */
+    acquire_mac();
+    TdmaMachine_BootstrapFromSync(0u, 0u, MS_PER_DAY - 2900u);
+    TEST_ASSERT_EQUAL(MS_PER_DAY - (MAX_GUARD_TIME_MS - 100u), s_alarm_programmed);
+    step_slot();
+    TEST_ASSERT_FALSE(TdmaMachine_IsCursorSuspect());
+    TEST_ASSERT_EQUAL(3100u - MAX_GUARD_TIME_MS, s_alarm_programmed);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -909,5 +954,7 @@ int main(void)
 /* ------- Slot-boundary alignment ---------------------------------------- */
 
     RUN_TEST(test_bootstrap_alarm_uses_nominal_not_readback);
+    RUN_TEST(test_chain_runs_across_midnight);
+    RUN_TEST(test_bootstrap_just_before_midnight_wakes_before_it);
     return UNITY_END();
 }

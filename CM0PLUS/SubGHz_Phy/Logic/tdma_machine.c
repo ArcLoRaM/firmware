@@ -23,6 +23,7 @@
 #include "mac_state_machine.h"
 #include "mac_types.h"
 #include "arclog.h"
+#include "day_ms.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -169,15 +170,6 @@ static bool skip_to_participating_phase(void)
 }
 
 /* =========================================================================
- * Internal helpers — timing
- * ========================================================================= */
-
-static uint32_t u32_abs_diff(uint32_t a, uint32_t b)
-{
-    return (a >= b) ? (a - b) : (b - a);
-}
-
-/* =========================================================================
  * Internal helpers - radio
  * ========================================================================= */
 
@@ -198,18 +190,19 @@ static void enter_scanning(const char *why)
 
 /* Open the Rx window of the current slot, from now (early wake, guard
  * applied) until the latest instant a packet can start and still end by
- * slot end + MAX_GUARD_TIME_MS. Gaps are >= 2 x MAX_GUARD_TIME_MS, so a
- * packet ending by then never reaches the next slot, whatever guard its
- * receivers apply. The expected packet is the Sync packet in every slot for
+ * slot end + MAX_GUARD_TIME_MS. All times are in the RTC day domain. Gaps
+ * are >= 2 x MAX_GUARD_TIME_MS, so a packet ending by then never reaches the
+ * next slot, whatever guard its receivers apply. The expected packet is the Sync packet in every slot for
  * now (issue #38). The platform aborts any reception still running at that
  * end (cap), e.g. after a false preamble detection. */
 static void open_rx_window(const Phase_t *phase, uint32_t now_ms)
 {
-    uint32_t cap_ms  = s_slot_start_ms + phase->slot_active_ms + MAX_GUARD_TIME_MS;
+    uint32_t cap_ms  = DayMs_Add(s_slot_start_ms,
+                                 (int32_t)(phase->slot_active_ms + MAX_GUARD_TIME_MS));
     uint32_t toa_ms  = s_platform.RadioTimeOnAir((uint8_t)sizeof(SyncPayload_t));
-    uint32_t last_ms = cap_ms - toa_ms;
+    uint32_t last_ms = DayMs_Add(cap_ms, -(int32_t)toa_ms);
 
-    if ((int32_t)(last_ms - now_ms) <= 0) {
+    if (DayMs_Diff(last_ms, now_ms) <= 0) {
         /* Woke too late for any packet to fit (or ToA exceeds the slot). */
         ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_L, "RX_LATE", "now=%u last=%u",
                (unsigned)now_ms, (unsigned)last_ms);
@@ -218,7 +211,8 @@ static void open_rx_window(const Phase_t *phase, uint32_t now_ms)
     }
     ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_H, "RX_WIN", "last=%u cap=%u",
            (unsigned)last_ms, (unsigned)cap_ms);
-    s_platform.RadioSetRx(last_ms - now_ms, cap_ms - now_ms);
+    s_platform.RadioSetRx((uint32_t)DayMs_Diff(last_ms, now_ms),
+                          (uint32_t)DayMs_Diff(cap_ms, now_ms));
 }
 
 /* Transmit in the current slot: the packet starts on air exactly at the
@@ -248,10 +242,9 @@ static void transmit(const Phase_t *phase, uint32_t freq_hz)
     pkt.sync_phase_index = (uint8_t)s_cursor.phase_index;
     pkt.sync_cell_index  = (uint8_t)s_cursor.cell_index;
 
-    uint32_t fire_ms = s_slot_start_ms - s_platform.tx_ramp_ms;
+    uint32_t fire_ms = DayMs_Add(s_slot_start_ms, -(int32_t)s_platform.tx_ramp_ms);
     uint32_t now_ms  = s_platform.GetRtcMs();
-    int32_t  late_ms = (int32_t)(now_ms - fire_ms);
-    if (late_ms > 0) {
+    if (DayMs_Diff(now_ms, fire_ms) > 0) {
         ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_L, "TX_LATE", "plan=%u fire=%u now=%u",
                (unsigned)s_slot_start_ms, (unsigned)fire_ms, (unsigned)now_ms);
         if (phase->type == PHASE_TYPE_SYNC) {
@@ -287,9 +280,9 @@ static uint32_t next_wake_ms(void)
 {
     const Phase_t *next_phase = TdmaTable_GetPhase(s_cursor.phase_index);
     if (next_phase != NULL && next_slot_is_rx(next_phase)) {
-        return s_slot_start_ms - GuardTimeResolver_GetGuardMs();
+        return DayMs_Add(s_slot_start_ms, -(int32_t)GuardTimeResolver_GetGuardMs());
     }
-    return s_slot_start_ms - TX_LEAD_MS;
+    return DayMs_Add(s_slot_start_ms, -(int32_t)TX_LEAD_MS);
 }
 
 /* Determine whether the next slot opportunity will be RX (for guard-time
@@ -379,7 +372,7 @@ bool TdmaMachine_Start(void)
     /* Never cold (C3): the chain starts now, from {0,0,0}. This wake is
      * the first slot's Tx lead. */
     s_expected_wake_ms = s_platform.GetRtcMs();
-    s_slot_start_ms    = s_expected_wake_ms + TX_LEAD_MS;
+    s_slot_start_ms    = DayMs_Add(s_expected_wake_ms, (int32_t)TX_LEAD_MS);
     s_running          = true;
     return true;
 }
@@ -436,7 +429,7 @@ void TdmaMachine_SlotTask(void)
         uint32_t threshold = (phase != NULL)
                              ? (phase->slot_active_ms + (phase->slot_active_ms >> 1u))
                              : 3750u;
-        if (u32_abs_diff(now_ms, s_expected_wake_ms) > threshold) {
+        if (DayMs_AbsDiff(now_ms, s_expected_wake_ms) > threshold) {
             s_cursor_suspect = true;
             ARCLOG(ARCLOG_MOD_TDMA, VLEVEL_L, "SLOT_SUSPECT", "exp=%u now=%u",
                    (unsigned)s_expected_wake_ms, (unsigned)now_ms);
@@ -468,7 +461,7 @@ void TdmaMachine_SlotTask(void)
     phase = TdmaTable_GetPhase(s_cursor.phase_index);
     if (phase == NULL) {
         /* Should not happen with a valid table; program alarm to advance */
-        alarm_ms = s_slot_start_ms + 3000u;
+        alarm_ms = DayMs_Add(s_slot_start_ms, 3000);
         s_expected_wake_ms = alarm_ms;
         s_platform.ProgramAlarmA(alarm_ms);
         return;
@@ -481,7 +474,8 @@ void TdmaMachine_SlotTask(void)
         skip_to_participating_phase();
 
         /* Program alarm at the start of the skipped-over phase duration */
-        alarm_ms = s_slot_start_ms + phase->slot_active_ms + phase->gap_after_slot_ms;
+        alarm_ms = DayMs_Add(s_slot_start_ms,
+                             (int32_t)(phase->slot_active_ms + phase->gap_after_slot_ms));
         s_slot_start_ms    = alarm_ms;
         s_expected_wake_ms = alarm_ms;
         s_platform.ProgramAlarmA(alarm_ms);
@@ -508,7 +502,7 @@ void TdmaMachine_SlotTask(void)
            (unsigned)s_cursor.phase_index, ArcLog_PhaseTypeName(phase->type),
            (unsigned)s_cursor.cell_index, (unsigned)s_cursor.slot_index,
            ArcLog_SlotPosName(s_cursor.slot_pos), ArcLog_DecisionName(decision),
-           (int)(int32_t)(now_ms - s_expected_wake_ms),
+           (int)DayMs_Diff(now_ms, s_expected_wake_ms),
            (unsigned)s_slot_start_ms);
 
     /* ---- Step 8: radio action ---- */
@@ -523,8 +517,8 @@ void TdmaMachine_SlotTask(void)
     /* ---- Steps 9-14: advance cursor, compute and program next alarm ---- */
     advance_cursor(phase);
 
-    next_start_ms   = s_slot_start_ms + phase->slot_active_ms
-                      + phase->gap_after_slot_ms;
+    next_start_ms   = DayMs_Add(s_slot_start_ms,
+                                (int32_t)(phase->slot_active_ms + phase->gap_after_slot_ms));
     s_slot_start_ms = next_start_ms;
 
     alarm_ms = next_wake_ms();
@@ -541,20 +535,20 @@ void TdmaMachine_BootstrapFromSync(uint8_t  sync_phase_idx,
     s_cursor.slot_index  = 0u;
     s_slot_idx           = 0u;
     s_cursor.slot_pos     = SLOT_POS_CELL;
-    s_slot_start_ms      = nominal_start_ms;
+    s_slot_start_ms      = nominal_start_ms % MS_PER_DAY;
     s_cursor_suspect     = false;
 
     const Phase_t *phase = TdmaTable_GetPhase(sync_phase_idx);
     if (phase != NULL) {
-        uint32_t next_ms = nominal_start_ms + phase->slot_active_ms
-                           + phase->gap_after_slot_ms;
+        uint32_t next_ms = DayMs_Add(s_slot_start_ms,
+                                     (int32_t)(phase->slot_active_ms + phase->gap_after_slot_ms));
         advance_cursor(phase);
         s_slot_start_ms    = next_ms;
 
         /* Apply guard: the next slot will be Rx (acquisition packets 2+),
          * so wake early to open the window before nominal start. */
-        s_expected_wake_ms = next_ms - GuardTimeResolver_GetGuardMs();
-        s_platform.ProgramAlarmA(next_ms - GuardTimeResolver_GetGuardMs());
+        s_expected_wake_ms = DayMs_Add(next_ms, -(int32_t)GuardTimeResolver_GetGuardMs());
+        s_platform.ProgramAlarmA(s_expected_wake_ms);
         s_bootstrapped_in_slot = true;
         s_running              = true;
     }

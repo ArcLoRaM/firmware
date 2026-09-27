@@ -514,6 +514,14 @@ elapsed-ms, expected-offset, clock-error — operates in binary milliseconds via
 `GetTimerTicks()` (`CM0PLUS/Core/Src/timer_if.c`). The boundary is the HAL
 call site in `subghz_phy_task.c`.
 
+**Day domain.** The RTC reads ms since midnight and wraps at `MS_PER_DAY`, so
+every time the TDMA Machine, the MAC and the CM0+ platform keep is in
+[0, `MS_PER_DAY`): sums are reduced modulo a day (`DayMs_Add`) and differences
+are signed and taken the short way round the day (`DayMs_Diff`, valid under
+12 h), so a slot, a Sync phase, a Tx fire instant or a silence timeout can
+span midnight like any other instant (`day_ms.h`, issue #54). Plain `uint32_t`
+subtraction is wrong here: 2³² is not a multiple of a day.
+
 ---
 
 ## Frame Cursor Synchronisation
@@ -563,11 +571,13 @@ Cell stamp the same `sync_cell_index`. The receiver uses this field together wit
 expected_arrival_ms = ms_since_midnight_sync_phase + sync_cell_index × per_cell_ms
 ```
 
-**Known limitation — midnight rollover:** If `expected_arrival_ms ≥ 86,400,000`,
-the BCD date in the payload is from the previous day and the date must be advanced
-by one day. This requires calendar arithmetic (variable month lengths, leap years).
-`HAL_RTC_DST_Add1Hour` handles this complexity natively; advancing 24 hours avoids
-manual BCD arithmetic. Deferred to a future issue.
+The sum is taken modulo `MS_PER_DAY` (see Day domain): a cell after midnight in
+a phase that started before it is expected at its time of day.
+
+**Known limitation — midnight rollover of the date:** If the sum reaches
+86,400,000, the BCD date in the payload is from the previous day and a node
+setting its RTC from that packet must advance the date by one day. This requires
+calendar arithmetic (variable month lengths, leap years). Issue #28.
 
 ### CT Sync Propagation Model
 The current implementation uses a **three-tier relay model** with partial

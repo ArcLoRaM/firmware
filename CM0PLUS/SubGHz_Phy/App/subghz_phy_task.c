@@ -120,7 +120,7 @@ static void on_tx_done(void)
     /* start = end - toa: when the radio actually began transmitting. */
     ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_M, "TX_DONE", "sz=%u toa=%u end=%u start=%u",
            (unsigned)s_last_tx_len, (unsigned)toa,
-           (unsigned)end, (unsigned)(end - toa));
+           (unsigned)end, (unsigned)DayMs_Add(end, -(int32_t)toa));
 }
 
 static void on_tx_timeout(void)
@@ -132,7 +132,9 @@ static void on_rx_done(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr
 {
     uint32_t rxd   = s_irq_stamp_ms;
     uint32_t toa   = plat_radio_toa((uint8_t)size);
-    uint32_t stamp = rxd - toa - RX_DONE_LATENCY_MS;   /* SyncStamp: packet start */
+    /* SyncStamp: packet start, in the RTC day domain (a packet received just
+     * after midnight started before it). */
+    uint32_t stamp = DayMs_Add(rxd, -(int32_t)(toa + RX_DONE_LATENCY_MS));
 
     UTIL_TIMER_Stop(&s_rx_cap_timer);
     ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_M, "RX_DONE",
@@ -382,7 +384,7 @@ static void mac_hook_rtc_set(uint32_t target_ms,
     ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "RTC_SET",
            "old=%u new=%u d=%d date=%02x%02x%02x shift=%s",
            (unsigned)old_ms, (unsigned)target_ms,
-           (int)(int32_t)(target_ms - old_ms),
+           (int)DayMs_Diff(target_ms, old_ms),
            (unsigned)year, (unsigned)month, (unsigned)day, shift);
 }
 
@@ -393,7 +395,7 @@ static void mac_hook_rtc_set(uint32_t target_ms,
 static void mac_hook_rtc_align_sub(uint32_t stamp_ms,
                                     uint32_t expected_offset_ms)
 {
-    int32_t error_ms = (int32_t)stamp_ms - (int32_t)expected_offset_ms;
+    int32_t error_ms = DayMs_Diff(stamp_ms, expected_offset_ms);
 
     if (error_ms == 0) return;
 

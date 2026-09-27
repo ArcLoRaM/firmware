@@ -59,11 +59,6 @@ static uint32_t sync_per_cell_ms_for_phase(uint8_t phase_idx)
            ? (p->slot_active_ms + p->gap_after_slot_ms) : 0u;
 }
 
-static uint32_t u32_abs_diff(uint32_t a, uint32_t b)
-{
-    return (a >= b) ? (a - b) : (b - a);
-}
-
 /* Single transition points: every ClockState / MacState change is logged. */
 static void set_clock_state(ClockState_t to, const char *why)
 {
@@ -91,7 +86,7 @@ static void log_sync_rx(const SyncPayload_t *p, uint32_t stamp_ms,
            (unsigned)p->sync_phase_index, (unsigned)p->sync_cell_index,
            (unsigned)p->ms_since_midnight_sync_phase,
            (unsigned)stamp_ms, (unsigned)expected_ms,
-           (int)(int32_t)(stamp_ms - expected_ms),
+           (int)DayMs_Diff(stamp_ms, expected_ms),
            ArcLog_ClockName(s_clock_state), act);
 }
 
@@ -110,13 +105,11 @@ static uint32_t rtc_set_at_stamp(const SyncPayload_t *p, uint32_t target_ms,
         uint32_t now_ms = 0u;
         uint8_t  d, mo, y;
         s_hooks.get_rtc_snapshot(&now_ms, &d, &mo, &y);
-        age_ms = (now_ms + MS_PER_DAY - stamp_ms) % MS_PER_DAY;  /* midnight-safe */
-        if (age_ms > SYNC_STAMP_MAX_AGE_MS) {
-            age_ms = 0u;
-        }
+        int32_t age = DayMs_Diff(now_ms, stamp_ms);
+        age_ms = (age >= 0 && (uint32_t)age <= SYNC_STAMP_MAX_AGE_MS) ? (uint32_t)age : 0u;
     }
     if (s_hooks.rtc_set != NULL) {
-        s_hooks.rtc_set((target_ms + age_ms) % MS_PER_DAY, p->day, p->month, p->year);
+        s_hooks.rtc_set(DayMs_Add(target_ms, (int32_t)age_ms), p->day, p->month, p->year);
     }
     return age_ms;
 }
@@ -211,8 +204,9 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
     s_last_sync_received_ms = stamp_ms;
 
     if (s_clock_state == CLOCK_COLD) {
-        uint32_t target_ms = payload->ms_since_midnight_sync_phase
-                             + (uint32_t)payload->sync_cell_index * per_cell;
+        uint32_t target_ms = (payload->ms_since_midnight_sync_phase
+                              + (uint32_t)payload->sync_cell_index * per_cell)
+                             % MS_PER_DAY;
 
         /* The new RTC domain reads target_ms at the stamp instant. */
         (void)rtc_set_at_stamp(payload, target_ms, stamp_ms);
@@ -239,9 +233,10 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
         /* Packet 1 put the RTC on the sender's timeline, so every packet,
          * from any later Sync phase occurrence, is checked against its own
          * epoch (the same expected arrival as CLOCK_WARM). */
-        uint32_t expected_arrival = payload->ms_since_midnight_sync_phase
-                                    + (uint32_t)payload->sync_cell_index * per_cell;
-        uint32_t clock_error = u32_abs_diff(stamp_ms, expected_arrival);
+        uint32_t expected_arrival = (payload->ms_since_midnight_sync_phase
+                                     + (uint32_t)payload->sync_cell_index * per_cell)
+                                    % MS_PER_DAY;
+        uint32_t clock_error = DayMs_AbsDiff(stamp_ms, expected_arrival);
         bool     good        = (clock_error < SYNC_PARTICIPATE_THRESHOLD_MS);
 
         log_sync_rx(payload, stamp_ms, expected_arrival, good ? "good" : "bad");
@@ -263,9 +258,10 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
     }
 
     if (s_clock_state == CLOCK_WARM) {
-        uint32_t expected_arrival = payload->ms_since_midnight_sync_phase
-                                    + (uint32_t)payload->sync_cell_index * per_cell;
-        uint32_t error = u32_abs_diff(stamp_ms, expected_arrival);
+        uint32_t expected_arrival = (payload->ms_since_midnight_sync_phase
+                                     + (uint32_t)payload->sync_cell_index * per_cell)
+                                    % MS_PER_DAY;
+        uint32_t error = DayMs_AbsDiff(stamp_ms, expected_arrival);
 
         log_sync_rx(payload, stamp_ms, expected_arrival,
                     (error < SYNC_PARTICIPATE_THRESHOLD_MS) ? "t1"
@@ -309,8 +305,8 @@ void MAC_OnExternalSyncAcquired(const FrameEpoch_t *epoch)
 void MAC_CheckSyncTimeout(uint32_t rtc_now_ms)
 {
     if (s_clock_state == CLOCK_WARM || s_clock_state == CLOCK_ACQUIRING) {
-        if (rtc_now_ms >= s_last_sync_received_ms &&
-            (rtc_now_ms - s_last_sync_received_ms) >= SYNC_SILENCE_TIMEOUT_MS) {
+        if (DayMs_Diff(rtc_now_ms, s_last_sync_received_ms)
+                >= (int32_t)SYNC_SILENCE_TIMEOUT_MS) {
             ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "SYNC_SILENCE", "last=%u now=%u",
                    (unsigned)s_last_sync_received_ms, (unsigned)rtc_now_ms);
             trigger_sync_lost("silence");
