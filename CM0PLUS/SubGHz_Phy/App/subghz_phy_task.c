@@ -583,6 +583,21 @@ void SubGhzPhyTask_Init(void)
     /* 4. MAC State Machine */
     MAC_Init(&s_mac_hooks);   /* logs MAC_INIT */
 
+#if defined(BENCH_RTC_START_S) && (NODE_CLASS == NODE_CLASS_C3)
+    /* Bench only: start the SyncAnchor's clock at BENCH_RTC_START_S seconds
+     * after midnight instead of the CubeMX boot value 00:00:00, so a run
+     * reaches the network's midnight soon after boot (issue #54). E.g.
+     * -DBENCH_RTC_START_S=86100 starts at 23:55:00. Every other node takes
+     * its time from C3. Logged as RTC_SET; the date is kept. */
+    {
+        uint32_t now_ms;
+        uint8_t  day, month, year;
+        mac_hook_get_rtc_snapshot(&now_ms, &day, &month, &year);
+        mac_hook_rtc_set(((uint32_t)(BENCH_RTC_START_S) % 86400u) * 1000u,
+                         day, month, year);
+    }
+#endif
+
     /* 5. TDMA Machine */
     static const TdmaPlatform_t plat = {
         .GetRtcMs        = plat_get_rtc_ms,
