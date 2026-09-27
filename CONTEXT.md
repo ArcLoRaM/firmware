@@ -521,6 +521,11 @@ are signed and taken the short way round the day (`DayMs_Diff`, valid under
 12 h), so a slot, a Sync phase, a Tx fire instant or a silence timeout can
 span midnight like any other instant (`day_ms.h`, issue #54). Plain `uint32_t`
 subtraction is wrong here: 2³² is not a multiple of a day.
+The CM0+ timer base is the exception: UTIL_TIMER (context, elapsed time,
+delays) and `HAL_GetTick` (HAL timeouts, the compliance engine's credit refill)
+need a counter that never goes back, so they run on the RTC time of day
+extended across midnight (`TIMER_IF_GetMonotonicMs`, `DayMsClock_t`). An RTC
+written back is not counted. `UTIL_TIMER_GetCurrentTime` stays the time of day.
 
 ---
 

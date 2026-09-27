@@ -63,4 +63,40 @@ static inline uint32_t DayMs_AbsDiff(uint32_t a, uint32_t b)
     return (d < 0) ? (uint32_t)(-d) : (uint32_t)d;
 }
 
+/*!
+ * \brief   Monotonic ms counter built from time-of-day readings.
+ *
+ * \details For time bases that must not jump back at midnight (UTIL_TIMER
+ *          context and elapsed time, \c HAL_GetTick, the compliance engine's
+ *          credit refill) while the only clock running in Stop2 is the RTC,
+ *          which reads ms since midnight. Each update adds the forward step
+ *          since the previous reading: midnight is a short forward step. A
+ *          backward step (the RTC written back) is not counted, so the
+ *          counter never goes back. Updates must be less than 12 h apart; a
+ *          missed step is then under-counted, never over-counted.
+ *          \c mono_ms wraps at 2^32 like any tick counter.
+ */
+typedef struct {
+    uint32_t mono_ms;      /*!< Monotonic ms. */
+    uint32_t last_day_ms;  /*!< Time-of-day reading of the latest update. */
+} DayMsClock_t;
+
+/*! \brief  Start the counter at the current time of day. */
+static inline void DayMsClock_Init(DayMsClock_t *c, uint32_t day_ms)
+{
+    c->mono_ms     = day_ms % MS_PER_DAY;
+    c->last_day_ms = day_ms % MS_PER_DAY;
+}
+
+/*! \brief  Advance from a new time-of-day reading; returns the counter. */
+static inline uint32_t DayMsClock_Update(DayMsClock_t *c, uint32_t day_ms)
+{
+    int32_t step = DayMs_Diff(day_ms, c->last_day_ms);
+    if (step > 0) {
+        c->mono_ms += (uint32_t)step;
+    }
+    c->last_day_ms = day_ms % MS_PER_DAY;
+    return c->mono_ms;
+}
+
 #endif /* DAY_MS_H */

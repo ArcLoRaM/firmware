@@ -26,6 +26,7 @@
 #include <time.h>   /* mktime */
 #include "rtc.h"    /* hrtc handle */
 #include "main.h"   /* RTC_PREDIV_S, Error_Handler */
+#include "day_ms.h" /* DayMsClock_t: monotonic ms across midnight */
 /* USER CODE END Includes */
 
 /* External variables ---------------------------------------------------------*/
@@ -97,11 +98,16 @@ static uint32_t RtcTimerContext = 0;
 
 /* USER CODE BEGIN PV */
 static uint8_t RTC_Initialized = 0;
+/* Monotonic time base of UTIL_TIMER and HAL_GetTick. GetTimerTicks() is the
+ * time of day and falls back at midnight; the timer context, elapsed time
+ * and HAL tick must not (issue #54). */
+static DayMsClock_t s_mono_clock;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
 static inline uint32_t GetTimerTicks(void);
+static uint32_t GetMonotonicTicks(void);
 static inline int32_t SubSecondsToMs(uint32_t ssr);
 /* USER CODE END PFP */
 
@@ -117,7 +123,8 @@ UTIL_TIMER_Status_t TIMER_IF_Init(void)
     TIMER_IF_StopTimer();
     HAL_RTCEx_EnableBypassShadow(&hrtc);
     hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
-    RtcTimerContext = GetTimerTicks();
+    DayMsClock_Init(&s_mono_clock, GetTimerTicks());
+    RtcTimerContext = s_mono_clock.mono_ms;
     RTC_Initialized = 1;
   }
   /* USER CODE END TIMER_IF_Init */
@@ -131,9 +138,10 @@ UTIL_TIMER_Status_t TIMER_IF_StartTimer(uint32_t timeout)
   TIMER_IF_StopTimer();
   timeout += RtcTimerContext;
 
-  uint32_t now          = GetTimerTicks();
-  uint32_t remaining_ms = timeout - now;                /* unsigned; correct when context is fresh */
-  if (remaining_ms > 86400000u) { remaining_ms = 1u; } /* midnight-wrap safety clamp */
+  /* Context and now are both monotonic, so a context set before midnight
+   * stays valid after it. A deadline already passed fires at once. */
+  int32_t  left         = (int32_t)(timeout - GetMonotonicTicks());
+  uint32_t remaining_ms = (left > 0) ? (uint32_t)left : 1u;
 
   /* Convert ms to WUT 2048 Hz counts; clamp to 16-bit hardware max (~32 s) */
   uint32_t count = (uint32_t)(((uint64_t)remaining_ms * WUT_CLOCK_HZ) / 1000u);
@@ -162,7 +170,7 @@ UTIL_TIMER_Status_t TIMER_IF_StopTimer(void)
 uint32_t TIMER_IF_SetTimerContext(void)
 {
   /* USER CODE BEGIN TIMER_IF_SetTimerContext */
-  RtcTimerContext = GetTimerTicks();
+  RtcTimerContext = GetMonotonicTicks();
   /* USER CODE END TIMER_IF_SetTimerContext */
 
   /*return time context*/
@@ -183,7 +191,7 @@ uint32_t TIMER_IF_GetTimerElapsedTime(void)
 {
   uint32_t ret = 0;
   /* USER CODE BEGIN TIMER_IF_GetTimerElapsedTime */
-  ret = (uint32_t)(GetTimerTicks() - RtcTimerContext);
+  ret = (uint32_t)(GetMonotonicTicks() - RtcTimerContext);
   /* USER CODE END TIMER_IF_GetTimerElapsedTime */
   return ret;
 }
@@ -192,6 +200,8 @@ uint32_t TIMER_IF_GetTimerValue(void)
 {
   uint32_t ret = 0;
   /* USER CODE BEGIN TIMER_IF_GetTimerValue */
+  /* The time of day (UTIL_TIMER_GetCurrentTime): the RTC domain the TDMA
+   * Machine and the MAC work in. Timer arithmetic uses the monotonic base. */
   ret = GetTimerTicks();
   /* USER CODE END TIMER_IF_GetTimerValue */
   return ret;
@@ -228,8 +238,8 @@ void TIMER_IF_DelayMs(uint32_t delay)
 {
   /* USER CODE BEGIN TIMER_IF_DelayMs */
   uint32_t delayTicks = TIMER_IF_Convert_ms2Tick(delay);
-  uint32_t timeout    = GetTimerTicks();
-  while ((GetTimerTicks() - timeout) < delayTicks)
+  uint32_t timeout    = GetMonotonicTicks();
+  while ((GetMonotonicTicks() - timeout) < delayTicks)
   {
     __NOP();
   }
@@ -305,6 +315,11 @@ uint32_t TIMER_IF_BkUp_Read_SubSeconds(void)
 }
 
 /* USER CODE BEGIN EF */
+uint32_t TIMER_IF_GetMonotonicMs(void)
+{
+  return GetMonotonicTicks();
+}
+
 void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
 {
   UTIL_TIMER_IRQ_MAP_PROCESS();
@@ -345,6 +360,19 @@ static inline uint32_t GetTimerTicks(void)
     ms += 86400000;  /* 00:00:00 read right after an ADD1S shift: still 23:59:59 */
   }
   return (uint32_t)ms;
+}
+
+/* Monotonic ms: the RTC time of day extended across midnight. Updated from
+ * the radio ISR, the RTC ISRs and thread context, hence the critical section.
+ * Every UTIL_TIMER operation and HAL_GetTick call updates it, far more often
+ * than the 12 h DayMsClock_Update needs. */
+static uint32_t GetMonotonicTicks(void)
+{
+  uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  uint32_t mono = DayMsClock_Update(&s_mono_clock, GetTimerTicks());
+  __set_PRIMASK(primask);
+  return mono;
 }
 
 /* Milliseconds elapsed in the current calendar second. SSR counts down from

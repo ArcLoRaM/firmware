@@ -168,6 +168,14 @@ uint32_t TIMER_IF_BkUp_Read_SubSeconds(void);
  * @param[out] out  Destination struct — must not be NULL.
  */
 void RTC_GetCalendarBcd(FrameEpoch_t *out);
+
+/**
+ * @brief Monotonic milliseconds: the RTC time of day extended across midnight.
+ * @note  Time base of UTIL_TIMER and HAL_GetTick. Never goes back (an RTC
+ *        written back is not counted); wraps at 2^32 like any tick counter.
+ *        TIMER_IF_GetTimerValue stays the time of day.
+ */
+uint32_t TIMER_IF_GetMonotonicMs(void);
 /* USER CODE END EFP */
 
 #ifdef __cplusplus

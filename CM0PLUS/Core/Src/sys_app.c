@@ -272,7 +272,13 @@ uint32_t HAL_GetTick(void)
     ret = TIMER_IF_GetTimerValue();
   }
   /* USER CODE BEGIN HAL_GetTick_2 */
-
+  /* HAL time base: monotonic across midnight. TIMER_IF_GetTimerValue is the
+   * RTC time of day, which falls back at 00:00 and would expire every HAL
+   * timeout and refill the compliance credit (issue #54). */
+  if (SYS_TimerInitialisedFlag != 0)
+  {
+    ret = TIMER_IF_GetMonotonicMs();
+  }
   /* USER CODE END HAL_GetTick_2 */
   return ret;
 }
