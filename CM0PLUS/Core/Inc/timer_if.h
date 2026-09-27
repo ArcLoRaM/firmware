@@ -31,6 +31,7 @@ extern "C" {
 #include "stm32_systime.h"
 
 /* USER CODE BEGIN Includes */
+#include <stdbool.h>
 #include "protocol_types.h"
 /* USER CODE END Includes */
 
@@ -176,6 +177,23 @@ void RTC_GetCalendarBcd(FrameEpoch_t *out);
  *        TIMER_IF_GetTimerValue stays the time of day.
  */
 uint32_t TIMER_IF_GetMonotonicMs(void);
+
+/**
+ * @brief Call right before writing the RTC (calendar set or SHIFTR): brings
+ *        the monotonic counter up to date and holds it during the write.
+ * @retval true  No shift is pending: a SHIFTR may be written.
+ * @retval false A shift is still pending (SHPF): do not write SHIFTR.
+ */
+bool TIMER_IF_RtcWriteBegin(void);
+
+/**
+ * @brief Call right after the RTC write, even if it failed or was skipped.
+ *        The write is excluded from the monotonic counter.
+ * @param calendar_set true if HAL_RTC_SetTime / SetDate was called.
+ * @param shift_ms     Signed change of the reading a SHIFTR written in this
+ *                     write makes (ms, + = advance), 0 if none was written.
+ */
+void TIMER_IF_RtcWriteEnd(bool calendar_set, int32_t shift_ms);
 /* USER CODE END EFP */
 
 #ifdef __cplusplus

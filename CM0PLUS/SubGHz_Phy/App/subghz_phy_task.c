@@ -27,6 +27,7 @@
 #include "radio_def.h"        /* MODEM_LORA */
 #include "radio_driver.h"     /* SUBGRF_SetDioIrqParams, SUBGRF_GetIrqStatus, IRQ_* */
 #include "rtc.h"              /* hrtc */
+#include "timer_if.h"         /* TIMER_IF_RtcWriteBegin / End */
 #include "main.h"             /* RTC_PREDIV_S */
 #include "tdma_machine.h"
 #include "mac_state_machine.h"
@@ -334,6 +335,16 @@ static uint32_t plat_radio_toa(uint8_t len)
  * MAC State Machine hooks
  * ========================================================================= */
 
+/* Signed change of the RTC reading (ms, rounded) a SHIFTR of shift_ticks
+ * makes: + for an advance (ADD1S=1), - for a delay. Reported to the
+ * monotonic counter, which excludes it (TIMER_IF_RtcWriteEnd). */
+static int32_t shift_ticks_to_ms(uint32_t shift_ticks, bool advance)
+{
+    int32_t ms = (int32_t)((shift_ticks * 1000u + (RTC_PREDIV_S + 1u) / 2u)
+                           / (RTC_PREDIV_S + 1u));
+    return advance ? ms : -ms;
+}
+
 /* Packet 1 / Tier 3 hook: decompose binary target_ms to H:M:S; apply HAL_RTC_SetTime(BIN).
  * SetTime starts the second at target_s.000; the sub-second component
  * (target_ms % 1000) is then added by a SHIFTR advance (ADD1S=1 with SUBFS). */
@@ -356,6 +367,9 @@ static void mac_hook_rtc_set(uint32_t target_ms,
     d.Month = month;
     d.Year  = year;
 
+    /* The monotonic counter (UTIL_TIMER, HAL_GetTick) must not count this
+     * jump: bracket the write. Begin also says whether a shift is pending. */
+    bool shift_free = TIMER_IF_RtcWriteBegin();
     hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
     HAL_RTC_SetTime(&hrtc, &t, RTC_FORMAT_BIN);
     HAL_RTC_SetDate(&hrtc, &d, RTC_FORMAT_BCD);
@@ -368,17 +382,22 @@ static void mac_hook_rtc_set(uint32_t target_ms,
      * no date roll-over. Until SSR counts back below PREDIV_S the calendar
      * reads target_s + 1 with SSR > PREDIV_S; the time readers in
      * timer_if.c borrow that second back. */
-    const char *shift = "none";
+    const char *shift    = "none";
+    int32_t     shift_ms = 0;
     if (subsec_ms > 0u) {
         hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
         shift = "busy";   /* a previous shift is still pending (SHPF) */
-        if (!READ_BIT(hrtc.Instance->ICSR, RTC_ICSR_SHPF)) {
+        if (shift_free) {
             uint32_t shift_ticks = (subsec_ms * (RTC_PREDIV_S + 1u)) / 1000u;
-            shift = (HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
-                                                (RTC_PREDIV_S + 1u) - shift_ticks) == HAL_OK)
-                    ? "ok" : "fail";
+            shift = "fail";
+            if (HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
+                                          (RTC_PREDIV_S + 1u) - shift_ticks) == HAL_OK) {
+                shift    = "ok";
+                shift_ms = shift_ticks_to_ms(shift_ticks, true);
+            }
         }
     }
+    TIMER_IF_RtcWriteEnd(true, shift_ms);
 
     /* d = jump applied to the local clock (new - old domain), in ms. */
     ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "RTC_SET",
@@ -399,25 +418,37 @@ static void mac_hook_rtc_align_sub(uint32_t stamp_ms,
 
     if (error_ms == 0) return;
 
-    hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
-
     uint32_t error_abs   = (error_ms < 0) ? (uint32_t)(-error_ms) : (uint32_t)(error_ms);
     uint32_t shift_ticks = (error_abs * (RTC_PREDIV_S + 1u)) / 1000u;
 
-    HAL_StatusTypeDef st;
-    if (error_ms > 0) {
-        /* RTC fast → delay: SUBFS added to SSR prescaler counter */
-        st = HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_RESET, shift_ticks);
-    } else {
-        /* RTC slow → advance: ADD1S=1 sets SSR = SUBFS after +1 calendar second.
-         * Advance = 1 − SUBFS/(PREDIV_S+1) = shift_ticks/(PREDIV_S+1)  (AN4759 §2.6) */
-        st = HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
-                                        (RTC_PREDIV_S + 1u) - shift_ticks);
+    /* Bracket the write for the monotonic counter. A shift still pending
+     * (SHPF) is not waited for: the HAL would block this callback until the
+     * hardware absorbs it; the next Sync packet corrects instead. */
+    const char *res      = "busy";
+    int32_t     shift_ms = 0;
+    if (TIMER_IF_RtcWriteBegin()) {
+        HAL_StatusTypeDef st;
+        hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+        if (error_ms > 0) {
+            /* RTC fast → delay: SUBFS added to SSR prescaler counter */
+            st = HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_RESET, shift_ticks);
+        } else {
+            /* RTC slow → advance: ADD1S=1 sets SSR = SUBFS after +1 calendar second.
+             * Advance = 1 − SUBFS/(PREDIV_S+1) = shift_ticks/(PREDIV_S+1)  (AN4759 §2.6) */
+            st = HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
+                                            (RTC_PREDIV_S + 1u) - shift_ticks);
+        }
+        res = "fail";
+        if (st == HAL_OK) {
+            res      = "ok";
+            shift_ms = shift_ticks_to_ms(shift_ticks, error_ms < 0);
+        }
     }
+    TIMER_IF_RtcWriteEnd(false, shift_ms);
 
     /* err > 0: local clock was ahead and is delayed; ticks of 1/(PREDIV_S+1) s. */
     ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "RTC_SHIFT", "err=%d ticks=%u res=%s",
-           (int)error_ms, (unsigned)shift_ticks, (st == HAL_OK) ? "ok" : "fail");
+           (int)error_ms, (unsigned)shift_ticks, res);
 }
 
 /* Atomic RTC snapshot hook: called at Sync Phase entry (C3/C2 TX epoch

@@ -64,8 +64,8 @@ void test_clock_starts_at_time_of_day(void)
 {
     DayMsClock_t c;
     DayMsClock_Init(&c, 1000u);
-    TEST_ASSERT_EQUAL_UINT32(1000u, DayMsClock_Update(&c, 1000u));
-    TEST_ASSERT_EQUAL_UINT32(1500u, DayMsClock_Update(&c, 1500u));
+    TEST_ASSERT_EQUAL_UINT32(1000u, DayMsClock_Update(&c, 1000u, false));
+    TEST_ASSERT_EQUAL_UINT32(1500u, DayMsClock_Update(&c, 1500u, false));
 }
 
 void test_clock_keeps_counting_across_midnight(void)
@@ -73,27 +73,113 @@ void test_clock_keeps_counting_across_midnight(void)
     /* The elapsed time a timer sees across midnight is the real one. */
     DayMsClock_t c;
     DayMsClock_Init(&c, MS_PER_DAY - 300u);
-    uint32_t before = DayMsClock_Update(&c, MS_PER_DAY - 100u);
-    uint32_t after  = DayMsClock_Update(&c, 200u);
+    uint32_t before = DayMsClock_Update(&c, MS_PER_DAY - 100u, false);
+    uint32_t after  = DayMsClock_Update(&c, 200u, false);
     TEST_ASSERT_EQUAL_UINT32(300u, after - before);
     TEST_ASSERT_EQUAL_UINT32(MS_PER_DAY + 200u, after);
 }
 
-void test_clock_ignores_rtc_moved_back(void)
+void test_clock_ignores_unknown_rtc_move_back(void)
 {
     DayMsClock_t c;
     DayMsClock_Init(&c, 5000u);
-    TEST_ASSERT_EQUAL_UINT32(5000u, DayMsClock_Update(&c, 4900u));  /* shifted back */
+    TEST_ASSERT_EQUAL_UINT32(5000u, DayMsClock_Update(&c, 4900u, false));  /* shifted back */
     /* 200 ms of real time after the shift: counted from the new reading. */
-    TEST_ASSERT_EQUAL_UINT32(5200u, DayMsClock_Update(&c, 5100u));
+    TEST_ASSERT_EQUAL_UINT32(5200u, DayMsClock_Update(&c, 5100u, false));
 }
 
 void test_clock_differences_survive_the_2_32_wrap(void)
 {
-    DayMsClock_t c = { .mono_ms = 0xFFFFFF00u, .last_day_ms = 1000u };
+    DayMsClock_t c = { .mono_ms = 0xFFFFFF00u, .last_day_ms = 1000u, .pending_shift_ms = 0 };
     uint32_t t0 = c.mono_ms;
-    uint32_t t1 = DayMsClock_Update(&c, 1500u);
+    uint32_t t1 = DayMsClock_Update(&c, 1500u, false);
     TEST_ASSERT_EQUAL_UINT32(500u, t1 - t0);
+}
+
+/* ------- RTC writes excluded: the counter follows real time ------------ */
+
+void test_calendar_set_forward_is_not_counted(void)
+{
+    /* Packet 1 sets the RTC from 10:00:00.000 to 14:00:00.000. */
+    DayMsClock_t c;
+    DayMsClock_Init(&c, 36000000u);
+    uint32_t t0 = DayMsClock_Update(&c, 36000000u, false);
+    DayMsClock_OnCalendarSet(&c, 50400000u, false, 0);
+    TEST_ASSERT_EQUAL_UINT32(t0 + 250u, DayMsClock_Update(&c, 50400250u, false));
+}
+
+void test_calendar_set_back_across_midnight_is_not_counted(void)
+{
+    /* Tier 3 at 00:00:00.100 sets the RTC back to 23:59:59.500. */
+    DayMsClock_t c;
+    DayMsClock_Init(&c, 100u);
+    uint32_t t0 = c.mono_ms;
+    DayMsClock_OnCalendarSet(&c, MS_PER_DAY - 500u, false, 0);
+    TEST_ASSERT_EQUAL_UINT32(t0 + 800u, DayMsClock_Update(&c, 300u, false));
+}
+
+void test_shift_applied_at_once_is_not_counted(void)
+{
+    /* Tier 2 delays the clock by 40 ms; SHPF is already clear. */
+    DayMsClock_t c;
+    DayMsClock_Init(&c, 5000u);
+    uint32_t t0 = DayMsClock_OnShift(&c, 5000u - 40u, false, -40);
+    TEST_ASSERT_EQUAL_UINT32(5000u, t0);
+    TEST_ASSERT_EQUAL_UINT32(5100u, DayMsClock_Update(&c, 5060u, false));
+}
+
+void test_shift_applied_later_is_not_counted(void)
+{
+    /* Tier 2 advances the clock by 30 ms; the hardware applies it later. */
+    DayMsClock_t c;
+    DayMsClock_Init(&c, 5000u);
+    TEST_ASSERT_EQUAL_UINT32(5000u, DayMsClock_OnShift(&c, 5000u, true, 30));
+    TEST_ASSERT_EQUAL_UINT32(5400u, DayMsClock_Update(&c, 5400u, true));  /* still pending */
+    /* Applied between the two readings: 5400 + 300 real + 30 shift. */
+    TEST_ASSERT_EQUAL_UINT32(5700u, DayMsClock_Update(&c, 5730u, false));
+    TEST_ASSERT_EQUAL_UINT32(5800u, DayMsClock_Update(&c, 5830u, false));
+}
+
+void test_backward_shift_applied_later_is_not_counted(void)
+{
+    DayMsClock_t c;
+    DayMsClock_Init(&c, 5000u);
+    DayMsClock_OnShift(&c, 5000u, true, -60);
+    /* Applied: 100 ms of real time, the reading moved back 60. */
+    TEST_ASSERT_EQUAL_UINT32(5100u, DayMsClock_Update(&c, 5040u, false));
+}
+
+void test_calendar_set_with_its_shift_pending(void)
+{
+    /* Packet 1: set to 12:00:00 (whole second), then an advance shift of
+     * 400 ms that the hardware applies later. */
+    DayMsClock_t c;
+    DayMsClock_Init(&c, 1000u);
+    uint32_t t0 = c.mono_ms;
+    DayMsClock_OnCalendarSet(&c, 43200000u, true, 400);
+    TEST_ASSERT_EQUAL_UINT32(t0 + 100u, DayMsClock_Update(&c, 43200100u, true));
+    TEST_ASSERT_EQUAL_UINT32(t0 + 300u, DayMsClock_Update(&c, 43200700u, false));
+}
+
+void test_calendar_set_with_its_shift_already_applied(void)
+{
+    DayMsClock_t c;
+    DayMsClock_Init(&c, 1000u);
+    uint32_t t0 = c.mono_ms;
+    DayMsClock_OnCalendarSet(&c, 43200400u, false, 400);   /* shift in the reading */
+    TEST_ASSERT_EQUAL_UINT32(t0 + 100u, DayMsClock_Update(&c, 43200500u, false));
+}
+
+void test_calendar_set_keeps_an_earlier_pending_shift(void)
+{
+    /* A Tier 2 shift is still pending when Tier 3 sets the calendar (no new
+     * shift written); the hardware applies the old one after the set. */
+    DayMsClock_t c;
+    DayMsClock_Init(&c, 5000u);
+    DayMsClock_OnShift(&c, 5000u, true, 50);
+    uint32_t t0 = c.mono_ms;
+    DayMsClock_OnCalendarSet(&c, 9000u, true, 0);
+    TEST_ASSERT_EQUAL_UINT32(t0 + 100u, DayMsClock_Update(&c, 9150u, false));
 }
 
 int main(void)
@@ -109,7 +195,15 @@ int main(void)
     RUN_TEST(test_abs_diff_across_midnight);
     RUN_TEST(test_clock_starts_at_time_of_day);
     RUN_TEST(test_clock_keeps_counting_across_midnight);
-    RUN_TEST(test_clock_ignores_rtc_moved_back);
+    RUN_TEST(test_clock_ignores_unknown_rtc_move_back);
     RUN_TEST(test_clock_differences_survive_the_2_32_wrap);
+    RUN_TEST(test_calendar_set_forward_is_not_counted);
+    RUN_TEST(test_calendar_set_back_across_midnight_is_not_counted);
+    RUN_TEST(test_shift_applied_at_once_is_not_counted);
+    RUN_TEST(test_shift_applied_later_is_not_counted);
+    RUN_TEST(test_backward_shift_applied_later_is_not_counted);
+    RUN_TEST(test_calendar_set_with_its_shift_pending);
+    RUN_TEST(test_calendar_set_with_its_shift_already_applied);
+    RUN_TEST(test_calendar_set_keeps_an_earlier_pending_shift);
     return UNITY_END();
 }

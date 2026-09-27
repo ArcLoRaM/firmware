@@ -99,15 +99,19 @@ static uint32_t RtcTimerContext = 0;
 /* USER CODE BEGIN PV */
 static uint8_t RTC_Initialized = 0;
 /* Monotonic time base of UTIL_TIMER and HAL_GetTick. GetTimerTicks() is the
- * time of day and falls back at midnight; the timer context, elapsed time
- * and HAL tick must not (issue #54). */
+ * time of day and falls back at midnight and on RTC corrections; the timer
+ * context, elapsed time and HAL tick must not (issue #54). */
 static DayMsClock_t s_mono_clock;
+/* Held during an RTC write (TIMER_IF_RtcWriteBegin / End): the calendar is
+ * mid-update, so the counter is read without touching the RTC. */
+static volatile uint8_t s_mono_held = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
 static inline uint32_t GetTimerTicks(void);
 static uint32_t GetMonotonicTicks(void);
+static void ReadClock(uint32_t *day_ms, bool *shift_pending);
 static inline int32_t SubSecondsToMs(uint32_t ssr);
 /* USER CODE END PFP */
 
@@ -320,6 +324,38 @@ uint32_t TIMER_IF_GetMonotonicMs(void)
   return GetMonotonicTicks();
 }
 
+bool TIMER_IF_RtcWriteBegin(void)
+{
+  uint32_t day_ms;
+  bool     shift_pending;
+  uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  ReadClock(&day_ms, &shift_pending);
+  (void)DayMsClock_Update(&s_mono_clock, day_ms, shift_pending);
+  s_mono_held = 1u;
+  __set_PRIMASK(primask);
+  return !shift_pending;
+}
+
+void TIMER_IF_RtcWriteEnd(bool calendar_set, int32_t shift_ms)
+{
+  uint32_t day_ms;
+  bool     shift_pending;
+  uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  ReadClock(&day_ms, &shift_pending);
+  if (calendar_set)
+  {
+    DayMsClock_OnCalendarSet(&s_mono_clock, day_ms, shift_pending, shift_ms);
+  }
+  else
+  {
+    (void)DayMsClock_OnShift(&s_mono_clock, day_ms, shift_pending, shift_ms);
+  }
+  s_mono_held = 0u;
+  __set_PRIMASK(primask);
+}
+
 void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
 {
   UTIL_TIMER_IRQ_MAP_PROCESS();
@@ -362,17 +398,45 @@ static inline uint32_t GetTimerTicks(void)
   return (uint32_t)ms;
 }
 
-/* Monotonic ms: the RTC time of day extended across midnight. Updated from
- * the radio ISR, the RTC ISRs and thread context, hence the critical section.
- * Every UTIL_TIMER operation and HAL_GetTick call updates it, far more often
- * than the 12 h DayMsClock_Update needs. */
+/* Monotonic ms: the RTC time of day extended across midnight, RTC writes
+ * excluded. Updated from the radio ISR, the RTC ISRs and thread context,
+ * hence the critical section. Every UTIL_TIMER operation and HAL_GetTick
+ * call updates it, far more often than the 12 h DayMsClock_Update needs.
+ * During an RTC write it holds its value (HAL loops inside the write, and
+ * any ISR, see time stand still for well under a millisecond). Holding,
+ * rather than reading the RTC mid-write, keeps it from ever going back; the
+ * cost is that a HAL RTC wait inside the write (INITF, set by hardware within
+ * two RTCCLK cycles) cannot time out while held. */
 static uint32_t GetMonotonicTicks(void)
 {
   uint32_t primask = __get_PRIMASK();
   __disable_irq();
-  uint32_t mono = DayMsClock_Update(&s_mono_clock, GetTimerTicks());
+  if (s_mono_held == 0u)
+  {
+    uint32_t day_ms;
+    bool     shift_pending;
+    ReadClock(&day_ms, &shift_pending);
+    (void)DayMsClock_Update(&s_mono_clock, day_ms, shift_pending);
+  }
+  uint32_t mono = s_mono_clock.mono_ms;
   __set_PRIMASK(primask);
   return mono;
+}
+
+/* Time of day and SHPF read together: SHPF is sampled before and after the
+ * time, and the pair is retried if a shift completed in between, so the
+ * flag always tells whether the reading includes a written shift. */
+static void ReadClock(uint32_t *day_ms, bool *shift_pending)
+{
+  uint32_t before;
+  uint32_t after;
+  do
+  {
+    before  = READ_BIT(RTC->ICSR, RTC_ICSR_SHPF);
+    *day_ms = GetTimerTicks();
+    after   = READ_BIT(RTC->ICSR, RTC_ICSR_SHPF);
+  } while (before != after);
+  *shift_pending = (after != 0u);
 }
 
 /* Milliseconds elapsed in the current calendar second. SSR counts down from

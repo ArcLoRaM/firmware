@@ -521,11 +521,22 @@ are signed and taken the short way round the day (`DayMs_Diff`, valid under
 12 h), so a slot, a Sync phase, a Tx fire instant or a silence timeout can
 span midnight like any other instant (`day_ms.h`, issue #54). Plain `uint32_t`
 subtraction is wrong here: 2³² is not a multiple of a day.
-The CM0+ timer base is the exception: UTIL_TIMER (context, elapsed time,
-delays) and `HAL_GetTick` (HAL timeouts, the compliance engine's credit refill)
-need a counter that never goes back, so they run on the RTC time of day
-extended across midnight (`TIMER_IF_GetMonotonicMs`, `DayMsClock_t`). An RTC
-written back is not counted. `UTIL_TIMER_GetCurrentTime` stays the time of day.
+The one exception is the Monotonic Clock below.
+
+### Monotonic Clock
+A CM0+ millisecond counter that follows real time and never goes back: not at midnight, and not when a Sync correction writes the RTC (`TIMER_IF_GetMonotonicMs`, `DayMsClock_t` in `day_ms.h`, issue #54).
+It is derived from the RTC, the only clock running in Stop2: every read adds the step since the previous one, and the platform brackets each RTC write (`TIMER_IF_RtcWriteBegin` / `End`) so the jump is never counted.
+A calendar set (Packet 1, Tier 3) is excluded at once; a SHIFTR (Tier 2, and the sub-second part of a set) is excluded when the hardware actually applies it (SHPF clear), which may be after the write returns.
+
+| Used by | For |
+|---|---|
+| UTIL_TIMER (`timer_if.c`: context, elapsed time, `StartTimer`) | software timers: Rx cap, radio Tx timeout |
+| `HAL_GetTick` (`sys_app.c`) | HAL timeouts, `HAL_Delay` |
+| Compliance Engine (through `HAL_GetTick`) | duty-cycle credit refill |
+
+It is a duration base only.
+Anything that is a time of day (slots, alarms, SyncStamp, Sync epoch, logs) reads the RTC time of day (`UTIL_TIMER_GetCurrentTime`), never this counter.
+_Avoid_: using `HAL_GetTick` or `TIMER_IF_GetMonotonicMs` as a time of day
 
 ---
 
