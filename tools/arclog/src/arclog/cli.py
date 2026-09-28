@@ -1,4 +1,4 @@
-"""arclog command line: capture, view, merge, report."""
+"""arclog command line: capture, view, merge, report, expect."""
 
 from __future__ import annotations
 
@@ -142,6 +142,43 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_expect(args: argparse.Namespace) -> int:
+    import time
+    from datetime import datetime, timezone
+
+    from arclog.expect import TIMEOUT, DirFollower, Run, describe_start, load_spec, parse_since, replay
+
+    try:
+        spec = load_spec(args.spec)
+        since = parse_since(args.since)
+    except (OSError, ValueError) as exc:
+        print(f"arclog expect: {exc}", file=sys.stderr)
+        return 3
+
+    def report(msg: str) -> None:
+        print(msg, flush=True)
+
+    report(describe_start(spec, since))
+    run = Run(spec, since, report=report)
+    follower = DirFollower(args.dir, list(spec.nodes), since)
+    if not args.follow:
+        verdict = replay(run, follower.poll())
+        if verdict is None:
+            report("TIMEOUT trace ends before a verdict")
+            return TIMEOUT
+        return verdict.code
+    try:
+        while True:
+            replay(run, follower.poll())
+            verdict = run.tick(datetime.now(timezone.utc))
+            if verdict is not None:
+                return verdict.code
+            time.sleep(args.poll)
+    except KeyboardInterrupt:
+        report("arclog expect: interrupted")
+        return 130
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="arclog", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -179,6 +216,17 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--bw", type=int, default=125_000, help="bandwidth in Hz")
     r.add_argument("--preamble", type=int, default=8, help="preamble symbols")
     r.set_defaults(func=cmd_report)
+
+    e = sub.add_parser("expect", help="decide a run from capture files: exit 0 pass, 1 fail, 2 timeout "
+                                      "(3 invalid expect file)")
+    e.add_argument("spec", help="expect file (TOML), see arclog/expect.py")
+    e.add_argument("--dir", required=True, help="capture directory (<node>-YYYYMMDD.log files)")
+    e.add_argument("--since", required=True,
+                   help="run start, ISO UTC time (e.g. 2026-09-28T23:24:00Z) or 'now'")
+    e.add_argument("--follow", action="store_true",
+                   help="keep reading as the files grow, until a verdict (default: decide on the files as they are)")
+    e.add_argument("--poll", type=float, default=1.0, help="seconds between reads with --follow")
+    e.set_defaults(func=cmd_expect)
     return p
 
 

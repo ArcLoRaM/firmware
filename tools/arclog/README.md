@@ -101,6 +101,48 @@ Daily files of the same node are concatenated automatically.
 The trace health table gives each node's Node ID from its CM0+ `BOOT` line.
 A board missing from the Node ID table boots with `id=0`; `view`, `merge` and `report` flag that `BOOT` line with the entry to add to `Common/Protocol/node_id.c`.
 
+### expect
+
+Decide a run from the capture files: exit `0` pass, `1` fail, `2` timeout (`3` for an invalid expect file).
+The run starts at `--since` (the flash); `--follow` keeps reading as the files grow, until a verdict.
+Every step is printed as it happens (`ok ...`, `note ...`), then `PASS`, `FAIL <reason>` or `TIMEOUT missing: ...`.
+
+```sh
+uv run arclog expect c2-sync.toml --dir runs/2026-09-29 --since 2026-09-29T10:00:00Z --follow
+```
+
+The expect file (TOML) names the nodes by their capture name and what must happen:
+
+```toml
+timeout = "8m"
+build = "a1b2c3d-dirty"   # Build ID every flashed node must boot
+
+[nodes.com9]
+cls = "C2"                # optional: class the node must boot as
+reboots = 0               # optional: reboots allowed (scheduled resets)
+
+[nodes.com8]
+flashed = false           # the peer, not reflashed: no arming, expectations only
+
+[[expect]]
+node = "com9"
+event = "CLK"
+where = { to = "WARM" }
+within = "7m"             # from the run being armed
+
+[[forbid]]
+event = "TX_LATE"
+```
+
+A flashed node is armed when both cores have logged `BOOT` with the expected Build ID; lines of the old image before that are ignored, and a `BOOT` of another build before arming is waited through.
+The Smoke Check is always on (`smoke = false` to disable): within `smoke_window` (30 s) each flashed node is armed and its CM4 logs `CORE_SYNC stage=linked`.
+From its first `BOOT` on, a node fails the run on lost lines, a schema problem, an unexpected reboot, a CM0+ rebooting alone, a forbidden event, or a `BOOT` of another build.
+A run passes once every expectation is met and `min_duration` (default: the smoke window) has elapsed.
+The full format is in `src/arclog/expect.py`.
+
+Files are followed by polling (`--poll`, 1 s), not change notifications, which arrive late for files written from Windows over the WSL share.
+Deadlines use the host clock of the machine running `expect`, compared with the capture's receive times.
+
 ## Development
 
 ```sh
