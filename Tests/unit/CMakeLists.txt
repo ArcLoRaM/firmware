@@ -167,3 +167,8 @@ add_unity_test(test_cm4_diag
 add_unity_test(test_rtc_ssr
     test_rtc_ssr.c
 )
+
+add_unity_test(test_node_id
+    test_node_id.c
+    ../../Common/Protocol/node_id.c
+)

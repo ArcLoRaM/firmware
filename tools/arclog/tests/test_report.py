@@ -115,3 +115,10 @@ def test_markdown_sections(run_files):
     md = to_markdown(analyse({"c3": list(read_lines(c3_path)), "c2": list(read_lines(c2_path))}))
     for heading in ("## Trace health", "## Node c2", "## Node c3", "## Cross-node pairing"):
         assert heading in md
+
+
+def test_trace_health_shows_each_node_id(run_files):
+    c3_path, c2_path = run_files
+    md = to_markdown(analyse({"c3": list(read_lines(c3_path)), "c2": list(read_lines(c2_path))}))
+    assert "| c3 | 1 |" in md
+    assert "| c2 | 2 |" in md

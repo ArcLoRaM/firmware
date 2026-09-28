@@ -12,6 +12,14 @@ it without each maintaining their own copy). Both representations coexist.
 | `C2` | Relay. Cluster master for C1 nodes. Mesh backbone participant. May also collect sensor data. |
 | `C3` | Gateway. Mesh backbone terminus. SyncAnchor — originates Sync packets, never enters `Scanning`. May act as cluster master. |
 
+## Node ID
+
+The one-byte identity a node carries in its packets (`node_id`, `source_node_id`, `upstream_node_id`) and in its logs.
+It is not derived from anything: each board is registered once in a compiled table (`Common/Protocol/node_id.c`) that maps the MCU 96-bit unique ID (UID) to its Node ID, and every board runs the same build of its node class.
+Values 1-254 are assignable; `0x00` means unprovisioned (the board's UID is not in the table) and `0xFF` is reserved for broadcast.
+The CM0+ `BOOT` line logs both (`id=`, `uid=`), and `arclog` flags `id=0` with the table entry to add.
+A Node ID belongs to the board, not to its node class or its serial port (see ADR-0017).
+
 ## CM4 Wake Sources
 
 CM4 exits Stop2 on two independent hardware interrupt sources. These are

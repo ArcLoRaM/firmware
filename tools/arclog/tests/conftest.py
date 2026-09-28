@@ -47,14 +47,18 @@ def ms_of_day(t: datetime) -> int:
     return ((t.hour * 60 + t.minute) * 60 + t.second) * 1000 + t.microsecond // 1000
 
 
+C3_UID = "002000415642500a20383353"
+C2_UID = "002000415642500a20383354"
+
+
 def build_run(drift_ppm: float = 20.0, frames: int = 120, hdr_minus_pre: int = 530,
               tx_start_lag: int = 5) -> tuple[NodeLog, NodeLog]:
     """C3 sends 3 Sync cells per frame; C2 locks on frame 0 (cells 0-2), then
     receives cell 0 of every frame while WARM. The C2 clock drifts by
     drift_ppm; |err| >= 8 ms triggers a tier-2 RTC_SHIFT that zeroes it."""
     c3, c2 = NodeLog("c3"), NodeLog("c2")
-    c3.emit(T0, "0", "S", "A", "BOOT", cls="C3", fw="1.5.0")
-    c2.emit(T0, "0", "S", "A", "BOOT", cls="C2", fw="1.5.0")
+    c3.emit(T0, "0", "S", "A", "BOOT", cls="C3", id="1", uid=C3_UID, fw="1.5.0")
+    c2.emit(T0, "0", "S", "A", "BOOT", cls="C2", id="2", uid=C2_UID, fw="1.5.0")
     c2.emit(T0, "0", "M", "L", "MAC_INIT", cls="C2", st="SCAN", clk="COLD")
 
     offset_ms = 0.0          # C2 clock minus C3 clock

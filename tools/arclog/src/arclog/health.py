@@ -57,6 +57,7 @@ class Health:
     rtc_jumps: list[tuple[Line, timedelta]] = field(default_factory=list)
     problems: Counter = field(default_factory=Counter)    # schema problem -> count
     boots: Counter = field(default_factory=Counter)       # (node, core) -> BOOT count
+    node_ids: set[str] = field(default_factory=set)       # Node IDs from CM0+ BOOT lines
 
 
 def check(lines: list[Line]) -> Health:
@@ -76,6 +77,8 @@ def check(lines: list[Line]) -> Health:
             h.problems[p] += 1
         if line.kind is Kind.ARCLOG and line.event == "BOOT":
             h.boots[(line.node, line.core)] += 1
+            if "id" in line.fields:
+                h.node_ids.add(line.fields["id"])
         if line.dev_time is not None and line.host_time is not None:
             prev = last.get(line.node)
             if prev is not None and line.event != "BOOT":

@@ -79,3 +79,16 @@ def test_validate_reports_problems(line, problem):
 def test_optional_keys_are_accepted():
     assert validate(parse_line("260925T101010.0000 4S A #00 BOOT")) == []
     assert validate(parse_line("260925T101010.0000 0S A #00 BOOT cls=C2 fw=1.5.0")) == []
+
+
+def test_boot_with_node_id_and_uid_is_valid():
+    line = "260925T101010.0000 0S A #00 BOOT cls=C2 id=2 uid=002000415642500a20383354 fw=1.5.0"
+    assert validate(parse_line(line)) == []
+
+
+def test_unregistered_board_gives_the_table_entry_to_add():
+    line = "260925T101010.0000 0S A #00 BOOT cls=C2 id=0 uid=002000415642500a20383354 fw=1.5.0"
+    assert validate(parse_line(line)) == [
+        "BOOT: board not registered, add { { 0x00200041u, 0x5642500Au, 0x20383354u }, "
+        "<next free id> }, to Common/Protocol/node_id.c"
+    ]

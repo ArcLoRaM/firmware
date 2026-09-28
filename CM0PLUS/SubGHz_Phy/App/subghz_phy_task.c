@@ -37,6 +37,7 @@
 #include "protocol_types.h"   /* NODE_CLASS_C* constants */
 #include "tdma_table.h"       /* TdmaTable_PhaseCount */
 #include "guard_time_resolver.h" /* MAX_GUARD_TIME_MS */
+#include "node_id.h"          /* NodeId_ReadUid, NodeId_FromUid */
 
 /* =========================================================================
  * Radio IRQ timestamps
@@ -512,9 +513,13 @@ void SubGhzPhyTask_Init(void)
      *    this point, before the first TDMA slot fires. */
     SharedMem_Init();
 
-    ARCLOG(ARCLOG_MOD_SYS, VLEVEL_ALWAYS, "BOOT", "cls=C%u fw=%u.%u.%u",
-           (unsigned)NODE_CLASS, (unsigned)APP_VERSION_MAIN,
-           (unsigned)APP_VERSION_SUB1, (unsigned)APP_VERSION_SUB2);
+    uint32_t uid[NODE_UID_WORDS];
+    NodeId_ReadUid(uid);
+    ARCLOG(ARCLOG_MOD_SYS, VLEVEL_ALWAYS, "BOOT", "cls=C%u id=%u uid=%08x%08x%08x fw=%u.%u.%u",
+           (unsigned)NODE_CLASS, (unsigned)NodeId_FromUid(uid),
+           (unsigned)uid[0], (unsigned)uid[1], (unsigned)uid[2],
+           (unsigned)APP_VERSION_MAIN, (unsigned)APP_VERSION_SUB1,
+           (unsigned)APP_VERSION_SUB2);
 
     /* 1. Radio — must be initialised before any UTIL_TIMER usage.
      *    TxTimeoutTimer and RxTimeoutTimer inside the radio driver are created

@@ -96,6 +96,9 @@ uv run arclog report runs/2026-09-25/*.log -o docs/experiments/2026-09-25-c3-c2.
 
 Daily files of the same node are concatenated automatically.
 
+The trace health table gives each node's Node ID from its CM0+ `BOOT` line.
+A board missing from the Node ID table boots with `id=0`; `view`, `merge` and `report` flag that `BOOT` line with the entry to add to `Common/Protocol/node_id.c`.
+
 ## Development
 
 ```sh

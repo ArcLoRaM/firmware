@@ -298,11 +298,13 @@ def to_markdown(run: RunResult, title: str = "Sync run report") -> str:
       f"nominal HEADER_VALID at {hdr_theory:.1f} ms after TX start).\n\n")
 
     w("## Trace health\n\n")
-    w("| node | lines | ArcLog | legacy | raw | lost lines | reordered | schema problems | RTC jumps | boots |\n")
-    w("|---|---|---|---|---|---|---|---|---|---|\n")
+    w("| node | id | lines | ArcLog | legacy | raw | lost lines | reordered | schema problems "
+      "| RTC jumps | boots |\n")
+    w("|---|---|---|---|---|---|---|---|---|---|---|\n")
     for nr in run.nodes:
         h = nr.health
-        w(f"| {nr.node} | {h.lines} | {h.kinds[Kind.ARCLOG]} | {h.kinds[Kind.LEGACY]} "
+        ids = ",".join(sorted(h.node_ids, key=lambda v: (len(v), v))) or "-"
+        w(f"| {nr.node} | {ids} | {h.lines} | {h.kinds[Kind.ARCLOG]} | {h.kinds[Kind.LEGACY]} "
           f"| {h.kinds[Kind.RAW]} | {sum(h.lost.values())} | {h.reordered} "
           f"| {sum(h.problems.values())} | {len(h.rtc_jumps)} | {sum(h.boots.values())} |\n")
     problems = Counter()

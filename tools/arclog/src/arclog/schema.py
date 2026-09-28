@@ -22,7 +22,13 @@ class Event:
 
 EVENTS: dict[str, Event] = {
     # --- System / boot -------------------------------------------------------
-    "BOOT": Event("S", (), "Core booted (CM0+ adds node class and firmware version).", ("cls", "fw")),
+    "BOOT": Event(
+        "S",
+        (),
+        "Core booted. CM0+ adds node class, Node ID (0 = board not registered), "
+        "MCU unique ID (w0 w1 w2) and firmware version.",
+        ("cls", "id", "uid", "fw"),
+    ),
     "INIT_DONE": Event("S", ("phases",), "CM0+ protocol machines initialised; TDMA table phase count."),
     # --- Inter-core ----------------------------------------------------------
     "CORE_SYNC": Event("X", ("stage",), "CM4/CM0+ boot handshake stage."),
@@ -123,4 +129,14 @@ def validate(line: Line) -> list[str]:
         problems.append(f"{line.event}: missing {','.join(sorted(missing))}")
     if extra:
         problems.append(f"{line.event}: unexpected {','.join(sorted(extra))}")
+    if line.event == "BOOT" and line.get("id") == "0":
+        problems.append(unregistered_board(line.get("uid", "")))
     return problems
+
+
+def unregistered_board(uid: str) -> str:
+    """Problem text for a board missing from the Node ID table, with the entry to add."""
+    words = [uid[i:i + 8] for i in range(0, 24, 8)] if len(uid) == 24 else []
+    entry = ", ".join(f"0x{w.upper()}u" for w in words) if words else uid
+    return (f"BOOT: board not registered, add {{ {{ {entry} }}, <next free id> }}, "
+            "to Common/Protocol/node_id.c")
