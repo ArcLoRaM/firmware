@@ -166,6 +166,13 @@ extern "C" {
 #undef  UTIL_ADV_TRACE_TMP_MAX_TIMESTMAP_SIZE
 #define UTIL_ADV_TRACE_TMP_MAX_TIMESTMAP_SIZE      (20U)
 
+/* The CM4 FIFO carries both cores' traces (the CM0+ lines arrive over
+ * MbMux) and drains at 9600 baud, ~1 byte/ms. At boot both cores write
+ * ~520 bytes within a few ms: 512 dropped the CM0+ lines after BOOT once
+ * BOOT gained build= (bench 2026-09-29). 4096 is ~4 s of UART output. */
+#undef  UTIL_ADV_TRACE_FIFO_SIZE
+#define UTIL_ADV_TRACE_FIFO_SIZE                   (4096U)
+
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
