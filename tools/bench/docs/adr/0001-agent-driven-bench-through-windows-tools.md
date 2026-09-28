@@ -22,7 +22,8 @@ One-off defines (a parameter sweep) go into a gitignored `bench_overrides.h` in 
 CDT's headless `-D` was not used: it can write the define back into the `.cproject` of the workspace project, which is the repo's.
 
 **Build ID in the `BOOT` line.**
-`bench` defines `BENCH_BUILD_ID` (git hash, dirty flag, override hash) in the same header, and the CM0+ `BOOT` line logs it next to `cls=`, `id=` and `uid=`.
+`bench` defines `BENCH_BUILD_ID` (git hash, dirty flag, override hash) in the same header, and the `BOOT` line of both cores logs it (`build=`, next to `cls=`, `id=` and `uid=` on the CM0+).
+Both cores log it so that a CM4 image from another build is caught too.
 It is the start edge of a run: without it, a fresh boot of the new image cannot be told from a reboot of the old one.
 
 **Boards found by UID, classes chosen per run.**
@@ -66,7 +67,8 @@ Rejected: a board is not tied to a class; the class belongs to the run.
 
 ## Consequences
 
-- The firmware carries two small hooks for the bench: the `__has_include("bench_overrides.h")` include and the Build ID in the CM0+ `BOOT` line. The developer builds them once by hand; from then on the agent builds itself.
+- The firmware carries two small hooks for the bench: `Common/Bench/bench_config.h`, force-included by both `.cproject` files, and the Build ID in both cores' `BOOT` lines.
+  The developer builds them once by hand; from then on the agent builds itself.
 - `arclog` gains a multi-port `capture` and an `expect --follow` command that exits 0 (pass), 1 (fail) or 2 (timeout).
 - A HardFault leaves nothing in the trace: the run fails on timeout with no cause. Batch GDB post-mortem is a story.
 - Halt/resume is not a power loss. A real power cycle needs hardware (switchable USB hub or relay) and is a story.

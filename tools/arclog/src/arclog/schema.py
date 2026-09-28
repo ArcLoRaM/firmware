@@ -25,9 +25,10 @@ EVENTS: dict[str, Event] = {
     "BOOT": Event(
         "S",
         (),
-        "Core booted. CM0+ adds node class, Node ID (0 = board not registered), "
-        "MCU unique ID (w0 w1 w2) and firmware version.",
-        ("cls", "id", "uid", "fw"),
+        "Core booted, with the Build ID (\"dev\" outside the bench, see "
+        "Common/Bench/bench_config.h). CM0+ adds node class, Node ID "
+        "(0 = board not registered), MCU unique ID (w0 w1 w2) and firmware version.",
+        ("cls", "id", "uid", "fw", "build"),
     ),
     "INIT_DONE": Event("S", ("phases",), "CM0+ protocol machines initialised; TDMA table phase count."),
     # --- Inter-core ----------------------------------------------------------

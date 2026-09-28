@@ -20,12 +20,13 @@ It is synced from the repo before every build and is never edited by hand.
 ## Build Override
 
 A define set for one run only (`-D TX_RAMP_MS=5`), written to a generated, gitignored `bench_overrides.h` in the Build Tree.
-The firmware picks it up through `__has_include`, so a build without the file is the normal build.
+It sits next to `Common/Bench/bench_config.h`, which both cores' `.cproject` force-include (`-include`) in every C file and which includes it through `__has_include`, so a build without the file is the normal build.
+It uses `#undef` then `#define`, so it can replace a `-D` of the build configuration; a define in a source file is overridable only when wrapped in `#ifndef`.
 
 ## Build ID
 
 The identity of one build: git hash, dirty flag and a hash of the Build Overrides.
-The firmware logs it in the CM0+ `BOOT` line, which is how a run tells a fresh boot of the new image from a stale reboot of the old one.
+The firmware logs it in the `BOOT` line of both cores, which is how a run tells a fresh boot of the new image from a stale reboot of the old one.
 
 ## Scenario
 

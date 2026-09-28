@@ -6,3 +6,4 @@ CM0PLUS/Debug_C2/
 CM0PLUS/Debug_C3/
 Tests/build/
 
+Common/Bench/bench_overrides.h

@@ -214,7 +214,7 @@ UTIL_ADV_TRACE_SetVerboseLevel(VLEVEL_H); //has to be set after MBMUXIF_TraceIni
   FEAT_INFO_List_t *p_cm0plus_supported_features_list;
   int8_t init_status;
 
-  ARCLOG(ARCLOG_MOD_SYS, VLEVEL_ALWAYS, "BOOT", "");
+  ARCLOG(ARCLOG_MOD_SYS, VLEVEL_ALWAYS, "BOOT", "build=%s", BENCH_BUILD_ID);
 
   init_status = MBMUXIF_SystemInit();
   if (init_status < 0)

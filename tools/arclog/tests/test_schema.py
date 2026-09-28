@@ -86,6 +86,13 @@ def test_boot_with_node_id_and_uid_is_valid():
     assert validate(parse_line(line)) == []
 
 
+def test_boot_with_build_id_is_valid():
+    assert validate(parse_line("260925T101010.0000 4S A #00 BOOT build=dev")) == []
+    line = ("260925T101010.0000 0S A #00 BOOT cls=C2 id=2 uid=002000415642500a20383354 "
+            "fw=1.5.0 build=a1b2c3d-dirty-5e6f")
+    assert validate(parse_line(line)) == []
+
+
 def test_unregistered_board_gives_the_table_entry_to_add():
     line = "260925T101010.0000 0S A #00 BOOT cls=C2 id=0 uid=002000415642500a20383354 fw=1.5.0"
     assert validate(parse_line(line)) == [
