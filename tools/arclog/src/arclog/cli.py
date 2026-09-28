@@ -49,16 +49,27 @@ def _add_filter_args(p: argparse.ArgumentParser) -> None:
 def cmd_capture(args: argparse.Namespace) -> int:
     from arclog.capture import capture
 
+    if len(args.port) != len(args.node):
+        print(f"arclog capture: {len(args.port)} --port but {len(args.node)} --node; "
+              "give one --node per --port, in the same order", file=sys.stderr)
+        return 2
+    ports = list(zip(args.port, args.node))
     flt = _filter(args)
     color = use_color(sys.stdout, args.color)
+    show_node = len(ports) > 1
 
     def echo(line: Line) -> None:
         if not args.quiet and flt.accepts(line):
-            print(format_line(line, color=color, show_node=False), flush=True)
+            print(format_line(line, color=color, show_node=show_node), flush=True)
 
-    print(f"arclog: writing {args.out}/{args.node}-YYYYMMDD.log (Ctrl+C to stop)", file=sys.stderr)
-    capture(args.port, args.node, Path(args.out), baud=args.baud, on_line=echo,
-            duration_s=args.duration)
+    for port, node in ports:
+        print(f"arclog: {port} -> {args.out}/{node}-YYYYMMDD.log", file=sys.stderr)
+    print("arclog: Ctrl+C to stop", file=sys.stderr)
+    try:
+        capture(ports, Path(args.out), baud=args.baud, on_line=echo, duration_s=args.duration)
+    except ValueError as exc:
+        print(f"arclog capture: {exc}", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -135,9 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="arclog", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    c = sub.add_parser("capture", help="record a serial port to daily capture files")
-    c.add_argument("--port", required=True, help="serial port, e.g. /dev/ttyUSB0 or COM5")
-    c.add_argument("--node", required=True, help="node name used in file names, e.g. c3")
+    c = sub.add_parser("capture", help="record serial ports to daily capture files, one node per port")
+    c.add_argument("--port", required=True, action="append",
+                   help="serial port, e.g. /dev/ttyUSB0 or COM5; repeat for several ports")
+    c.add_argument("--node", required=True, action="append",
+                   help="node name used in file names, e.g. c3; one per --port, same order")
     c.add_argument("--out", default="runs", help="output directory (default: runs)")
     c.add_argument("--baud", type=int, default=9600)
     c.add_argument("--quiet", action="store_true", help="do not echo lines to the terminal")

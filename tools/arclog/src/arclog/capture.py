@@ -1,14 +1,19 @@
 """Serial capture: every received line is stored verbatim with its host UTC time.
 
-Files are named <node>-<YYYYMMDD>.log (UTC date) inside the output directory
-and rotate at UTC midnight, so a months-long run is a directory of daily
-files. The port is reopened automatically when it disappears (USB replug,
-board reset), which matters for unattended runs.
+One process captures any number of ports, one node per port. Files are named
+<node>-<YYYYMMDD>.log (UTC date) inside the output directory and rotate at
+UTC midnight, so a months-long run is a directory of daily files. Each port
+is read by its own thread and reopened automatically when it disappears (USB
+replug, board reset), independently of the others, which matters for
+unattended runs. All lines are written by the calling thread, stamped with
+the one host clock at receive time.
 """
 
 from __future__ import annotations
 
+import queue
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,17 +94,60 @@ class DailyWriter:
             self._file = None
 
 
-def capture(port: str, node: str, out_dir: Path, baud: int = DEFAULT_BAUD,
-            on_line: Callable[[Line], None] | None = None,
-            duration_s: float | None = None) -> None:
-    """Capture until interrupted (Ctrl+C) or for duration_s seconds."""
-    writer = DailyWriter(out_dir, node)
+LineSource = Callable[[str], Iterator[tuple[datetime, str]]]
+"""Yields (host UTC time, line) for a port; serial_lines in production."""
+
+
+def _reader(port: str, node: str, source: LineSource, out: queue.Queue) -> None:
     try:
-        for t, raw in serial_lines(port, baud, duration_s=duration_s):
-            writer.write(t, raw)
+        for t, raw in source(port):
+            out.put((node, t, raw))
+    except BaseException as exc:  # reported by the writing thread
+        out.put((node, None, exc))
+    finally:
+        out.put((node, None, None))
+
+
+def capture(ports: list[tuple[str, str]], out_dir: Path, baud: int = DEFAULT_BAUD,
+            on_line: Callable[[Line], None] | None = None,
+            duration_s: float | None = None,
+            source: LineSource | None = None) -> None:
+    """Capture (port, node) pairs until interrupted (Ctrl+C) or for duration_s seconds."""
+    ports_seen = [p for p, _ in ports]
+    nodes_seen = [n for _, n in ports]
+    if not ports:
+        raise ValueError("no port to capture")
+    if len(set(ports_seen)) != len(ports_seen):
+        raise ValueError(f"port given twice: {ports_seen}")
+    if len(set(nodes_seen)) != len(nodes_seen):
+        raise ValueError(f"node name given twice (would share a file): {nodes_seen}")
+    if source is None:
+        def source(port: str) -> Iterator[tuple[datetime, str]]:
+            return serial_lines(port, baud, duration_s=duration_s)
+
+    lines: queue.Queue = queue.Queue()
+    writers = {node: DailyWriter(out_dir, node) for _, node in ports}
+    for port, node in ports:
+        threading.Thread(target=_reader, args=(port, node, source, lines),
+                         name=f"arclog-{port}", daemon=True).start()
+    running = len(ports)
+    try:
+        while running:
+            try:
+                # A timeout keeps Ctrl+C responsive on Windows.
+                node, t, item = lines.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if t is None:
+                if isinstance(item, BaseException):
+                    raise item
+                running -= 1
+                continue
+            writers[node].write(t, item)
             if on_line is not None:
-                on_line(parse_line(raw, node=node, host_time=t))
+                on_line(parse_line(item, node=node, host_time=t))
     except KeyboardInterrupt:
         pass
     finally:
-        writer.close()
+        for w in writers.values():
+            w.close()

@@ -25,3 +25,9 @@ packages = ["src/arclog"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv]
+# Rebuild when the sources change, not only pyproject.toml: captures run the
+# tool through `uv run --with <this directory>`, which would otherwise keep a
+# stale cached build after every code change.
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.py" }]

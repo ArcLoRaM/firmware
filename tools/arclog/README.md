@@ -32,17 +32,19 @@ The trace UART is 9600 8N1 (`--baud` to change).
 
 ### capture
 
-Record one node.
+Record one or more nodes, one serial port per node, in one process.
 Every line is stored verbatim, prefixed with its host UTC receive time.
-Files rotate at UTC midnight (`<node>-YYYYMMDD.log`), and the port is reopened automatically after a USB replug or a board reset.
+Files rotate at UTC midnight (`<node>-YYYYMMDD.log`).
+Each port is read on its own and reopened automatically after a USB replug or a board reset, without holding back the others.
 
 ```sh
 uv run arclog capture --port COM5 --node c3 --out runs/2026-09-25
-uv run arclog capture --port COM6 --node c2 --out runs/2026-09-25 --level M
+uv run arclog capture --port COM6 --node c3 --port COM8 --node c2 --port COM9 --node c2b --out runs/2026-09-25 --level M
 ```
 
-Run one capture per node, in two terminals.
-The echo to the terminal accepts the same filters as `view`; the file always keeps everything.
+Give one `--node` per `--port`, in the same order.
+With several ports, the terminal echo shows the node of each line.
+The echo accepts the same filters as `view`; the files always keep everything.
 
 ### view
 
