@@ -84,3 +84,43 @@ def test_cli_refuses_unpaired_ports(tmp_path, capsys):
     assert main(["capture", "--port", "COM6", "--port", "COM8", "--node", "c3",
                  "--out", str(tmp_path)]) == 2
     assert "one --node per --port" in capsys.readouterr().err
+
+
+class FakeSerialModule:
+    """pyserial stand-in: the port fails `failures` times, then gives `data` and goes idle."""
+
+    class SerialException(Exception):
+        pass
+
+    def __init__(self, failures, data=b""):
+        self.failures = failures
+        self.data = data
+        mod = self
+
+        class Serial:
+            def __init__(self, port, baud, timeout):
+                if mod.failures:
+                    mod.failures -= 1
+                    raise mod.SerialException(f"could not open port '{port}'")
+                self.in_waiting = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, n):
+                chunk, mod.data = mod.data, b""
+                return chunk
+
+        self.Serial = Serial
+
+
+def test_an_outage_is_logged_once_and_the_recovery_once(monkeypatch):
+    monkeypatch.setitem(__import__("sys").modules, "serial", FakeSerialModule(5, BOOT.encode() + b"\r\n"))
+    monkeypatch.setattr(capture_mod, "RECONNECT_S", 0.001)
+    logs = []
+    lines = [raw for _, raw in capture_mod.serial_lines("COM6", log=logs.append, duration_s=0.3)]
+    assert lines == [BOOT]
+    assert [m.split(" (")[0] for m in logs] == ["arclog: COM6 unavailable", "arclog: listening on COM6 @ 9600"]

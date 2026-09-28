@@ -36,9 +36,11 @@ def serial_lines(port: str, baud: int = DEFAULT_BAUD, reconnect: bool = True,
     import serial  # pyserial; imported here so offline commands do not need it
 
     deadline = time.monotonic() + duration_s if duration_s else None
+    down = False  # an outage is logged once, not at every retry
     while True:
         try:
             with serial.Serial(port, baud, timeout=1.0) as ser:
+                down = False
                 log(f"arclog: listening on {port} @ {baud}")
                 buf = bytearray()
                 while True:
@@ -61,7 +63,9 @@ def serial_lines(port: str, baud: int = DEFAULT_BAUD, reconnect: bool = True,
                 raise
             if deadline is not None and time.monotonic() >= deadline:
                 return
-            log(f"arclog: {port} unavailable ({exc}); retrying in {RECONNECT_S:.0f} s")
+            if not down:
+                log(f"arclog: {port} unavailable ({exc}); retrying every {RECONNECT_S:.0f} s")
+                down = True
             time.sleep(RECONNECT_S)
 
 
