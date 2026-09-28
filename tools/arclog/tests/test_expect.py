@@ -383,3 +383,17 @@ def test_cli_follow_decides_on_the_clock(tmp_path, capsys):
     spec_file.write_text('timeout = "5m"\nbuild = "b1"\n[nodes.n2]\n', encoding="utf-8")
     assert main(["expect", str(spec_file), "--dir", str(tmp_path), "--since",
                  since.strftime("%Y-%m-%dT%H:%M:%S.%fZ"), "--follow", "--poll", "0.01"]) == PASS
+
+
+def test_a_boot_glued_to_a_line_cut_by_the_reset_still_arms():
+    """Seen on the bench: the old image's last line cut by the flash, then the new CM4 BOOT."""
+    t = Trace()
+    t.boot(1, "n2", build="old")
+    t.lines.append(parse_line("260929T100002.0000 0S A �260929T100003.0000 4S A #00 BOOT build=b1",
+                              node="n2", host_time=SINCE + timedelta(seconds=3)))
+    t._seq[("n2", "4")] = 0  # the glued BOOT was #00
+    t.emit(3.1, "n2", "4", "CORE_SYNC", stage="linked")
+    t.emit(3.3, "n2", "0", "BOOT", cls="C2", id="2", uid=UID, fw="1.5.0", build="b1")
+    verdict, msgs = decide(spec(), t, end=30)
+    assert verdict.code == PASS
+    assert "ok   n2 armed (both cores booted build=b1) +3.3s" in msgs

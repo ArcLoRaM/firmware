@@ -9,7 +9,8 @@ A capture file line prefixes it with the host UTC receive time and a tab:
     2026-09-25T12:34:56.789012Z<TAB>260925T123456.7890 0Y M #41 SYNC_RX ...
 
 Every line is classified as one of:
-  ARCLOG  - full ArcLog header, event and key=value fields
+  ARCLOG  - full ArcLog header, event and key=value fields (also recovered
+            from the end of a line when a reset cut the line before it)
   LEGACY  - device timestamp but free text (ST-generated trace lines that
             live outside CubeMX USER CODE regions and cannot be converted)
   RAW     - anything else (boot noise, TS_OFF lines, garbage)
@@ -31,6 +32,10 @@ ARCLOG_RE = re.compile(
     r"#(?P<seq>[0-9a-f]{2}) (?P<event>[A-Z][A-Z0-9_]*)(?: (?P<body>.*))?$"
 )
 LEGACY_RE = re.compile(rf"^(?P<ts>{DEV_TS}) (?P<body>.*)$")
+
+#: Start of an ArcLog line inside another one: a line cut by a reset, glued
+#: to the first line of the new boot ("...0S A \ufffd000000T000000.9997 4S A #00 BOOT").
+EMBEDDED_ARCLOG_RE = re.compile(rf"{DEV_TS} [04][A-Z] [ALMH] #[0-9a-f]{{2}} [A-Z]")
 
 #: Verbosity letters in increasing verbosity (VLEVEL_ALWAYS, L, M, H).
 LEVELS = "ALMH"
@@ -157,6 +162,14 @@ def parse_line(
             event=m["event"],
             fields=parse_fields(m["body"] or ""),
         )
+
+    # A line cut by a reset, then the new boot's first line: keep the latter.
+    embedded = [m.start() for m in EMBEDDED_ARCLOG_RE.finditer(stripped) if m.start() > 0]
+    if embedded:
+        line = parse_line(stripped[embedded[-1]:], node=node, host_time=host_time, lineno=lineno)
+        if line.kind is Kind.ARCLOG:
+            line.raw = raw
+            return line
 
     m = LEGACY_RE.match(stripped)
     if m:

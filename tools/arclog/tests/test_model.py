@@ -70,3 +70,22 @@ def test_level_order():
 def test_node_from_file_name(tmp_path):
     assert node_from_path(tmp_path / "c3-20260925.log") == "c3"
     assert node_from_path(tmp_path / "bench.log") == "bench"
+
+
+GLUED = "000101T000000.0029 0S A �000000T000000.9997 4S A #00 BOOT build=fifo4k"
+
+
+def test_a_line_cut_by_a_reset_gives_the_new_boot_line():
+    ln = parse_line(GLUED, node="com9")
+    assert ln.kind is Kind.ARCLOG
+    assert (ln.core, ln.event, ln.seq, ln.fields) == ("4", "BOOT", 0, {"build": "fifo4k"})
+    assert ln.raw == GLUED  # the file's text is kept as received
+
+
+def test_a_full_line_is_not_split_on_values_that_look_like_a_header():
+    ln = parse_line("260925T120000.0000 0S L #03 INIT_DONE phases=2")
+    assert (ln.event, ln.fields) == ("INIT_DONE", {"phases": "2"})
+
+
+def test_garbage_without_a_complete_header_stays_raw():
+    assert parse_line("��000000T000000.9997 4S").kind is Kind.RAW
