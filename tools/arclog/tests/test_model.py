@@ -95,3 +95,10 @@ def test_a_line_cut_without_junk_gives_the_new_boot_line():
     """Seen on the bench (bench flash, 2026-09-29): only the cut line's timestamp, no junk byte."""
     ln = parse_line("000000T000000T000000.9997 4S A #00 BOOT build=915bc5c")
     assert (ln.kind, ln.core, ln.event, ln.fields) == (Kind.ARCLOG, "4", "BOOT", {"build": "915bc5c"})
+
+
+def test_a_valid_line_cut_by_a_reset_gives_the_new_boot_line():
+    """Seen on the bench (bench run, 2026-09-29): the cut line parses on its own."""
+    ln = parse_line("000000T000000.9997 4X M #02 CORE_SYNC stage=cm\ufffd"
+                    "000000T000000.9997 4S A #00 BOOT build=66a35a2-d67ece1")
+    assert (ln.core, ln.event, ln.seq, ln.fields) == ("4", "BOOT", 0, {"build": "66a35a2-d67ece1"})

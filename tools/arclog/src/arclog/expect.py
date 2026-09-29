@@ -11,6 +11,7 @@ A run starts at `since` (the flash). It is decided by an expect file (TOML):
     [nodes.com9]             # capture node names (file prefix)
     cls = "C2"               # optional: class the node must boot as
     reboots = 1              # optional: reboots allowed after arming (scheduled resets)
+    since = "2026-09-29T10:00:05Z"  # optional: ignore this node's lines before (its flash ended then)
     [nodes.com8]
     flashed = false          # not flashed: no arming, no smoke, expectations only
 
@@ -101,6 +102,7 @@ class NodeSpec:
     flashed: bool = True
     cls: str | None = None
     reboots: int = 0
+    since: datetime | None = None   # this node's lines before it are ignored (its flash ended then)
 
 
 @dataclass
@@ -173,9 +175,10 @@ def spec_from_dict(d: dict) -> Spec:
         raise ValueError("expect file: [nodes] must name at least one node")
     nodes = {}
     for name, t in d["nodes"].items():
-        _check_keys(f"nodes.{name}", t, {"flashed", "cls", "reboots"})
+        _check_keys(f"nodes.{name}", t, {"flashed", "cls", "reboots", "since"})
         nodes[name] = NodeSpec(name, flashed=bool(t.get("flashed", True)),
-                               cls=t.get("cls"), reboots=int(t.get("reboots", 0)))
+                               cls=t.get("cls"), reboots=int(t.get("reboots", 0)),
+                               since=parse_since(str(t["since"])) if "since" in t else None)
     expects = []
     for i, t in enumerate(d.get("expect", [])):
         where = f"expect[{i}]"
@@ -270,9 +273,10 @@ class Run:
         if self.verdict is not None or line.host_time is None or line.host_time < self.since:
             return
         st = self._nodes.get(line.node)
-        if st is None:
+        if st is None or (st.spec.since is not None and line.host_time < st.spec.since):
             return
         t = line.host_time
+        armed_before = self.armed_at is not None  # the line that arms the run counts for nothing
         if line.kind is Kind.ARCLOG and line.event == "BOOT":
             self._boot(st, line, t)
             if self.verdict is not None:
@@ -299,7 +303,7 @@ class Run:
             if m.matches(line):
                 self._fail(f"{line.node} forbidden {m.describe()}: {line.raw.strip()} {self._at(t)}")
                 return
-        if self.armed_at is None and st.spec.flashed:
+        if not armed_before and st.spec.flashed:
             return  # expectations count once the run is armed
         for i, e in enumerate(self.spec.expects):
             if e.matches(line) and self._counts[i] < e.count:

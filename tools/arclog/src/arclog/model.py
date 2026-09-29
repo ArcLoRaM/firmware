@@ -146,6 +146,16 @@ def parse_line(
     raw = text.rstrip("\r\n")
     stripped = raw.strip()
 
+    # A line cut by a reset, then the new boot's first line: keep the latter. The cut line
+    # may itself parse ("... CORE_SYNC stage=cm<junk>000000T000000.9997 4S A #00 BOOT"), so
+    # look inside every line; field values have no spaces, so a full header inside one is a glue.
+    embedded = [m.start() for m in EMBEDDED_ARCLOG_RE.finditer(stripped) if m.start() > 0]
+    if embedded:
+        line = parse_line(stripped[embedded[-1]:], node=node, host_time=host_time, lineno=lineno)
+        if line.kind is Kind.ARCLOG:
+            line.raw = raw
+            return line
+
     m = ARCLOG_RE.match(stripped)
     if m:
         return Line(
@@ -162,14 +172,6 @@ def parse_line(
             event=m["event"],
             fields=parse_fields(m["body"] or ""),
         )
-
-    # A line cut by a reset, then the new boot's first line: keep the latter.
-    embedded = [m.start() for m in EMBEDDED_ARCLOG_RE.finditer(stripped) if m.start() > 0]
-    if embedded:
-        line = parse_line(stripped[embedded[-1]:], node=node, host_time=host_time, lineno=lineno)
-        if line.kind is Kind.ARCLOG:
-            line.raw = raw
-            return line
 
     m = LEGACY_RE.match(stripped)
     if m:

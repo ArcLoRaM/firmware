@@ -397,3 +397,28 @@ def test_a_boot_glued_to_a_line_cut_by_the_reset_still_arms():
     verdict, msgs = decide(spec(), t, end=30)
     assert verdict.code == PASS
     assert "ok   n2 armed (both cores booted build=b1) +3.3s" in msgs
+
+
+def test_the_boot_that_arms_the_run_is_not_counted():
+    """An expectation on BOOT counts reboots after arming, not the boot that armed the run."""
+    t = Trace()
+    t.boot(1, "n2")
+    s = spec(nodes={"n2": {"reboots": 1}}, expect=[{"node": "n2", "event": "BOOT", "where": {"cls": "C2"}}])
+    assert decide(s, t, end=30)[0] is None
+    t.boot(12, "n2")
+    verdict, msgs = decide(s, t, end=30)
+    assert verdict.code == PASS
+    assert "ok   n2 BOOT cls=C2 (1/1) +12.3s" in msgs
+
+
+def test_a_node_ignores_its_lines_before_its_own_flash_ended():
+    """Reflashing the build a board already runs: the reboot before the flash must not arm it."""
+    t = Trace()
+    t.boot(1, "n2")            # the UID read before the flash reboots the same build
+    t.boot(6, "n2")            # the flash's own reboot
+    since2 = (SINCE + timedelta(seconds=5)).isoformat()
+    verdict, msgs = decide(spec(nodes={"n2": {"since": since2}}), t, end=40)
+    assert verdict.code == PASS, verdict
+    assert "ok   n2 armed (both cores booted build=b1) +6.3s" in msgs
+    # Without it, the flash's reboot is taken for an unexpected one.
+    assert decide(spec(), t, end=40)[0].reason == "n2 unexpected reboot (1, 0 allowed) +6.0s"
