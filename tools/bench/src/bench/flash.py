@@ -68,14 +68,16 @@ class FlashResult:
 
 
 def boot_check(capture_dir: Path, since: datetime, build_id: str, boards: dict[int, Board],
-               assignments: dict[int, str], timeout_s: float = 60,
+               assignments: dict[int, str], flashed: dict[int, datetime] | None = None, timeout_s: float = 60,
                now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
                sleep: Callable[[float], None] = __import__("time").sleep,
                report: Callable[[str], None] = print) -> tuple[bool, str]:
     """Wait for both cores of every flashed board to BOOT the build, linked, as its class, with no lost line."""
     spec = spec_from_dict({
         "timeout": timeout_s, "build": build_id, "smoke_window": timeout_s, "min_duration": 0,
-        "nodes": {b.node: {"cls": assignments[nid]} for nid, b in boards.items()},
+        "nodes": {b.node: {"cls": assignments[nid],
+                           **({"since": flashed[nid].isoformat()} if flashed and nid in flashed else {})}
+                  for nid, b in boards.items()},
     })
     run = Run(spec, since, report=report)
     follower = DirFollower(capture_dir, [b.node for b in boards.values()], since)
@@ -89,18 +91,25 @@ def boot_check(capture_dir: Path, since: datetime, build_id: str, boards: dict[i
 
 def flash_nodes(prog: Programmer, boards: dict[int, Board], table: dict[Uid, int],
                 build: BuildResult, assignments: dict[int, str],
-                report: Callable[[str], None] = print) -> datetime:
-    """Check each board's UID over SWD, then flash both cores of its class's configuration.
+                report: Callable[[str], None] = print,
+                now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+                ) -> tuple[datetime, dict[int, datetime]]:
+    """Check every board's UID over SWD, then flash both cores of each board's configuration.
 
-    Returns the time just before the first flash (the run's start)."""
+    Returns the run's start (just before the first UID read) and, per Node ID, the time its
+    flash ended: its lines before that belong to the previous image (or to the reboot of the
+    UID read, which may be the same build when a board is reflashed)."""
     expected = {nid: uid for uid, nid in table.items()}
-    started = datetime.now(timezone.utc) - timedelta(seconds=1)
+    started = now() - timedelta(seconds=1)
     for nid, board in boards.items():
         uid = prog.read_uid(board.sn)
         if uid != expected[nid]:
             raise LookupError(f"probe {board.sn} ({board.port}) holds UID {format_uid(uid)}, "
-                              f"not Node ID {nid} ({format_uid(expected[nid])}): not flashed")
+                              f"not Node ID {nid} ({format_uid(expected[nid])}): nothing flashed")
+    flashed: dict[int, datetime] = {}
+    for nid, board in boards.items():
         cfg = config_of(assignments[nid])
         report(f"flash Node ID {nid} ({board.port}, probe {board.sn}) as {assignments[nid]}, build {build.build_id}")
         prog.flash(board.sn, {core: build.elfs[(core, cfg)] for core in ("CM4", "CM0PLUS")})
-    return started
+        flashed[nid] = now()
+    return started, flashed

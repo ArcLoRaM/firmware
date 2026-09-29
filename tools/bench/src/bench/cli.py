@@ -147,13 +147,14 @@ def cmd_flash(args: argparse.Namespace) -> int:
             print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}")
             return 1
         print(f"build {result.build_id} ok")
-        since = flash_nodes(prog, boards, table, result, assignments)
+        since, flashed = flash_nodes(prog, boards, table, result, assignments)
     except (LookupError, RuntimeError, ValueError, Refused, ProgrammerError) as exc:
         print(f"bench flash: {exc}", file=sys.stderr)
         return 1
     if args.no_check:
         return 0
-    ok, verdict = boot_check(capture_dir, since, result.build_id, boards, assignments, timeout_s=args.timeout)
+    ok, verdict = boot_check(capture_dir, since, result.build_id, boards, assignments, flashed,
+                             timeout_s=args.timeout)
     print(f"boot check: {verdict}")
     return 0 if ok else 1
 
@@ -171,6 +172,89 @@ def cmd_reset(args: argparse.Namespace) -> int:
     except (LookupError, ProgrammerError) as exc:
         print(f"bench reset: {exc}", file=sys.stderr)
         return 1
+    return 0
+
+
+def _scenario_from_args(args: argparse.Namespace):
+    """(Scenario, TOML text) from a file, or from --node/--watch/--expect/--forbid/-D/--timeout."""
+    from bench.scenario import from_dict, load, parse_expect_text, to_toml
+
+    if args.scenario:
+        if args.node or args.watch or args.expect or args.forbid or args.define:
+            raise ValueError("give a scenario file or --node/--watch/--expect/--forbid/-D, not both")
+        return load(args.scenario), Path(args.scenario).read_text(encoding="utf-8")
+    if not args.node:
+        raise ValueError("give a scenario file or at least one --node ID=CLASS")
+    d: dict = {}
+    if args.description:
+        d["description"] = args.description
+    d["timeout"] = args.timeout or "10m"
+    d["nodes"] = {str(nid): cls for nid, cls in args.node}
+    d["nodes"].update({str(nid): "watch" for nid in args.watch or []})
+    if args.define:
+        d["overrides"] = dict(args.define)
+    d["expect"] = [parse_expect_text(e) for e in args.expect or []]
+    d["forbid"] = [{"event": ev} for ev in args.forbid or []]
+    text = to_toml(d)
+    return from_dict(d), text
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    from datetime import datetime, timezone
+
+    from bench.build import build
+    from bench.capture import Capture
+    from bench.flash import discover, flash_nodes, select
+    from bench.programmer import ProgrammerError, Refused
+    from bench.run import follow, run_dir, slice_capture, write_record
+    from bench.scenario import plan
+
+    try:
+        s, text = _scenario_from_args(args)
+    except ValueError as exc:
+        print(f"bench run: {exc}", file=sys.stderr)
+        return 3
+    if args.save:
+        Path(args.save).write_text(text, encoding="utf-8")
+        print(f"scenario saved to {args.save}")
+    print(plan(s))
+    repo, prog, ports, table, capture_dir = _context(args)
+    try:
+        found = discover(prog, ports, table, capture_dir, probe_unknown=args.probe_uids)
+        boards = select(found, s.nodes)
+        others = [b for b in found if b not in boards.values()]
+        present = [ports[p.sn] for p in prog.probes() if p.sn in ports]
+        _, done = Capture(repo).up(present)
+        print(f"capture {done}: {', '.join(present)}")
+        result = build(repo, BuildTree(Path(args.root)), sorted(set(s.flashed.values())), s.overrides,
+                       windows=_windows)
+        if not result.ok:
+            for d in result.log.errors:
+                print(d)
+            print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}")
+            return 1
+        print(f"build {result.build_id} ok")
+        since, flashed = flash_nodes(prog, {n: boards[n] for n in s.flashed}, table, result, s.flashed)
+        outcome = follow(s, boards, result.build_id, capture_dir, since, reset=prog.reset, flashed=flashed)
+    except (LookupError, RuntimeError, ValueError, Refused, ProgrammerError) as exc:
+        print(f"bench run: {exc}", file=sys.stderr)
+        return 1
+    out = run_dir(repo / "tools/arclog/runs", since, result.build_id)
+    slice_capture(capture_dir, out, [b.node for b in boards.values()], since, outcome.ended)
+    report = write_record(out, text, s, result.build_id, outcome, boards, others)
+    print(f"{outcome.verdict}\nrecord: {report}")
+    return outcome.code
+
+
+def cmd_scenario(args: argparse.Namespace) -> int:
+    from bench.scenario import load, plan
+
+    try:
+        s = load(args.file)
+    except (OSError, ValueError) as exc:
+        print(f"{args.file}: {exc}", file=sys.stderr)
+        return 3
+    print(plan(s))
     return 0
 
 
@@ -210,6 +294,29 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--no-check", action="store_true", help="do not wait for the boot")
     f.set_defaults(func=cmd_flash)
 
+    rn = sub.add_parser("run", help="run a scenario: build, flash, act, decide, record; "
+                                    "exit 0 pass, 1 fail, 2 timeout, 3 invalid scenario")
+    rn.add_argument("scenario", nargs="?", help="scenario file (TOML); or describe the run with the options")
+    rn.add_argument("--node", action="append", type=parse_assignment, metavar="ID=CLASS",
+                    help="flash Node ID as C1/C2/C3, e.g. 2=C2; repeat for several")
+    rn.add_argument("--watch", action="append", type=int, metavar="ID",
+                    help="check this Node ID's trace without flashing it")
+    rn.add_argument("--expect", action="append", metavar="'ID|any EVENT [field=value] [within=7m] [count=2]'",
+                    help="e.g. '2 CLK to=WARM within=7m'; repeat for several")
+    rn.add_argument("--forbid", action="append", metavar="EVENT", help="event that fails the run, e.g. TX_LATE")
+    rn.add_argument("-D", dest="define", action="append", type=parse_define, metavar="NAME=VALUE",
+                    help="Build Override for this run only")
+    rn.add_argument("--timeout", help="e.g. 10m (default 10m)")
+    rn.add_argument("--description", help="one line saved with the scenario")
+    rn.add_argument("--save", metavar="FILE", help="also save the scenario described by the options")
+    rn.add_argument("--probe-uids", action="store_true", help="read unknown UIDs over SWD (reboots those boards)")
+    rn.set_defaults(func=cmd_run)
+
+    sc = sub.add_parser("scenario", help="check a scenario file without touching the boards")
+    sc.add_argument("action", choices=["check"])
+    sc.add_argument("file")
+    sc.set_defaults(func=cmd_scenario)
+
     r = sub.add_parser("reset", help="reset boards (no flash)")
     r.add_argument("node_ids", nargs="+", type=int, metavar="NODE_ID")
     r.set_defaults(func=cmd_reset)
@@ -217,5 +324,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Progress must reach a pipe (Monitor, tee) as it happens, not when the run ends.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     args = build_parser().parse_args(argv)
     return args.func(args)

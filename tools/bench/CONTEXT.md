@@ -45,11 +45,12 @@ Output goes to `tools/arclog/runs/<date>-<build-id>/`.
 
 ## Action
 
-Something a Scenario does to a board during a run, without flashing:
-- **reset**: a reset over a hot-plug SWD connection (the image and Build ID stay the same),
-- **halt / resume**: both cores stopped then restarted, a node going quiet (not a power loss: RTC and radio configuration survive).
+Something a Scenario does to a board during a run, without flashing.
+Today the only one is **reset**: a reset over an SWD connection under reset (the image and Build ID stay the same).
+Every reset must reboot its node, and a run cannot pass before it.
+**Halt / resume** (a node going quiet without losing its RTC) needs a hot-plug SWD connection, which fails while the firmware sleeps in STOP2 with the debug port off; it waits for the firmware to keep debug alive in STOP2.
 
-An Action fires at an offset from the start of the run (`at = "+90s"`) or a delay after a trace event (`after = { node = 1, event = "SYNC_LOCK" }, delay = "10s"`).
+An Action fires at an offset from arming (`at = "+90s"`) or a delay after a trace event (`after = { node = 2, event = "CLK", where = { to = "WARM" } }, delay = "10s"`).
 
 ## Expectation
 

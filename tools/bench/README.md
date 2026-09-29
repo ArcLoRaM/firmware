@@ -8,7 +8,7 @@ This folder holds everything about the bench automation: the records stay out of
 
 ## Status
 
-`bench build`, `boards`, `capture`, `flash` and `reset` work (#62, #63); `bench run` with scenarios is next (#64).
+`bench build`, `boards`, `capture`, `flash`, `reset` and `run` with scenarios work (#62, #63, #64).
 Work is tracked as GitHub issues with the `bench` label.
 
 ## Setup
@@ -80,6 +80,67 @@ Exit code 0 when every board booted the build, 1 otherwise.
 bench reset 2                            # reset Node ID 2, no flash
 ```
 
+## Run
+
+A run flashes a scenario's boards, fires its actions, decides it from the capture and keeps a record.
+
+```sh
+bench scenario check scenarios/c2-rejoin-after-reset.toml    # validate and show the plan, no board touched
+bench run scenarios/c2-rejoin-after-reset.toml
+bench run --node 1=C3 --node 2=C2 --expect "2 CLK to=WARM within=8m" --save scenarios/mine.toml
+```
+
+Exit code 0 pass, 1 fail, 2 timeout, 3 invalid scenario.
+Progress is printed as it happens (`ok ...`, `act ...`, `note ...`), and the record goes to `tools/arclog/runs/<start>-<build>/`: `report.md`, `run.log`, `scenario.toml` and each node's capture lines of the run window (readable by `arclog report`).
+
+### Scenarios
+
+Boards are named by Node ID.
+The smallest scenario is two lines:
+
+```toml
+[nodes]
+2 = "C2"
+```
+
+A fuller one ([`scenarios/`](scenarios/) has examples to copy):
+
+```toml
+description = "C2 rejoins after a reset"
+timeout = "20m"                  # default 10m
+
+[nodes]
+1 = "C3"                         # flash as C3
+2 = "C2"                         # flash as C2
+3 = "watch"                      # not flashed: its trace is checked, it keeps its image
+
+[overrides]                      # Build Overrides for this run only
+TX_RAMP_MS = "5u"
+
+[[action]]
+reset = 2                        # reset Node ID 2...
+after = { node = 2, event = "CLK", where = { to = "WARM" } }
+delay = "10s"                    # ...10 s after that line (or: at = "+90s" after arming)
+
+[[expect]]
+node = 2                         # optional: any node
+event = "CLK"
+where = { to = "WARM" }          # optional: field values
+count = 2                        # optional, default 1
+within = "18m"                   # optional: from arming, default the timeout
+
+[[forbid]]
+event = "TX_LATE"
+```
+
+- The Smoke Check is always on: every flashed board boots the run's Build ID on both cores, as its class, linked, with no lost line.
+- Every reset must reboot its node (the run cannot pass before it), and no other reboot is allowed.
+- Event and field names are checked against arclog's event table, with a suggestion for a typo (`unknown event 'SYNC_RXX' (did you mean SYNC_RX?)`).
+- On the command line, `--expect "<ID|any> <EVENT> [field=value ...] [within=8m] [count=2]"`, `--watch ID`, `--forbid EVENT`, `-D NAME=VALUE`, `--timeout`; `--save FILE` writes them as a scenario file.
+
+Reset is the only action for now.
+Halting a core needs a hot-plug SWD connection, which fails while the firmware sleeps in STOP2 with the debug port off; it needs the firmware to keep debug alive in STOP2 first.
+
 ### What bench never does to a board
 
 Every programmer call goes through one allowlist (`src/bench/programmer.py`): connect to a named probe, read the chip UID, write an ELF image, verify, reset.
@@ -100,7 +161,7 @@ It drives only Windows tools through WSL interop, so the ST-LINK probes and thei
 - `STM32_Programmer_CLI.exe` (flash, UID read, reset, halt),
 - `arclog` through `uv.exe` (capture and checks).
 
-Commands (`run` is planned):
+Commands:
 
 | Command | Does |
 |---|---|

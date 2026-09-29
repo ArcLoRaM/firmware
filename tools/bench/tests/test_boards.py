@@ -243,3 +243,21 @@ def test_boot_check_fails_on_the_wrong_class(tmp_path):
     ok, verdict = boot_check(tmp_path, T0, "abc1234", {2: board}, {2: "C2"}, timeout_s=30,
                              now=lambda: next(clock), sleep=lambda s: None, report=lambda m: None)
     assert not ok and "cls=C3, expected C2" in verdict
+
+
+def test_every_uid_is_checked_before_anything_is_flashed(tmp_path):
+    boards = {1: Board(SN8, "COM8", UID1, "trace", 1), 2: Board(SN9, "COM9", UID2, "trace", 2)}
+    prog = FakeProg([SN8, SN9], {SN8: UID1, SN9: UID1})       # the second board is not Node 2
+    elfs = {(core, cfg): tmp_path / f"{core}.elf" for core in ("CM4", "CM0PLUS") for cfg in ("Debug_C2", "Debug_C3")}
+    build = BuildResult("abc1234", ["Debug_C2", "Debug_C3"], True, BuildLog(), elfs)
+    with pytest.raises(LookupError, match="nothing flashed"):
+        flash_nodes(prog, boards, {UID1: 1, UID2: 2}, build, {1: "C3", 2: "C2"}, report=lambda m: None)
+    assert [c[0] for c in prog.calls] == ["uid", "uid"]
+
+
+def test_flash_returns_when_each_board_was_flashed(tmp_path):
+    board = Board(SN9, "COM9", UID2, "trace", 2)
+    clock = iter([T0, T0 + timedelta(seconds=7)])
+    since, flashed = flash_nodes(FakeProg([SN9], {SN9: UID2}), {2: board}, {UID2: 2}, result(tmp_path),
+                                 {2: "C2"}, report=lambda m: None, now=lambda: next(clock))
+    assert since == T0 - timedelta(seconds=1) and flashed == {2: T0 + timedelta(seconds=7)}
