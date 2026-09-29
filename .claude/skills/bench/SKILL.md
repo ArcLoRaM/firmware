@@ -20,8 +20,10 @@ A task that changes firmware behaviour runs this loop, at most 5 build-flash-che
 1. **Scenario.** Write or pick a scenario that goes _red_ on the problem and _green_ on the fix: boards by Node ID, the class each is flashed as, and an `[[expect]]` or `[[forbid]]` that names the behaviour itself, not just a boot.
    Start from `tools/bench/scenarios/`; a one-off can be flags (`--node 2=C2 --expect "2 CLK to=WARM within=8m"`), `--save` it when it is worth keeping.
    Done when `bench scenario check <file>` prints the plan you intend.
-2. **Board state.** `bench boards` shows each probe, port, Node ID and last Build ID; `bench capture status` must show the bench capture recording every port (`bench capture up` otherwise).
+2. **Board state.** `bench boards` shows each probe, port, Node ID and last Build ID, and ends with the count; tell the user how many boards are connected and which Node IDs they are, before the first run.
+   `bench capture status` must show the bench capture recording every port (`bench capture up` otherwise).
    A board with an unknown UID needs `--probe-uids` (it reboots that board).
+   The bench holds at most 4 boards (6 once Simon buys more hardware): a scenario names only boards that are connected, and one needing more says so rather than being cut down silently.
 3. **Run.** `bench run <scenario>`: it builds the working tree (uncommitted changes included), flashes, fires the actions and decides.
    Done when it exits: 0 PASS, 1 FAIL, 2 TIMEOUT, 3 invalid scenario.
 4. **Read the verdict**, then fix and go back to 3:

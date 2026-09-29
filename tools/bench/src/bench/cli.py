@@ -100,6 +100,8 @@ def cmd_boards(args: argparse.Namespace) -> int:
         nid = b.node_id if b.node_id is not None else ("not in node_id.c" if b.uid else "?")
         build = b.build or ("none (firmware without build= in BOOT)" if b.uid_source == "trace" else "?")
         print(f"probe {b.sn}  {b.port or 'no COM port'}  Node ID {nid}  UID {uid}  last build {build}")
+    known = sum(1 for b in boards if b.node_id is not None)
+    print(f"{len(boards)} board(s) connected, {known} with a known Node ID")
     return 0
 
 

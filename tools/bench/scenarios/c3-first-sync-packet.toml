@@ -1,0 +1,17 @@
+# Issue #70: the C3's first Sync packet after boot is late and dropped.
+# Red today (TX_LATE at cell 0); green once cell 0 goes on air at its nominal start.
+description = "C3 sends cell 0 of its first Sync phase, on time"
+timeout = "2m"
+
+[nodes]
+1 = "C3"
+
+[[expect]]
+node = 1
+event = "SYNC_TX"
+where = { ph = "0", ce = "0" }
+within = "10s"
+
+[[forbid]]
+node = 1
+event = "TX_LATE"
