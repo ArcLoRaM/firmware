@@ -68,9 +68,11 @@ def parse_uid(text: str) -> Uid:
 # COM ports
 # ---------------------------------------------------------------------------
 
-_PORTS_PS = ("Get-PnpDevice -Class Ports -PresentOnly | ForEach-Object { "
+# With no port present, Get-PnpDevice fails ("No matching Win32_PnPEntity"), which means no port; PowerShell
+# still exits 1 after an ignored error, hence the explicit exit 0.
+_PORTS_PS = ("Get-PnpDevice -Class Ports -PresentOnly -ErrorAction SilentlyContinue | ForEach-Object { "
              "$p = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_Parent).Data; "
-             "'{0}|{1}' -f $_.FriendlyName, $p }")
+             "'{0}|{1}' -f $_.FriendlyName, $p }; exit 0")
 _PORT_RE = re.compile(r"STLink Virtual COM Port \((COM\d+)\)\|USB\\VID_0483&PID_[0-9A-F]{4}\\([0-9A-F]{24})")
 
 

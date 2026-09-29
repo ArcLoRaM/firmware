@@ -1,12 +1,9 @@
 # Agent instructions
 
-## Firmware builds
+## Firmware builds and boards
 
-Build the firmware only in the bench Build Tree, `C:\Users\Simon\arcfw-bench\` (see `tools/bench`): a synced copy of the repo with its own CubeIDE workspace, built headless with `stm32cubeidec.exe`.
-Once `bench build` exists, build only through it.
-Never compile in the repo (its `Debug_C*` folders) or in Simon's CubeIDE workspace (`C:\Users\Simon\STM32CubeIDE\workspace_*`), and never invoke `arm-none-eabi-gcc` or `make` directly.
-
-Flashing stays with Simon until `bench flash` exists (issue #63).
-When a change needs a flash to verify it, say so and list what to check, then let Simon flash it.
+Build, flash and reset the firmware only through `bench` (`tools/bench`, skill `bench`).
+It builds in its own Build Tree on `C:` and talks to the boards through a guarded programmer, so the repo's `Debug_C*` folders and Simon's CubeIDE workspace stay his.
+Bench refuses anything irreversible (option bytes, OTP, protection, mass erase); that refusal is final.
 
 Host-side unit tests (`Tests/`, CMake + host GCC) are not firmware builds and may be run.

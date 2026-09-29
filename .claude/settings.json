@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run --project tools/bench bench:*)",
+      "Bash(uv run --project tools/arclog arclog:*)",
+      "Bash(uv run bench:*)",
+      "Bash(uv run arclog:*)",
+      "Bash(uv run pytest:*)"
+    ]
+  }
+}

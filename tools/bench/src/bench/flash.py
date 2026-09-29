@@ -48,6 +48,8 @@ def discover(prog: Programmer, ports: dict[str, str], table: dict[Uid, int], cap
 
 def select(boards: list[Board], assignments: dict[int, str]) -> dict[int, Board]:
     """The board of each assigned Node ID."""
+    if not boards:
+        raise LookupError("no ST-LINK probe is connected")
     by_id = {b.node_id: b for b in boards if b.node_id is not None}
     missing = sorted(set(assignments) - set(by_id))
     if missing:

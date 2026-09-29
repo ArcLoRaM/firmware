@@ -261,3 +261,29 @@ def test_flash_returns_when_each_board_was_flashed(tmp_path):
     since, flashed = flash_nodes(FakeProg([SN9], {SN9: UID2}), {2: board}, {UID2: 2}, result(tmp_path),
                                  {2: "C2"}, report=lambda m: None, now=lambda: next(clock))
     assert since == T0 - timedelta(seconds=1) and flashed == {2: T0 + timedelta(seconds=7)}
+
+
+def test_no_port_present_is_no_port():
+    assert parse_ports("") == {}
+
+
+def test_no_probe_connected_is_no_board(tmp_path):
+    from bench.programmer import Programmer
+    out = "      STM32CubeProgrammer v2.23.0\n\n===== STLink Interface =====\nNo ST-Link detected!\n"
+    assert Programmer(exe="prog.exe", runner=lambda cmd: (0, out)).probes() == []
+
+
+def test_a_failing_tool_is_one_line_not_a_traceback(monkeypatch, capsys):
+    import subprocess
+    from bench import cli
+
+    def boom(args):
+        raise subprocess.CalledProcessError(1, ["powershell.exe", "-Command", "x"], stderr="Get-PnpDevice : oops\nmore")
+    monkeypatch.setattr(cli, "cmd_boards", boom)
+    assert cli.main(["boards"]) == 1
+    assert capsys.readouterr().err == "bench boards: powershell.exe failed (exit 1): Get-PnpDevice : oops\n"
+
+
+def test_select_with_no_board_connected():
+    with pytest.raises(LookupError, match="no ST-LINK probe is connected"):
+        select([], {2: "C2"})

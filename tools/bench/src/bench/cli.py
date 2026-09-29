@@ -92,6 +92,9 @@ def cmd_boards(args: argparse.Namespace) -> int:
 
     repo, prog, ports, table, capture_dir = _context(args)
     boards = discover(prog, ports, table, capture_dir, probe_unknown=args.probe_uids)
+    if not boards:
+        print("no ST-LINK probe connected")
+        return 1
     for b in boards:
         uid = f"{format_uid(b.uid)} ({b.uid_source})" if b.uid else "unknown (no BOOT in the capture)"
         nid = b.node_id if b.node_id is not None else ("not in node_id.c" if b.uid else "?")
@@ -328,4 +331,11 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except subprocess.CalledProcessError as exc:
+        tool = Path(str(exc.cmd[0])).name if exc.cmd else "a command"
+        detail = (exc.stderr or exc.stdout or "").strip().splitlines()
+        print(f"bench {args.cmd}: {tool} failed (exit {exc.returncode})"
+              + (f": {detail[0]}" if detail else ""), file=sys.stderr)
+        return 1
