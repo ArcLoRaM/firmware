@@ -170,6 +170,13 @@ extern "C" {
 #undef  UTIL_ADV_TRACE_TMP_MAX_TIMESTMAP_SIZE
 #define UTIL_ADV_TRACE_TMP_MAX_TIMESTMAP_SIZE      (20U)
 
+/* The CM0+ FIFO holds its lines until the CM4 takes them over MbMux. At
+ * boot a C3 writes ~500 bytes within 20 ms (BOOT, MAC_INIT, RTC_SET,
+ * INIT_DONE, SYNC_EPOCH, SLOT, ...): 512 lost the last of them (bench run
+ * 2026-09-29). The CM4 side is 4096 (CM4 utilities_conf.h). */
+#undef  UTIL_ADV_TRACE_FIFO_SIZE
+#define UTIL_ADV_TRACE_FIFO_SIZE                   (2048U)
+
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
