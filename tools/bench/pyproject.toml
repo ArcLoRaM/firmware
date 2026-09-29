@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Build, flash and test the ArcLoRaM firmware on the bench boards without a human in the loop"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "arclog",
+]
 
 [project.scripts]
 bench = "bench.cli:main"
@@ -23,6 +25,9 @@ packages = ["src/bench"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+arclog = { path = "../arclog", editable = true }
 
 [tool.uv]
 # Rebuild when the sources change, not only pyproject.toml.

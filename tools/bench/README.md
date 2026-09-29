@@ -8,7 +8,7 @@ This folder holds everything about the bench automation: the records stay out of
 
 ## Status
 
-`bench build` works (issue #62); flash, run and capture are next (#63, #64).
+`bench build`, `boards`, `capture`, `flash` and `reset` work (#62, #63); `bench run` with scenarios is next (#64).
 Work is tracked as GitHub issues with the `bench` label.
 
 ## Setup
@@ -39,6 +39,58 @@ bench build --class C3 --clean              # rebuild everything
 Exit code 0 when every image is built and carries the Build ID, 1 otherwise; the full CubeIDE output is kept in `arcfw-bench\logs\build-<id>.log`.
 A first build takes about a minute, a build with nothing to recompile about 20 s.
 
+## Boards
+
+```sh
+bench boards                  # probe, COM port, UID, Node ID, last build
+bench boards --probe-uids     # also read unknown UIDs over SWD (reboots those boards)
+```
+
+A board is found by its ST-LINK serial number; its trace COM port is the one whose USB parent is that probe (Windows device tree).
+Its UID comes from the last CM0+ `BOOT` in the capture, and its Node ID from the firmware's table, `Common/Protocol/node_id.c`, parsed in its strict one-entry-per-line format.
+Reading a UID over SWD needs a connection under reset: the firmware sleeps in STOP2, where the debug port is off.
+
+## Capture
+
+```sh
+bench capture status
+bench capture up              # start or complete the always-on capture
+bench capture up --replace    # also stop another capture holding the ports
+```
+
+One multi-port `arclog capture` on Windows records every connected probe's port into `tools/arclog/runs/bench/` (files `com9-YYYYMMDD.log`, stderr in `capture.err`).
+It is started detached (`Win32_Process.Create`) and outlives the session.
+`up` restarts the bench capture when a port is missing from it, and never stops a capture it did not start unless told to (`--replace`).
+
+## Flash
+
+```sh
+bench flash --node 2=C2                  # build Debug_C2, flash Node ID 2, check its boot
+bench flash --node 1=C3 --node 2=C2 -D TX_RAMP_MS=5u
+```
+
+1. Finds the boards, brings the capture up, builds the classes needed.
+2. For each board, reads its UID over SWD and refuses to flash if it is not the expected Node ID (a board moved since its last boot).
+3. Writes and verifies both cores' images in one programmer session (CM0+ then CM4), then resets.
+4. Waits (`--timeout`, 60 s) for both cores to `BOOT` the new Build ID as the assigned class, linked, with no lost line (the arclog `expect` engine); a reboot of the old image during the flash is waited through.
+
+Exit code 0 when every board booted the build, 1 otherwise.
+
+```sh
+bench reset 2                            # reset Node ID 2, no flash
+```
+
+### What bench never does to a board
+
+Every programmer call goes through one allowlist (`src/bench/programmer.py`): connect to a named probe, read the chip UID, write an ELF image, verify, reset.
+Everything else is refused before the programmer runs, in particular anything that cannot be undone by flashing again:
+
+- option bytes: readout protection (level 2 is permanent), write protection, boot configuration, security;
+- OTP, the one-time programmable area (`0x1FFF7000`-`0x1FFF73FF`);
+- mass erase, direct memory writes, binary files written at a given address.
+
+Before writing, every loadable segment of each image must fall inside its own core's half of main flash (CM4 `0x08000000`-`0x0801FFFF`, CM0+ `0x08020000`-`0x0803FFFF`); anything else, including a swapped image, is refused.
+
 ## Overview
 
 `bench` is a Python CLI (uv project, like `tools/arclog`) run from WSL.
@@ -48,7 +100,7 @@ It drives only Windows tools through WSL interop, so the ST-LINK probes and thei
 - `STM32_Programmer_CLI.exe` (flash, UID read, reset, halt),
 - `arclog` through `uv.exe` (capture and checks).
 
-Planned commands:
+Commands (`run` is planned):
 
 | Command | Does |
 |---|---|
@@ -67,5 +119,5 @@ bench run --node 1=C3 --node 2=C2 -D TX_RAMP_MS=5
 ## Rules
 
 - `bench` is the only way to build or flash the firmware from an agent: never the toolchain, `make` or `STM32_Programmer_CLI` directly.
-- `bench` never writes option bytes, never changes readout protection and never mass erases.
+- `bench` never writes option bytes or OTP, never changes readout protection or security, and never mass erases (see [What bench never does to a board](#what-bench-never-does-to-a-board)).
 - `bench` never commits: a run ends with a report, and the human decides what goes in.

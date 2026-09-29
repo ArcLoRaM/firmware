@@ -89,3 +89,9 @@ def test_a_full_line_is_not_split_on_values_that_look_like_a_header():
 
 def test_garbage_without_a_complete_header_stays_raw():
     assert parse_line("��000000T000000.9997 4S").kind is Kind.RAW
+
+
+def test_a_line_cut_without_junk_gives_the_new_boot_line():
+    """Seen on the bench (bench flash, 2026-09-29): only the cut line's timestamp, no junk byte."""
+    ln = parse_line("000000T000000T000000.9997 4S A #00 BOOT build=915bc5c")
+    assert (ln.kind, ln.core, ln.event, ln.fields) == (Kind.ARCLOG, "4", "BOOT", {"build": "915bc5c"})
