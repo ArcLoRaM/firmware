@@ -53,7 +53,9 @@ EVENTS: dict[str, Event] = {
     ),
     "SYNC_EPOCH": Event("Y", ("ph", "ep"), "C3: Sync Phase Epoch captured at phase entry."),
     "SYNC_SILENCE": Event("Y", ("last", "now"), "Sync silence timeout expired (ADR-0013)."),
-    "RTC_SET": Event("Y", ("old", "new", "d", "date", "shift"), "Calendar RTC write; d = new - old (ms)."),
+    "RTC_SET": Event("Y", ("old", "new", "d", "date", "shift"),
+                     "Calendar RTC write; d = new - old (ms), adv = SHIFTR ticks (+ advance, - delay).",
+                     optional=("adv",)),
     "RTC_SHIFT": Event(
         "Y", ("err", "ticks", "res"),
         "Tier 2 sub-second SHIFTR correction; res = ok | fail | busy (a previous shift still pending: not written).",

@@ -376,6 +376,41 @@ void RTC_GetCalendarBcd(FrameEpoch_t *out)
   out->month      = sDate.Month;
   out->year       = sDate.Year;
 }
+
+uint32_t TIMER_IF_GetDayTicks(bool at_edge)
+{
+  /* Direct register reads (bypass shadow, set in Init): a few microseconds,
+   * against hundreds for HAL_RTC_GetTime at 4 MHz. SSR is read on both sides
+   * of TR and the triple retried if a tick passed in between, so a second
+   * rolling over (SSR 0 -> PREDIV_S, TR + 1) is never read half-way. */
+  if (at_edge)
+  {
+    uint32_t ssr0 = READ_REG(RTC->SSR);
+    while (READ_REG(RTC->SSR) == ssr0)
+    {
+    }
+  }
+  uint32_t ssr;
+  uint32_t tr;
+  do
+  {
+    ssr = READ_REG(RTC->SSR);
+    tr  = READ_REG(RTC->TR);
+  } while (READ_REG(RTC->SSR) != ssr);
+
+  uint32_t h = ((tr & RTC_TR_HT) >> RTC_TR_HT_Pos) * 10u + ((tr & RTC_TR_HU) >> RTC_TR_HU_Pos);
+  uint32_t m = ((tr & RTC_TR_MNT) >> RTC_TR_MNT_Pos) * 10u + ((tr & RTC_TR_MNU) >> RTC_TR_MNU_Pos);
+  uint32_t sec = ((tr & RTC_TR_ST) >> RTC_TR_ST_Pos) * 10u + ((tr & RTC_TR_SU) >> RTC_TR_SU_Pos);
+  /* SSR above PREDIV_S right after a SHIFTR advance: the calendar already
+   * shows the next second, borrowed back here as in SubSecondsToMs. */
+  int32_t ticks = (int32_t)((h * 3600u + m * 60u + sec) * (RTC_PREDIV_S + 1u))
+                + (int32_t)RTC_PREDIV_S - (int32_t)ssr;
+  if (ticks < 0)
+  {
+    ticks += (int32_t)(86400u * (RTC_PREDIV_S + 1u));
+  }
+  return (uint32_t)ticks;
+}
 /* USER CODE END EF */
 
 /* Private functions ---------------------------------------------------------*/

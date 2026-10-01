@@ -179,6 +179,14 @@ void RTC_GetCalendarBcd(FrameEpoch_t *out);
 uint32_t TIMER_IF_GetMonotonicMs(void);
 
 /**
+ * @brief Time of day in RTC ticks (1/(PREDIV_S+1) s), read from the registers.
+ * @note  Same clock as TIMER_IF_GetTimerValue, at tick resolution and in a
+ *        few microseconds. With at_edge, waits for the next tick first (at
+ *        most one tick, 244 us): the value is then exact at the return.
+ */
+uint32_t TIMER_IF_GetDayTicks(bool at_edge);
+
+/**
  * @brief Call right before writing the RTC (calendar set or SHIFTR): brings
  *        the monotonic counter up to date and holds it during the write.
  * @retval true  No shift is pending: a SHIFTR may be written.

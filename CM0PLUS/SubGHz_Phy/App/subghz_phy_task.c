@@ -37,6 +37,7 @@
 #include "protocol_types.h"   /* NODE_CLASS_C* constants */
 #include "tdma_table.h"       /* TdmaTable_PhaseCount */
 #include "guard_time_resolver.h" /* MAX_GUARD_TIME_MS */
+#include "rtc_set_plan.h"         /* RtcSetPlan_*, RtcTicks_* */
 #include "node_id.h"          /* NodeId_ReadUid, NodeId_FromUid */
 
 /* =========================================================================
@@ -338,66 +339,108 @@ static int32_t shift_ticks_to_ms(uint32_t shift_ticks, bool advance)
     return advance ? ms : -ms;
 }
 
-/* Packet 1 / Tier 3 hook: decompose binary target_ms to H:M:S; apply HAL_RTC_SetTime(BIN).
- * SetTime starts the second at target_s.000; the sub-second component
- * (target_ms % 1000) is then added by a SHIFTR advance (ADD1S=1 with SUBFS). */
+/* Time the calendar stands still in mac_hook_rtc_set, from the tick edge
+ * read to its restart (RM0453, calendar initialization): the INIT set right
+ * after the edge, INITF within 2 RTCCLK (0-61 us), the TR/DR writes, then
+ * the restart 4 RTCCLK (122 us) after INIT is cleared. ~180 +/- 40 us. */
+#define RTC_SET_LOSS_US  180u
+
+/* Old-clock reading of the last snapshot: the instant a Packet 1 / Tier 3
+ * target refers to (the MAC reads the snapshot, then asks for the set). */
+static uint32_t s_anchor_ticks;
+static bool     s_anchor_valid;
+
+/* Write time and date in one init-mode session, entered right after the
+ * caller's tick edge. Register writes only: the HAL path (SetTime then
+ * SetDate, two sessions) took ~1.3 ms at 4 MHz and stopped the calendar
+ * twice. WeekDay is left 0, as HAL_RTC_SetDate with an unset field did. */
+static bool rtc_write_calendar(uint32_t tr, uint32_t dr)
+{
+    __HAL_RTC_WRITEPROTECTION_DISABLE(&hrtc);
+    SET_BIT(RTC->ICSR, RTC_ICSR_INIT);
+    uint32_t spins = 0u;
+    while (READ_BIT(RTC->ICSR, RTC_ICSR_INITF) == 0u) {
+        if (++spins > 10000u) {          /* INITF comes within 2 RTCCLK */
+            CLEAR_BIT(RTC->ICSR, RTC_ICSR_INIT);
+            __HAL_RTC_WRITEPROTECTION_ENABLE(&hrtc);
+            return false;
+        }
+    }
+    WRITE_REG(RTC->TR, tr & RTC_TR_RESERVED_MASK);
+    WRITE_REG(RTC->DR, dr & RTC_DR_RESERVED_MASK);
+    CLEAR_BIT(RTC->CR, RTC_CR_BKP);      /* StoreOperation RESET, as before */
+    /* Clears INIT first (the calendar restarts 4 RTCCLK later), then the
+     * BYPSHAD workaround of errata 2.9.6. */
+    (void)RTC_ExitInitMode(&hrtc);
+    __HAL_RTC_WRITEPROTECTION_ENABLE(&hrtc);
+    return true;
+}
+
+static uint32_t bcd2(uint32_t v) { return ((v / 10u) << 4) | (v % 10u); }
+
+/* Packet 1 / Tier 3 hook: the clock reads target_ms at the instant of the
+ * last snapshot, i.e. target_ms - floor_ms(snapshot) + t at any old-clock
+ * time t (rtc_set_plan.h). The plan (64-bit maths) is made first; then the
+ * old clock is read exactly on a tick edge, the calendar is written at once,
+ * and a SHIFTR applies the sub-second plus the edge-exact time since the
+ * snapshot plus the restart loss (#55). */
 static void mac_hook_rtc_set(uint32_t target_ms,
                               uint8_t  day, uint8_t month, uint8_t year)
 {
-    uint32_t old_ms    = (uint32_t)UTIL_TIMER_GetCurrentTime();
-    uint32_t target_s  = (target_ms / 1000u) % 86400u;
-    uint32_t subsec_ms = target_ms % 1000u;
-
-    RTC_TimeTypeDef t = {0};
-    t.Hours          = (uint8_t)(target_s / 3600u);
-    t.Minutes        = (uint8_t)((target_s % 3600u) / 60u);
-    t.Seconds        = (uint8_t)(target_s % 60u);
-    t.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
-    t.StoreOperation = RTC_STOREOPERATION_RESET;
-
-    RTC_DateTypeDef d = {0};
-    d.Date  = day;
-    d.Month = month;
-    d.Year  = year;
-
     /* The monotonic counter (UTIL_TIMER, HAL_GetTick) must not count this
      * jump: bracket the write. Begin also says whether a shift is pending. */
     bool shift_free = TIMER_IF_RtcWriteBegin();
-    hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
-    HAL_RTC_SetTime(&hrtc, &t, RTC_FORMAT_BIN);
-    HAL_RTC_SetDate(&hrtc, &d, RTC_FORMAT_BCD);
-    /* SSR = PREDIV_S (start of target_s) after SetTime */
 
-    /* Sub-second alignment via SHIFTR (RM0453, RTC_SHIFTR): ADD1S adds one
-     * second and SUBFS is added to the SSR down-counter, delaying the clock
-     * by SUBFS/(PREDIV_S+1). The net advance is 1 − SUBFS/(PREDIV_S+1) =
-     * shift_ticks/(PREDIV_S+1) ≈ subsec_ms/1000, never a whole second, so
-     * no date roll-over. Until SSR counts back below PREDIV_S the calendar
-     * reads target_s + 1 with SSR > PREDIV_S; the time readers in
-     * timer_if.c borrow that second back. */
-    const char *shift    = "none";
+    uint32_t now_ticks = TIMER_IF_GetDayTicks(false);
+    uint32_t anchor    = s_anchor_ticks;
+    if (!s_anchor_valid
+        || RtcTicks_Elapsed(anchor, now_ticks) > RTC_SET_ANCHOR_MAX_TICKS) {
+        anchor = now_ticks;              /* no fresh snapshot: target is "now" */
+    }
+    s_anchor_valid = false;
+
+    RtcSetPlan_t plan = RtcSetPlan_Make(target_ms, anchor, RTC_SET_LOSS_US);
+    uint32_t tr = (bcd2(plan.seconds / 3600u) << RTC_TR_HU_Pos)
+                | (bcd2((plan.seconds % 3600u) / 60u) << RTC_TR_MNU_Pos)
+                | (bcd2(plan.seconds % 60u) << RTC_TR_SU_Pos);
+    uint32_t dr = ((uint32_t)year << RTC_DR_YU_Pos) | ((uint32_t)month << RTC_DR_MU_Pos)
+                | ((uint32_t)day << RTC_DR_DU_Pos);
+
+    /* Timing-critical from the edge to the calendar restart. */
+    uint32_t edge_ticks = TIMER_IF_GetDayTicks(true);
+    bool     written    = rtc_write_calendar(tr, dr);
+    int32_t  shift      = RtcSetPlan_ShiftTicks(&plan, anchor, edge_ticks);
+
+    const char *res      = written ? "none" : "fail";
     int32_t     shift_ms = 0;
-    if (subsec_ms > 0u) {
+    if (written && shift != 0) {
         hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
-        shift = "busy";   /* a previous shift is still pending (SHPF) */
+        res = "busy";   /* a previous shift is still pending (SHPF) */
         if (shift_free) {
-            uint32_t shift_ticks = (subsec_ms * (RTC_PREDIV_S + 1u)) / 1000u;
-            shift = "fail";
-            if (HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET,
-                                          (RTC_PREDIV_S + 1u) - shift_ticks) == HAL_OK) {
-                shift    = "ok";
-                shift_ms = shift_ticks_to_ms(shift_ticks, true);
+            uint32_t ticks = (uint32_t)(shift > 0 ? shift : -shift);
+            /* Advance: ADD1S adds a second, SUBFS takes back (1 s - ticks).
+             * Delay: SUBFS adds ticks to the SSR down-counter (RM0453 RTC_SHIFTR,
+             * AN4759 2.6). Either way never a whole second: no date change. */
+            HAL_StatusTypeDef st = (shift > 0)
+                ? HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_SET, RTC_TICKS_PER_S - ticks)
+                : HAL_RTCEx_SetSynchroShift(&hrtc, RTC_SHIFTADD1S_RESET, ticks);
+            res = "fail";
+            if (st == HAL_OK) {
+                res      = "ok";
+                shift_ms = shift_ticks_to_ms(ticks, shift > 0);
             }
         }
     }
-    TIMER_IF_RtcWriteEnd(true, shift_ms);
+    TIMER_IF_RtcWriteEnd(written, shift_ms);
 
-    /* d = jump applied to the local clock (new - old domain), in ms. */
+    /* d = jump applied to the local clock (new - old domain), in ms;
+     * adv = the SHIFTR in ticks (+ advance, - delay). */
+    uint32_t old_ms = RtcTicks_ToMs(edge_ticks);
     ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "RTC_SET",
-           "old=%u new=%u d=%d date=%02x%02x%02x shift=%s",
+           "old=%u new=%u d=%d date=%02x%02x%02x shift=%s adv=%d",
            (unsigned)old_ms, (unsigned)target_ms,
            (int)DayMs_Diff(target_ms, old_ms),
-           (unsigned)year, (unsigned)month, (unsigned)day, shift);
+           (unsigned)year, (unsigned)month, (unsigned)day, res, (int)shift);
 }
 
 /* Tier 2 hook: apply SSR-only correction when CLOCK_WARM and
@@ -458,7 +501,11 @@ static void mac_hook_get_rtc_snapshot(uint32_t *ms,
     HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BCD);
     HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BCD);
 
-    *ms    = (uint32_t)UTIL_TIMER_GetCurrentTime();
+    /* One register read gives both the ms the MAC sees and the tick an
+     * RTC set right after refers to (the anchor of mac_hook_rtc_set). */
+    s_anchor_ticks = TIMER_IF_GetDayTicks(false);
+    s_anchor_valid = true;
+    *ms    = RtcTicks_ToMs(s_anchor_ticks);
     *day   = d.Date;
     *month = d.Month;
     *year  = d.Year;

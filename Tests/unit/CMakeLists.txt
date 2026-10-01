@@ -66,6 +66,10 @@ add_unity_test(test_day_ms
     test_day_ms.c
 )
 
+add_unity_test(test_rtc_set_plan
+    test_rtc_set_plan.c
+)
+
 add_unity_test(test_protocol_types
     test_protocol_types.c
 )
