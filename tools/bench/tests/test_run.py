@@ -227,3 +227,28 @@ def test_each_flashed_node_arms_only_after_its_own_flash():
     spec = expect_spec(s, BOARDS, "b1", flashed={2: T0 + timedelta(seconds=7)})
     assert spec["nodes"]["com9"]["since"] == "2026-09-29T10:00:07+00:00"
     assert "since" not in spec["nodes"]["com8"]
+
+
+def test_expect_shorthand_ranges():
+    assert parse_expect_text("2 SYNC_RX act=good err=-1..1")["where"] == {
+        "act": "good", "err": {"min": -1, "max": 1}}
+    assert parse_expect_text("any SYNC_RX err=..-2")["where"] == {"err": {"max": -2}}
+    assert parse_expect_text("any SYNC_RX err=0.5..")["where"] == {"err": {"min": 0.5}}
+
+
+def test_a_range_reads_back_the_same_and_shows_in_the_plan(tmp_path):
+    d = {"nodes": {"1": "C3", "2": "C2"},
+         "expect": [parse_expect_text("2 SYNC_RX act=good err=-1..1 count=2")],
+         "forbid": [parse_expect_text("2 SYNC_RX err=..-2")]}
+    path = tmp_path / "s.toml"
+    path.write_text(to_toml(d), encoding="utf-8")
+    s = load(path)
+    assert s == from_dict(d)
+    assert "expect: 2 SYNC_RX act=good err=-1..1 x2" in plan(s)
+    assert "forbid: 2 SYNC_RX err=..-2" in plan(s)
+
+
+def test_an_invalid_range_in_a_scenario_says_what_is_wrong():
+    with pytest.raises(ValueError, match=r"expect\[0\]\.where\.err: min 2 is above max 1"):
+        from_dict({"nodes": {"2": "C2"},
+                   "expect": [{"event": "SYNC_RX", "where": {"err": {"min": 2, "max": 1}}}]})

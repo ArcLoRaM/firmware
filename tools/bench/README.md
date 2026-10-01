@@ -125,7 +125,8 @@ delay = "10s"                    # ...10 s after that line (or: at = "+90s" afte
 [[expect]]
 node = 2                         # optional: any node
 event = "CLK"
-where = { to = "WARM" }          # optional: field values
+where = { to = "WARM" }          # optional: field values; a number range, bounds inclusive:
+                                 #   where = { err = { min = -1, max = 1 } }
 count = 2                        # optional, default 1
 within = "18m"                   # optional: from arming, default the timeout
 
@@ -136,7 +137,8 @@ event = "TX_LATE"
 - The Smoke Check is always on: every flashed board boots the run's Build ID on both cores, as its class, linked, with no lost line.
 - Every reset must reboot its node (the run cannot pass before it), and no other reboot is allowed.
 - Event and field names are checked against arclog's event table, with a suggestion for a typo (`unknown event 'SYNC_RXX' (did you mean SYNC_RX?)`).
-- On the command line, `--expect "<ID|any> <EVENT> [field=value ...] [within=8m] [count=2]"`, `--watch ID`, `--forbid EVENT`, `-D NAME=VALUE`, `--timeout`; `--save FILE` writes them as a scenario file.
+- A range never matches a field that is not a number; `{ min = 2 }` or `{ max = -2 }` alone bound one side.
+- On the command line, `--expect "<ID|any> <EVENT> [field=value ...] [within=8m] [count=2]"`, a range as `err=-1..1`, `err=..-2` or `err=2..`, `--watch ID`, `--forbid EVENT`, `-D NAME=VALUE`, `--timeout`; `--save FILE` writes them as a scenario file.
 
 Reset is the only action for now.
 Halting a core needs a hot-plug SWD connection, which fails while the firmware sleeps in STOP2 with the debug port off; it needs the firmware to keep debug alive in STOP2 first.

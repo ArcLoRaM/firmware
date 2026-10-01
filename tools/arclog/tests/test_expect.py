@@ -422,3 +422,56 @@ def test_a_node_ignores_its_lines_before_its_own_flash_ended():
     assert "ok   n2 armed (both cores booted build=b1) +6.3s" in msgs
     # Without it, the flash's reboot is taken for an unexpected one.
     assert decide(spec(), t, end=40)[0].reason == "n2 unexpected reboot (1, 0 allowed) +6.0s"
+
+
+# --- range conditions ------------------------------------------------------
+
+
+def sync_rx(t: Trace, dt: float, node: str, err) -> None:
+    t.emit(dt, node, "0", "SYNC_RX", ph=0, ce=1, ep=0, st=0, exp=0, err=err, clk="WARM", act="t1")
+
+
+def test_a_range_counts_only_lines_inside_it():
+    t = Trace()
+    t.boot(1, "n2")
+    for dt, err in ((3, -3), (4, -1), (5, 0), (6, 1), (7, 2)):
+        sync_rx(t, dt, "n2", err)
+    s = spec(expect=[{"node": "n2", "event": "SYNC_RX", "where": {"err": {"min": -1, "max": 1}},
+                      "count": 3}])
+    verdict, msgs = decide(s, t, end=30)
+    assert verdict.code == PASS
+    assert "ok   n2 SYNC_RX err=-1..1 (3/3) +6.0s" in msgs
+
+
+def test_a_one_sided_range_in_a_forbid_fails_only_outside_the_bound():
+    t = Trace()
+    t.boot(1, "n2")
+    sync_rx(t, 3, "n2", -1)
+    sync_rx(t, 4, "n2", 2)
+    s = spec(forbid=[{"event": "SYNC_RX", "where": {"err": {"min": 2}}}])
+    verdict, _ = decide(s, t)
+    assert verdict.code == FAIL
+    assert verdict.reason.startswith("n2 forbidden any SYNC_RX err=2..:")
+    assert "err=2" in verdict.reason
+
+
+def test_a_range_never_matches_a_field_that_is_not_a_number():
+    t = Trace()
+    t.boot(1, "n2")
+    t.clk(3, "n2")
+    s = spec(forbid=[{"event": "CLK", "where": {"to": {"max": 0}}}])
+    verdict, _ = decide(s, t, end=30)
+    assert verdict.code == PASS
+
+
+@pytest.mark.parametrize("cond, problem", [
+    ({}, "needs min, max or both"),
+    ({"mn": 1}, "unknown key(s) mn"),
+    ({"min": "a"}, "min must be a number"),
+    ({"min": 2, "max": 1}, "min 2 is above max 1"),
+])
+def test_invalid_ranges_are_refused(cond, problem):
+    d = {"timeout": "1m", "nodes": {"n2": {}},
+         "expect": [{"event": "SYNC_RX", "where": {"err": cond}}]}
+    with pytest.raises(ValueError, match=__import__("re").escape(problem)):
+        spec_from_dict(d)

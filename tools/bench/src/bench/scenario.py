@@ -19,7 +19,7 @@
     [[expect]]
     node = 2
     event = "CLK"
-    where = { to = "WARM" }
+    where = { to = "WARM" }   # field values; a number range: { err = { min = -1, max = 1 } }
     count = 2         # WARM before and after the reset
     within = "12m"    # from arming
 
@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
-from arclog.expect import parse_duration
+from arclog.expect import Condition, Range, parse_condition, parse_duration
 from arclog.schema import EVENTS
 
 if sys.version_info >= (3, 11):
@@ -58,7 +58,7 @@ WATCH = "watch"
 class Pattern:
     event: str
     node: int | None = None
-    where: dict[str, str] = field(default_factory=dict)
+    where: dict[str, Condition] = field(default_factory=dict)
 
     def describe(self) -> str:
         where = "".join(f" {k}={v}" for k, v in self.where.items())
@@ -146,7 +146,8 @@ def _pattern(where: str, t: dict, nodes: dict[int, str], allowed: set[str]) -> d
             raise ValueError(f"{where}: {event} has no field {key!r}{_suggest(key, known)} "
                              f"(fields: {', '.join(sorted(known))})")
     node = _node_id(where, t["node"], nodes) if "node" in t else None
-    return {"event": event, "node": node, "where": {str(k): str(v) for k, v in fields.items()}}
+    return {"event": event, "node": node,
+            "where": {str(k): parse_condition(f"{where}.where.{k}", v) for k, v in fields.items()}}
 
 
 def from_dict(d: dict) -> Scenario:
@@ -210,10 +211,26 @@ def load(path: str | Path) -> Scenario:
 # ---------------------------------------------------------------------------
 
 _KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.+)$")
+_NUM = r"-?\d+(?:\.\d+)?"
+_RANGE_RE = re.compile(rf"^({_NUM})?\.\.({_NUM})?$")
+
+
+def _number(text: str) -> int | float:
+    return float(text) if "." in text else int(text)
+
+
+def _field_value(text: str):
+    """'-1..1', '..-2' or '2..' -> a range table; anything else stays an exact value."""
+    m = _RANGE_RE.match(text)
+    if not m or (m[1] is None and m[2] is None):
+        return text
+    return {k: _number(v) for k, v in (("min", m[1]), ("max", m[2])) if v is not None}
 
 
 def parse_expect_text(text: str) -> dict:
-    """'2 CLK to=WARM within=7m count=2' (node or 'any', event, fields, within/count) -> expect table."""
+    """'2 CLK to=WARM within=7m count=2' (node or 'any', event, fields, within/count) -> expect table.
+
+    A field value 'lo..hi', '..hi' or 'lo..' is a number range, bounds inclusive."""
     words = shlex.split(text)
     if len(words) < 2:
         raise ValueError(f"--expect {text!r}: expected '<Node ID|any> <EVENT> [field=value ...] "
@@ -228,14 +245,16 @@ def parse_expect_text(text: str) -> dict:
         if m[1] in ("within", "count"):
             t[m[1]] = int(m[2]) if m[1] == "count" else m[2]
         else:
-            t.setdefault("where", {})[m[1]] = m[2]
+            t.setdefault("where", {})[m[1]] = _field_value(m[2])
     return t
 
 
 def _toml_value(v) -> str:
+    if isinstance(v, Range):
+        v = v.as_table()
     if isinstance(v, dict):
         return "{ " + ", ".join(f"{k} = {_toml_value(x)}" for k, x in v.items()) + " }"
-    if isinstance(v, int) and not isinstance(v, bool):
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
         return str(v)
     return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
 

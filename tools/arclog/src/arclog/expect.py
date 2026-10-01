@@ -18,7 +18,9 @@ A run starts at `since` (the flash). It is decided by an expect file (TOML):
     [[expect]]
     node = "com9"            # optional: any node
     event = "CLK"
-    where = { to = "WARM" }  # optional: field values
+    where = { to = "WARM" }  # optional: field values; a number range:
+                             #   { err = { min = -1, max = 1 } } (inclusive, either bound optional;
+                             #   a field that is not a number never matches a range)
     within = "5m"            # optional: from the run being armed (default: timeout)
     count = 1                # optional: at least this many
 
@@ -105,18 +107,74 @@ class NodeSpec:
     since: datetime | None = None   # this node's lines before it are ignored (its flash ended then)
 
 
+@dataclass(frozen=True)
+class Range:
+    """A numeric field condition, both bounds inclusive and optional: { min = -1, max = 1 }."""
+
+    min: float | None = None
+    max: float | None = None
+
+    def matches(self, value: str | None) -> bool:
+        try:
+            x = float(value)
+        except (TypeError, ValueError):
+            return False
+        return (self.min is None or x >= self.min) and (self.max is None or x <= self.max)
+
+    def as_table(self) -> dict:
+        return {k: v for k, v in (("min", self.min), ("max", self.max)) if v is not None}
+
+    def __str__(self) -> str:
+        return f"{_num(self.min)}..{_num(self.max)}"
+
+
+def _num(x: float | None) -> str:
+    return "" if x is None else f"{x:g}"
+
+
+Condition = str | Range
+
+
+def parse_condition(where: str, value: object) -> Condition:
+    """A `where` value: a table { min, max } is a Range, anything else an exact value."""
+    if isinstance(value, Range):
+        return value
+    if not isinstance(value, dict):
+        return str(value)
+    unknown = set(value) - {"min", "max"}
+    if unknown:
+        raise ValueError(f"{where}: unknown key(s) {', '.join(sorted(unknown))} (a range takes min, max)")
+    if not value:
+        raise ValueError(f"{where}: a range needs min, max or both")
+    bounds = {}
+    for key in ("min", "max"):
+        if key in value:
+            v = value[key]
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise ValueError(f"{where}: {key} must be a number, got {v!r}")
+            bounds[key] = v
+    r = Range(**bounds)
+    if r.min is not None and r.max is not None and r.min > r.max:
+        raise ValueError(f"{where}: min {_num(r.min)} is above max {_num(r.max)}")
+    return r
+
+
+def condition_matches(cond: Condition, value: str | None) -> bool:
+    return cond.matches(value) if isinstance(cond, Range) else value == cond
+
+
 @dataclass
 class Match:
-    """A line pattern: event, optional node, optional field values."""
+    """A line pattern: event, optional node, optional field conditions (exact value or Range)."""
 
     event: str
     node: str | None = None
-    where: dict[str, str] = field(default_factory=dict)
+    where: dict[str, Condition] = field(default_factory=dict)
 
     def matches(self, line: Line) -> bool:
         return (line.kind is Kind.ARCLOG and line.event == self.event
                 and (self.node is None or line.node == self.node)
-                and all(line.fields.get(k) == v for k, v in self.where.items()))
+                and all(condition_matches(c, line.fields.get(k)) for k, c in self.where.items()))
 
     def describe(self) -> str:
         where = "".join(f" {k}={v}" for k, v in self.where.items())
@@ -163,7 +221,7 @@ def _match_args(where: str, t: dict, nodes: dict[str, NodeSpec]) -> dict:
     if not isinstance(fields, dict):
         raise ValueError(f"{where}: 'where' must be a table of field values")
     return {"event": str(t["event"]), "node": node,
-            "where": {str(k): str(v) for k, v in fields.items()}}
+            "where": {str(k): parse_condition(f"{where}.where.{k}", v) for k, v in fields.items()}}
 
 
 def spec_from_dict(d: dict) -> Spec:

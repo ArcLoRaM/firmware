@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from arclog.capture import DailyWriter
-from arclog.expect import DirFollower, Run, spec_from_dict
+from arclog.expect import DirFollower, Run, condition_matches, spec_from_dict
 from arclog.model import Kind, Line
 
 from bench.boards import Board
@@ -55,7 +55,7 @@ def expect_spec(s: Scenario, boards: dict[int, Board], build_id: str,
 def _matches(p: Pattern, line: Line, capture_node: dict[int, str]) -> bool:
     return (line.kind is Kind.ARCLOG and line.event == p.event
             and (p.node is None or line.node == capture_node[p.node])
-            and all(line.fields.get(k) == v for k, v in p.where.items()))
+            and all(condition_matches(c, line.fields.get(k)) for k, c in p.where.items()))
 
 
 @dataclass
