@@ -17,6 +17,12 @@ Issues live in GitHub Issues (`github.com/ArcLoRaM/firmware`). See `docs/agents/
 
 Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
 
+### Hardware list for scenarios
+
+Every scenario or bench run you propose to Simon comes with its hardware list:
+each board by Node ID with the class it is flashed as, the probes and COM ports it uses, anything beyond plugged-in boards (cables, a USB hub, an antenna or attenuator, a power switch), and every step that needs hands on the bench (a replug, a CubeMX regeneration).
+Check the list against `bench boards` and say which items are missing today.
+
 ### Domain docs
 
 Single-context layout — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
