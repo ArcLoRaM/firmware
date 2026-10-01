@@ -51,6 +51,10 @@ event = "SLOT_SUSPECT"
 [[forbid]]
 event = "TX_TIMEOUT"
 
+# Sparse C3 packets (duty-cycle denials) are not silence (#33).
+[[forbid]]
+event = "SYNC_SILENCE"
+
 [[forbid]]
 node = 2
 event = "CLK"
