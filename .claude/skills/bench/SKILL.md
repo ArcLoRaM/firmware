@@ -16,10 +16,12 @@ A run takes minutes: start it with `run_in_background`, and read its output file
 ## The loop
 
 A task that changes firmware behaviour runs this loop, at most 5 build-flash-check cycles; then stop and report what is known.
+Every run, whatever its purpose (acceptance, performance or spontaneous), leaves a trace in its Test Record (`docs/test-tracker/README.md`: file naming, format, where each purpose reports on GitHub).
 
 1. **Scenario.** Write or pick a scenario that goes _red_ on the problem and _green_ on the fix: boards by Node ID, the class each is flashed as, and an `[[expect]]` or `[[forbid]]` that names the behaviour itself, not just a boot.
    Start from `tools/bench/scenarios/`; a one-off can be flags (`--node 2=C2 --expect "2 CLK to=WARM within=8m"`), `--save` it when it is worth keeping.
-   Done when `bench scenario check <file>` prints the plan you intend.
+   Its header comment names the purpose and the issue.
+   Done when `bench scenario check <file>` prints the plan you intend, and the Test Record lists the scenario, its hardware and the criteria it covers.
 2. **Board state.** `bench boards` shows each probe, port, Node ID and last Build ID, and ends with the count; tell the user how many boards are connected and which Node IDs they are, before the first run.
    `bench capture status` must show the bench capture recording every port (`bench capture up` otherwise).
    A board with an unknown UID needs `--probe-uids` (it reboots that board).
@@ -32,7 +34,12 @@ A task that changes firmware behaviour runs this loop, at most 5 build-flash-che
    - `TIMEOUT`: the reason lists what never happened; check the record for why (a board not booting, a peer silent, a sync never reached).
    - lost lines (`N line(s) lost`) are a firmware trace problem, not noise: find which lines vanished before changing the scenario.
    A verdict is evidence about the firmware; change the scenario only when it expected the wrong thing, and say so.
-5. **Report.** The loop ends on PASS or at the cycle limit, with: the verdict, the Build ID, the record's `report.md` path, the diff, and anything the traces showed beyond the task.
+   A run that failed for a bench reason (host sleep, capture outage, a dead radio) is no verdict on the firmware: note the cause and run again.
+5. **Trace.** Every run, PASS or not, gets a row in the Test Record's Runs table: date, scenario, Build ID, verdict, record path, and what the record showed beyond the verdict.
+   On GitHub, the issue the Test Record names gets a comment per decisive verdict: scenario, Build ID, verdict, the criteria it settles with the trace lines that show it, and the Test Record path.
+   An acceptance issue is closed once every criterion in its Test Record is ticked.
+   Done when the Runs row and the comment exist.
+6. **Report.** The loop ends on PASS or at the cycle limit, with: the verdict, the Build ID, the record's `report.md` path, the diff, and anything the traces showed beyond the task.
    Commit only when the user asks.
 
 ## Guard
