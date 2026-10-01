@@ -23,6 +23,11 @@ Every scenario or bench run you propose to Simon comes with its hardware list:
 each board by Node ID with the class it is flashed as, the probes and COM ports it uses, anything beyond plugged-in boards (cables, a USB hub, an antenna or attenuator, a power switch), and every step that needs hands on the bench (a replug, a CubeMX regeneration).
 Check the list against `bench boards` and say which items are missing today.
 
+### The repo holds every test fact
+
+Every test protocol, result, finding and run record name lives in the repo first: `docs/test-tracker/` (Test Records) and `tools/bench/scenarios/`.
+An artifact or shared doc is only a view of them: write the fact to the repo before (or with) the artifact, never to the artifact alone.
+
 ### Timing measurements
 
 Timing on the boards (a budget, a latency, time lost in a write) is measured, not estimated: skill `timing-probe` (a temporary SysTick probe behind a Build Override, numbers kept in the Test Record, probe never committed).

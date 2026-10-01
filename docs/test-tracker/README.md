@@ -3,6 +3,11 @@
 One Test Record per bench test, committed here, so every scenario that was run keeps its purpose, its hardware and its verdicts in git.
 Run records under `tools/arclog/runs/` stay on this machine; a Test Record names them, it does not replace them.
 
+## Bench preconditions
+
+Every bench test assumes the host on AC power with Windows sleep off: a sleep cuts every COM port at once and the capture loses the run (2026-10-01, see `60-multi-port-capture-24h.md`).
+Boards are named by Node ID; `bench boards` gives their probes and ports.
+
 ## Purpose
 
 Every Test Record has exactly one purpose, which sets its file name and where its verdicts are reported:
