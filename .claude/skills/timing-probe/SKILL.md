@@ -45,6 +45,7 @@ Build, flash and run only through `bench` (skill `bench`).
    Expect the probe event itself (`--expect "2 RTC_PROBE within=3m"`) so the run passes once the line is in.
    Done when the probe line is in the record for every node that ran the path.
 4. **Record.** Put the numbers in the Test Record (`docs/test-tracker/README.md`) under a Measurement section: each segment, the core clock, the Build ID and the run record path; the run gets its row (verdict `measurement`).
+   Count the use in `CLAUDE.md` (Timing measurements), and make the proposal it names when the count reaches 3.
 5. **Remove.** `git checkout` the probed firmware files and the schema, then check that `git diff` holds no `PROBE`.
    Done when the probe is gone from the working tree, before any fix is built.
 
@@ -53,5 +54,6 @@ Build, flash and run only through `bench` (skill `bench`).
 - CM0+: `SystemCoreClock` = 4 MHz (measured 2026-10-01), so 4 cycles per microsecond and a SysTick wrap every 4.19 s; segments longer than that need the RTC instead.
 - Log `SystemCoreClock` in every probe line rather than assuming it: the CM4 and other configurations may differ.
 - SysTick is HAL's 1 ms tick on the CM0+ (`HAL_InitTick` default, `HAL_IncTick` in `SysTick_Handler`). The probe reconfigures it, which is harmless in a probe build only because `HAL_GetTick` comes from the RTC; never keep it in a committed build.
-- SysTick stops in STOP2. Across a sleep, or for spans over a few seconds, time with the RTC: `TIMER_IF_GetDayTicks(true)` reads the time of day exactly on a 1/4096 s tick edge (244 us resolution, waits at most one tick).
+- SysTick does not run in STOP2: it counts the core clock, which is off there, and the firmware also suspends the tick before entering STOP2 (`stm32_lpm_if.c`). It resumes from the value it stopped at, so a segment that contains a sleep reads short by the whole sleep, with no sign of it. Before probing a path, check whether it can sleep (a sequencer idle, a `UTIL_TIMER` wait, an alarm); if it can, time it with the RTC, which runs on the LSE in STOP2: `TIMER_IF_GetDayTicks(true)` reads the time of day exactly on a 1/4096 s tick edge (244 us resolution, waits at most one tick). The RTC is also the choice for spans over a few seconds.
+- A debugger can keep the core clock on in STOP2 (DBGMCU low-power debug bits), and then SysTick keeps counting: a probe gives different numbers with and without a debug session, so measure without one (bench never attaches a debugger to a run).
 - SysTick counts wall time, interrupts included: a segment that an ISR preempted is longer by the ISR. Repeat the run when a number looks off.
