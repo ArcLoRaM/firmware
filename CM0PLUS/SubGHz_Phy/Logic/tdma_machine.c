@@ -367,8 +367,13 @@ bool TdmaMachine_Start(void)
         enter_scanning("boot");
         return false;
     }
-    /* Never cold (C3): the chain starts now, from {0,0,0}. This wake is
-     * the first slot's Tx lead. */
+    /* Never cold (C3): the chain starts now, from {0,0,0}. The radio's
+     * first channel set calibrates its image, which is longer than a Tx
+     * lead: set cell 0's channel before the chain's clock starts, so the
+     * slot task's own set is cheap (issue #70). */
+    s_platform.RadioSetChannel(FrequencyResolver_GetFreq(&s_cursor));
+
+    /* This wake is the first slot's Tx lead. */
     s_expected_wake_ms = s_platform.GetRtcMs();
     s_slot_start_ms    = DayMs_Add(s_expected_wake_ms, (int32_t)TX_LEAD_MS);
     s_running          = true;

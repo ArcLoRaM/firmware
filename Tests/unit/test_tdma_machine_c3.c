@@ -31,6 +31,10 @@ static int      s_radio_scan_calls;
 static int      s_radio_sleep_calls;
 static int      s_wait_calls;
 static uint32_t s_wait_target;
+/* The radio's first channel set after init costs time (image calibration,
+ * issue #70): the first call advances the RTC by this much, later ones do not. */
+static uint32_t s_first_channel_cost_ms;
+static bool     s_first_channel_paid;
 /* Call order: each stub records the sequence number of its latest call. */
 static int      s_seq;
 static int      s_wait_seq;
@@ -39,7 +43,14 @@ static int      s_send_seq;
 static uint32_t stub_GetRtcMs(void)                          { return s_rtc_ms;                         }
 static void     stub_ProgramAlarmA(uint32_t t)               { s_alarm_programmed = t; s_alarm_calls++; }
 static void     stub_CancelAlarmA(void)                      { s_cancel_alarm_calls++;                  }
-static void     stub_RadioSetChannel(uint32_t f)             { (void)f;                                 }
+static void     stub_RadioSetChannel(uint32_t f)
+{
+    (void)f;
+    if (!s_first_channel_paid) {
+        s_first_channel_paid = true;
+        s_rtc_ms += s_first_channel_cost_ms;
+    }
+}
 static void     stub_RadioSend(const uint8_t *b, uint8_t l)  { (void)b; (void)l; s_radio_send_calls++; s_send_seq = ++s_seq; }
 static void     stub_RadioSetRx(uint32_t w, uint32_t c)      { (void)w; (void)c;                        }
 static void     stub_RadioScan(void)                         { s_radio_scan_calls++;                    }
@@ -90,6 +101,8 @@ void setUp(void)
     s_radio_sleep_calls      = 0;
     s_wait_calls             = 0;
     s_wait_target            = 0u;
+    s_first_channel_cost_ms  = 0u;
+    s_first_channel_paid     = false;
     s_seq = s_wait_seq = s_send_seq = 0;
     ArcLog_CaptureReset();
 
@@ -133,6 +146,26 @@ void test_c3_start_runs_chain_from_now(void)
     TEST_ASSERT_NO_ARCLOG("SLOT_SUSPECT");
     TEST_ASSERT_NO_ARCLOG("TX_LATE");
     TEST_ASSERT_ARCLOG("SYNC_TX ph=0 ce=0 ep=45000020 plan=45000020 send=45000020");
+}
+
+void test_c3_first_radio_channel_set_is_not_charged_to_first_slot(void)
+{
+    /* Issue #70: the first channel set after init calibrates the radio's
+     * image, which takes longer than the first slot's whole lead. It is
+     * paid at boot, before the chain's clock starts, so cell 0 still goes
+     * on air at its nominal start. */
+    TdmaPlatform_t plat = k_platform;
+    plat.tx_ramp_ms = 4u;
+    TdmaMachine_Init(&plat);
+    s_first_channel_cost_ms = TX_LEAD_MS - 2u;
+
+    s_rtc_ms = 45000000u;
+    TEST_ASSERT_TRUE(TdmaMachine_Start());
+    s_rtc_ms += 4u;                              /* boot latency up to the slot task */
+    TdmaMachine_SlotTask();
+
+    TEST_ASSERT_NO_ARCLOG("TX_LATE");
+    TEST_ASSERT_EQUAL(1, s_radio_send_calls);
 }
 
 /* =========================================================================
@@ -301,6 +334,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_c3_start_runs_chain_from_now);
+    RUN_TEST(test_c3_first_radio_channel_set_is_not_charged_to_first_slot);
     RUN_TEST(test_c3_tx_slot_woken_one_lead_early);
     RUN_TEST(test_c3_tx_fires_at_nominal_slot_start);
     RUN_TEST(test_c3_tx_fires_one_ramp_before_nominal);
