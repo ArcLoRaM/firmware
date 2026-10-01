@@ -177,7 +177,8 @@ void TdmaMachine_Init(const TdmaPlatform_t *platform);
  *          started by \ref TdmaMachine_BootstrapFromSync on the first Sync
  *          packet. C3 is never cold: its chain starts now, with the first
  *          slot starting \ref TX_LEAD_MS from now so that a first Tx slot
- *          has its full lead.
+ *          has its full lead. It first sets cell 0's channel, so the radio's
+ *          one-off image calibration is paid at boot and not in that lead.
  *
  * \retval  true   The alarm chain is running: the caller must schedule the
  *                 first \ref TdmaMachine_SlotTask now.

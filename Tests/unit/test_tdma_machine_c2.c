@@ -386,6 +386,7 @@ void test_slot_task_calls_radio_set_channel(void)
 {
     s_rtc_ms = 0u;
     start_chain();
+    s_channel_calls = 0;                 /* Start sets cell 0's channel too (#70) */
     TdmaMachine_SlotTask();
     TEST_ASSERT_EQUAL(1,           s_channel_calls);
     TEST_ASSERT_EQUAL(868100000u,  s_channel_set);
