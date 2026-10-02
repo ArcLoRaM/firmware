@@ -7,3 +7,6 @@ CM0PLUS/Debug_C3/
 Tests/build/
 
 Common/Bench/bench_overrides.h
+
+# Agent worktrees
+.claude/worktrees/
