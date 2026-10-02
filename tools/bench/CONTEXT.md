@@ -43,6 +43,10 @@ One execution of a Scenario: a time window over the Capture files, with defined 
 Boards the Scenario does not name are not flashed; the report gives the Build ID they last booted, without affecting pass or fail.
 Output goes to `tools/arclog/runs/<date>-<build-id>/`.
 
+## Regression suite
+
+Not a list: every Scenario with a `timeout` of 10 min or less and at most 2 flashed nodes.
+
 ## Action
 
 Something a Scenario does to a board during a run, without flashing.

@@ -28,6 +28,8 @@ Check the list against `bench boards` and say which items are missing today.
 Every test protocol, result, finding and run record name lives in the repo first: `docs/test-tracker/` (Test Records) and `tools/bench/scenarios/`.
 An artifact or shared doc is only a view of them: write the fact to the repo before (or with) the artifact, never to the artifact alone.
 
+Test workflow: `docs/test-tracker/README.md` (test levels, issue-record-scenario link, verdicts, closing rule). Read it before writing a Test Record or a scenario, and before closing an issue on a bench verdict.
+
 ### Timing measurements
 
 Timing on the boards (a budget, a latency, time lost in a write) is measured, not estimated: skill `timing-probe` (a temporary SysTick probe behind a Build Override, numbers kept in the Test Record, probe never committed).
