@@ -2,6 +2,7 @@
 #include "mac_state_machine.h"
 #include "tdma_table.h"
 #include "arclog_capture.h"
+#include "guard_time_resolver.h"   /* SYNC_RESYNC_THRESHOLD_MS */
 #include <string.h>
 
 /* ------- hook stubs ------------------------------------------------------- */
@@ -1133,6 +1134,124 @@ void test_c2_tier2_after_midnight_passes_day_domain_expected(void)
     TEST_ASSERT_EQUAL(3000u, s_align_expected_ms);
 }
 
+/* ------- drift sample hook (issue #34) ------------------------------------ */
+
+static int     s_sample_n;
+static int32_t s_sample_err[16];
+static int     s_sample_order_at_align;   /* samples seen when the shift hook ran */
+static int     s_align_calls_seen;
+
+static void stub_sync_sample(int32_t err_ms)
+{
+    if (s_sample_n < 16) s_sample_err[s_sample_n] = err_ms;
+    s_sample_n++;
+}
+
+static void stub_align_for_sample(uint32_t stamp_ms, uint32_t expected_ms)
+{
+    (void)stamp_ms; (void)expected_ms;
+    s_sample_order_at_align = s_sample_n;
+    s_align_calls_seen++;
+}
+
+static void init_with_sample_hooks(void)
+{
+    MAC_Hooks_t hooks = k_hooks;
+    hooks.sync_sample         = stub_sync_sample;
+    hooks.rtc_align_subsecond = stub_align_for_sample;
+    MAC_Init(&hooks);
+    s_sample_n = 0;
+    s_sample_order_at_align = -1;
+    s_align_calls_seen = 0;
+}
+
+static void sample_pkt(SyncPayload_t *p, uint8_t cell)
+{
+    memset(p, 0, sizeof(*p));
+    p->sync_phase_index             = 0u;
+    p->sync_cell_index              = cell;
+    p->ms_since_midnight_sync_phase = 0u;
+    p->day = 0x01u; p->month = 0x01u; p->year = 0x24u;
+}
+
+/* Packet 1 is the set: no sample. The good ACQUIRING packets are. */
+void test_c2_sample_hook_not_called_for_packet1_called_for_good_acquiring(void)
+{
+    init_with_sample_hooks();
+    SyncPayload_t p;
+    s_snapshot_ms = 0u;
+    sample_pkt(&p, 0u); MAC_OnSyncPacketReceived(&p, 0u);
+    TEST_ASSERT_EQUAL(0, s_sample_n);
+    sample_pkt(&p, 1u); MAC_OnSyncPacketReceived(&p, 3003u);
+    sample_pkt(&p, 2u); MAC_OnSyncPacketReceived(&p, 5997u);
+    TEST_ASSERT_EQUAL(2, s_sample_n);
+    TEST_ASSERT_EQUAL_INT32(3, s_sample_err[0]);
+    TEST_ASSERT_EQUAL_INT32(-3, s_sample_err[1]);
+}
+
+void test_c2_sample_hook_not_called_for_a_bad_acquiring_packet(void)
+{
+    init_with_sample_hooks();
+    SyncPayload_t p;
+    s_snapshot_ms = 0u;
+    sample_pkt(&p, 0u); MAC_OnSyncPacketReceived(&p, 0u);
+    sample_pkt(&p, 1u); MAC_OnSyncPacketReceived(&p, 3000u + 8u)   /* the participate threshold */;
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(0, s_sample_n);
+}
+
+/* WARM: Tier 1 and Tier 2 (either sign) are samples; Tier 3 is not. */
+void test_c2_sample_hook_called_for_tier1_and_tier2_not_tier3(void)
+{
+    init_with_sample_hooks();
+    SyncPayload_t p;
+    s_snapshot_ms = 0u;
+    sample_pkt(&p, 0u); MAC_OnSyncPacketReceived(&p, 0u);
+    sample_pkt(&p, 1u); MAC_OnSyncPacketReceived(&p, 3000u);
+    sample_pkt(&p, 2u); MAC_OnSyncPacketReceived(&p, 6000u);
+    TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
+    s_sample_n = 0;
+
+    sample_pkt(&p, 3u); MAC_OnSyncPacketReceived(&p, 9004u);    /* t1, +4 */
+    sample_pkt(&p, 4u); MAC_OnSyncPacketReceived(&p, 12050u);   /* t2, +50 */
+    sample_pkt(&p, 5u); MAC_OnSyncPacketReceived(&p, 14980u);   /* t2, -20 */
+    TEST_ASSERT_EQUAL(3, s_sample_n);
+    TEST_ASSERT_EQUAL_INT32(4, s_sample_err[0]);
+    TEST_ASSERT_EQUAL_INT32(50, s_sample_err[1]);
+    TEST_ASSERT_EQUAL_INT32(-20, s_sample_err[2]);
+
+    sample_pkt(&p, 1u);
+    MAC_OnSyncPacketReceived(&p, 3000u + SYNC_RESYNC_THRESHOLD_MS);     /* t3 */
+    TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
+    TEST_ASSERT_EQUAL(3, s_sample_n);
+}
+
+/* The Tier 2 sample is taken before the shift it causes. */
+void test_c2_sample_hook_runs_before_the_tier2_shift(void)
+{
+    init_with_sample_hooks();
+    SyncPayload_t p;
+    s_snapshot_ms = 0u;
+    sample_pkt(&p, 0u); MAC_OnSyncPacketReceived(&p, 0u);
+    sample_pkt(&p, 1u); MAC_OnSyncPacketReceived(&p, 3000u);
+    sample_pkt(&p, 2u); MAC_OnSyncPacketReceived(&p, 6000u);
+    s_sample_n = 0;
+    sample_pkt(&p, 3u); MAC_OnSyncPacketReceived(&p, 9040u);    /* t2 */
+    TEST_ASSERT_EQUAL(1, s_align_calls_seen);
+    TEST_ASSERT_EQUAL(1, s_sample_order_at_align);
+}
+
+void test_c2_no_sample_hook_is_fine(void)
+{
+    MAC_Init(&k_hooks);              /* sync_sample == NULL */
+    s_sample_n = 0;
+    SyncPayload_t p;
+    s_snapshot_ms = 0u;
+    sample_pkt(&p, 0u); MAC_OnSyncPacketReceived(&p, 0u);
+    sample_pkt(&p, 1u); MAC_OnSyncPacketReceived(&p, 3000u);
+    TEST_ASSERT_EQUAL(0, s_sample_n);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1218,5 +1337,10 @@ int main(void)
     RUN_TEST(test_c2_cold_set_on_a_cell_before_midnight_keeps_the_date);
     RUN_TEST(test_c2_cold_set_whose_carry_crosses_midnight_advances_the_date);
     RUN_TEST(test_c2_tier3_set_on_a_cell_after_midnight_advances_the_date);
+    RUN_TEST(test_c2_sample_hook_not_called_for_packet1_called_for_good_acquiring);
+    RUN_TEST(test_c2_sample_hook_not_called_for_a_bad_acquiring_packet);
+    RUN_TEST(test_c2_sample_hook_called_for_tier1_and_tier2_not_tier3);
+    RUN_TEST(test_c2_sample_hook_runs_before_the_tier2_shift);
+    RUN_TEST(test_c2_no_sample_hook_is_fine);
     return UNITY_END();
 }

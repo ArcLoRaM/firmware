@@ -305,6 +305,9 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
 
         log_sync_rx(payload, stamp_ms, expected_arrival, good ? "good" : "bad");
         if (good) {
+            if (s_hooks.sync_sample != NULL) {
+                s_hooks.sync_sample(DayMs_Diff(stamp_ms, expected_arrival));
+            }
             s_sync_consecutive++;
             if (s_sync_consecutive >= 2u) {
                 set_clock_state(CLOCK_WARM, "lock");
@@ -331,6 +334,10 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
         log_sync_rx(payload, stamp_ms, expected_arrival,
                     (error < SYNC_PARTICIPATE_THRESHOLD_MS) ? "t1"
                     : (error < SYNC_RESYNC_THRESHOLD_MS)    ? "t2" : "t3");
+
+        if (error < SYNC_RESYNC_THRESHOLD_MS && s_hooks.sync_sample != NULL) {
+            s_hooks.sync_sample(DayMs_Diff(stamp_ms, expected_arrival));
+        }
 
         if (error < SYNC_PARTICIPATE_THRESHOLD_MS) {
             /* Tier 1: participate — store epoch for cells 1+ relay */

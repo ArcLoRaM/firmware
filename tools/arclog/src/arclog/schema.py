@@ -64,7 +64,7 @@ EVENTS: dict[str, Event] = {
         "Y", ("req", "calp", "calm", "res"),
         "RTC smooth calibration write (#34); req = requested frequency change (ppb, + faster, - slower), "
         "calp/calm = the CALR fields written (32 s window), res = ok | fail | busy (a recalibration still pending "
-        "(RECALPF): not written).",
+        "(RECALPF): not written) | boot (the setting read from the register at boot, nothing written).",
     ),
     "DRIFT": Event(
         "Y", ("n", "base", "rate", "resid", "noise", "ok"),

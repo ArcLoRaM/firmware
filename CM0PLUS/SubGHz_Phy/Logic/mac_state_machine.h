@@ -201,6 +201,22 @@ typedef struct {
 
     /*! Fired when ClockState degrades back to CLOCK_COLD. */
     void (*sync_lost)(void);
+
+    /*!
+     * Drift sample hook (C1, C2): one per Sync packet whose error is a
+     * usable measure of the local clock's rate (issue #34).
+     *
+     * \details Called for the ACQUIRING packets judged good and for the
+     *          WARM packets of Tier 1 and Tier 2, never for Packet 1 (the
+     *          set), a bad ACQUIRING packet or Tier 3. It runs after the
+     *          packet is logged and, for Tier 2, before
+     *          \c rtc_align_subsecond, so the error is the one measured
+     *          before the shift it causes.
+     *
+     * \param err_ms  SyncStamp - expected arrival, ms, signed, as logged
+     *                in SYNC_RX.
+     */
+    void (*sync_sample)(int32_t err_ms);
 } MAC_Hooks_t;
 
 /* =========================================================================

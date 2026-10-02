@@ -38,6 +38,9 @@
 #include "tdma_table.h"       /* TdmaTable_PhaseCount */
 #include "guard_time_resolver.h" /* MAX_GUARD_TIME_MS */
 #include "rtc_set_plan.h"         /* RtcSetPlan_*, RtcTicks_* */
+#include "drift_estimator.h"      /* DriftEstimator_* */
+#include "rtc_calr.h"            /* RtcCalr_* */
+#include "calr_policy.h"         /* CalrPolicy_Decide */
 #include "node_id.h"          /* NodeId_ReadUid, NodeId_FromUid */
 
 /* =========================================================================
@@ -339,6 +342,119 @@ static int32_t shift_ticks_to_ms(uint32_t shift_ticks, bool advance)
     return advance ? ms : -ms;
 }
 
+/* =========================================================================
+ * Drift estimator and RTC smooth calibration (issue #34)
+ *
+ * C1 and C2 estimate their RTC's rate offset against the Sync sender and
+ * cancel it with the RTC_CALR smooth calibration. C3 is the time reference
+ * and calibrates against no one (an external reference is #35): none of this
+ * is built for it.
+ *
+ * Every call below runs in the context of the Sync packet processing (the
+ * radio ISR, like the RTC writes it follows) and shares the estimator with
+ * nothing else. Times are the monotonic ms, never the day-wrapping RTC ms.
+ * The estimator is told every RTC write that moves the error (a shift, a
+ * calendar set, a calibration) so the fit sees the crystal alone.
+ * ========================================================================= */
+
+#if (NODE_CLASS != NODE_CLASS_C3)
+#define DRIFT_ACTIVE 1
+#endif
+
+#ifndef BENCH_CALR_OFF
+/* Build Override: 1 keeps the estimator and the DRIFT log but never writes
+ * RTC_CALR (the control stretch of the #34 Test Record). */
+#define BENCH_CALR_OFF 0
+#endif
+
+#ifdef DRIFT_ACTIVE
+
+static RtcCalr_t s_calr;   /* the setting held by RTC->CALR */
+
+static void calr_log(int32_t req_ppb, RtcCalr_t c, const char *res)
+{
+    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "CALR", "req=%d calp=%u calm=%u res=%s",
+           (int)req_ppb, (unsigned)c.calp, (unsigned)c.calm, res);
+}
+
+/* Write the setting, 32 s window. A recalibration still pending (RECALPF) is
+ * not waited for (the HAL would spin up to its timeout in the ISR): the next
+ * sample tries again. Smooth calibration does not step the day clock, so no
+ * RtcWriteBegin/End; the write-protect rule is the HAL's. */
+static const char *calr_write(RtcCalr_t c)
+{
+    if (READ_BIT(RTC->ICSR, RTC_ICSR_RECALPF) != 0u) {
+        return "busy";
+    }
+    hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+    HAL_StatusTypeDef st = HAL_RTCEx_SetSmoothCalib(
+        &hrtc, RTC_SMOOTHCALIB_PERIOD_32SEC,
+        c.calp ? RTC_SMOOTHCALIB_PLUSPULSES_SET : RTC_SMOOTHCALIB_PLUSPULSES_RESET,
+        c.calm);
+    return (st == HAL_OK) ? "ok" : (st == HAL_BUSY) ? "busy" : "fail";
+}
+
+/* Boot: the estimator starts from what the register holds (it survives a
+ * reset of the MCU; persisting the estimate itself is Phase 2). A register
+ * that selects a short window is not ours: clear it. */
+static void drift_init(void)
+{
+    DriftEstimator_Init();
+    RtcCalr_t c;
+    if (RtcCalr_FromReg(RTC->CALR, &c)) {
+        s_calr = c;
+        calr_log(RtcCalr_ToPpb(c), c, "boot");
+    } else {
+        RtcCalr_t none = { 0u, 0u };
+        const char *res = calr_write(none);
+        if (res[0] == 'o') s_calr = none;
+        calr_log(0, none, res);
+    }
+    DriftEstimator_OnCalr(TIMER_IF_GetMonotonicMs(), RtcCalr_ToPpb(s_calr));
+}
+
+/* Sync sample hook (MAC_Hooks_t::sync_sample): feed the estimator, log its
+ * state, and write a new setting when the policy says so. */
+static void mac_hook_sync_sample(int32_t err_ms)
+{
+    if (DriftEstimator_AddSample(TIMER_IF_GetMonotonicMs(), err_ms) != DRIFT_SAMPLE_ACCEPTED) {
+        return;
+    }
+    DriftEstimate_t e = DriftEstimator_Get();
+    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "DRIFT", "n=%u base=%u rate=%d resid=%d noise=%u ok=%u",
+           (unsigned)e.n, (unsigned)e.baseline_s, (int)e.rate_ppb, (int)e.residual_ppb,
+           (unsigned)e.noise_us, (unsigned)e.valid);
+#if !BENCH_CALR_OFF
+    CalrDecision_t d = CalrPolicy_Decide(&e, s_calr);
+    if (d.write) {
+        const char *res = calr_write(d.calr);
+        if (res[0] == 'o') {
+            s_calr = d.calr;
+            DriftEstimator_OnCalr(TIMER_IF_GetMonotonicMs(), RtcCalr_ToPpb(d.calr));
+        }
+        calr_log(d.req_ppb, d.calr, res);
+    }
+#endif
+}
+
+static inline void drift_on_shift(int32_t shift_ticks)
+{
+    DriftEstimator_OnShift(TIMER_IF_GetMonotonicMs(), shift_ticks);
+}
+
+static inline void drift_on_rtc_set(void)
+{
+    DriftEstimator_OnRtcSet(TIMER_IF_GetMonotonicMs());
+}
+
+#else  /* C3 */
+
+static inline void drift_init(void) {}
+static inline void drift_on_shift(int32_t shift_ticks) { (void)shift_ticks; }
+static inline void drift_on_rtc_set(void) {}
+
+#endif /* DRIFT_ACTIVE */
+
 /* Time the calendar stands still in mac_hook_rtc_set, from the tick edge
  * read to its restart (RM0453, calendar initialization): the INIT set right
  * after the edge, INITF within 2 RTCCLK (0-61 us), the TR/DR writes, then
@@ -432,6 +548,9 @@ static void mac_hook_rtc_set(uint32_t target_ms,
         }
     }
     TIMER_IF_RtcWriteEnd(written, shift_ms);
+    if (written) {
+        drift_on_rtc_set();   /* the error jumps: a new segment for the estimator */
+    }
 
     /* d = jump applied to the local clock (new - old domain), in ms;
      * adv = the SHIFTR in ticks (+ advance, - delay). */
@@ -462,6 +581,7 @@ static void mac_hook_rtc_align_sub(uint32_t stamp_ms,
      * hardware absorbs it; the next Sync packet corrects instead. */
     const char *res      = "busy";
     int32_t     shift_ms = 0;
+    int32_t     applied_ticks = 0;   /* + advance, - delay: what the estimator unwraps */
     if (TIMER_IF_RtcWriteBegin()) {
         HAL_StatusTypeDef st;
         hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
@@ -478,9 +598,13 @@ static void mac_hook_rtc_align_sub(uint32_t stamp_ms,
         if (st == HAL_OK) {
             res      = "ok";
             shift_ms = shift_ticks_to_ms(shift_ticks, error_ms < 0);
+            applied_ticks = (error_ms > 0) ? -(int32_t)shift_ticks : (int32_t)shift_ticks;
         }
     }
     TIMER_IF_RtcWriteEnd(false, shift_ms);
+    if (applied_ticks != 0) {
+        drift_on_shift(applied_ticks);
+    }
 
     /* err > 0: local clock was ahead and is delayed; ticks of 1/(PREDIV_S+1) s. */
     ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "RTC_SHIFT", "err=%d ticks=%u res=%s",
@@ -534,6 +658,9 @@ static const MAC_Hooks_t s_mac_hooks = {
     .sync_bootstrapped   = mac_hook_sync_bootstrapped,
     .sync_locked         = NULL,
     .sync_lost           = NULL,
+#ifdef DRIFT_ACTIVE
+    .sync_sample         = mac_hook_sync_sample,
+#endif
 };
 
 /* =========================================================================
@@ -626,6 +753,7 @@ void SubGhzPhyTask_Init(void)
 
     /* 4. MAC State Machine */
     MAC_Init(&s_mac_hooks);   /* logs MAC_INIT */
+    drift_init();             /* C1/C2: estimator from the RTC_CALR in the register */
 
 #if defined(BENCH_RTC_START_S) && (NODE_CLASS == NODE_CLASS_C3)
     /* Bench only: start the SyncAnchor's clock at BENCH_RTC_START_S seconds

@@ -74,6 +74,10 @@ add_unity_test(test_rtc_calr
     test_rtc_calr.c
 )
 
+add_unity_test(test_calr_policy
+    test_calr_policy.c
+)
+
 add_unity_test(test_drift_estimator
     test_drift_estimator.c
     ../../CM0PLUS/SubGHz_Phy/Logic/drift_estimator.c

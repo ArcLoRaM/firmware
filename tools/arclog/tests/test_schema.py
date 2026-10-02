@@ -52,10 +52,10 @@ def test_every_firmware_event_matches_the_schema(repo_root):
     assert not problems, "\n".join(problems)
 
 
-# Events in the schema whose firmware call is not written yet (issue #34, round
-# 2). Remove each from here when its ARCLOG() lands: the second test fails
-# on a stale entry.
-NOT_YET_EMITTED = {"CALR", "DRIFT"}
+# Events in the schema whose firmware call is not written yet: none today.
+# Add an event here in the same change as its schema entry when the firmware
+# call comes in a later one; the second test fails on a stale entry.
+NOT_YET_EMITTED: set[str] = set()
 
 
 def test_every_schema_event_is_emitted_by_firmware(repo_root):
