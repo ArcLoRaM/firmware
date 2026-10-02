@@ -40,11 +40,28 @@ Logic is proven on the host, so the bench only has to show what the host cannot:
 - [ ] The C2's rate estimate converges (`DRIFT` events), and `CALR` is written only when the estimate moves by a step (`CALR` events).
 - [ ] The residual rate after calibration is measured and reported with its uncertainty, against the control stretch with calibration off. This figure is the input of #45.
 - [ ] No Tier 3, `SYNC_LOST` or lost lines during the run; shift and re-anchor paths unchanged.
-- [ ] The duration of the `HAL_RTCEx_SetSmoothCalib` call is measured with `timing-probe` and recorded here, before the calling context is chosen.
+- [x] The duration of the `HAL_RTCEx_SetSmoothCalib` call is measured with `timing-probe` and recorded here, before the calling context is chosen. (Measurement below. The write was put in the Sync packet context first, as the shift writes; the 52 us confirms the choice.)
 
 The `HAL_RTCEx_SetSmoothCalib` call runs in the context of the Sync packet processing (the radio ISR), as the shift and set writes do, and is skipped while `RECALPF` is set; the duration criterion above checks that choice.
+
+## Measurement: the `HAL_RTCEx_SetSmoothCalib` call
+
+Probe `BENCH_CALR_PROBE` (temporary, never committed): at boot, three times, write `CALR` to -8 pulses and back to 0, timing the call and the time `RECALPF` stays set after it, with SysTick.
+Node 4 as C2, `SystemCoreClock` = 4 000 000 Hz, build `969efc9-db7efdd-o494085`, run `tools/arclog/runs/20261002T195718Z-969efc9-db7efdd-o494085/`.
+
+| Segment | Result (6 writes) |
+|---|---|
+| The call, `RECALPF` clear | 52 us every time |
+| `RECALPF` set after the write | 88 to 113 us (median 101 us), about 3 RTCCLK cycles (92 us) |
+
+The write is as cheap as a register write: in the radio ISR, next to the shift writes, it adds 52 us.
+A second write less than about 0.1 ms after the first would find `RECALPF` set and be skipped; the writes are at least one Sync packet (30 s) apart, so it does not happen.
+The probe ran in thread context at boot, with no sleep and no ISR in the timed span.
 
 ## Runs
 
 | Date (UTC) | Scenario | Build ID | Verdict | Record | Notes |
 |---|---|---|---|---|---|
+| 2026-10-02 19:54 | flags: `--node 4=C2 --expect "4 CALR res=boot" --forbid DRIFT` | `969efc9` | PASS | `tools/arclog/runs/20261002T195400Z-969efc9/` | One board, no C3. The boot path on the target: `CALR req=0 calp=0 calm=0 res=boot` right after `MAC_INIT`, the register held 0. Not an acceptance run: the criteria need the pair |
+| 2026-10-02 19:57 | flags as above plus `-D BENCH_CALR_PROBE=1` | `969efc9-db7efdd-o494085` | measurement | `tools/arclog/runs/20261002T195718Z-969efc9-db7efdd-o494085/` | The timing probe of the section above; the board ends with `CALR` back to 0 |
+| 2026-10-02 20:00 | flags: `--node 4=C2 --expect "4 CALR res=boot"` | `969efc9` | PASS | `tools/arclog/runs/20261002T200049Z-969efc9/` | After the probe: `CALR req=0 calp=0 calm=0 res=boot`, the board is back to no calibration |
