@@ -368,6 +368,13 @@ static int32_t shift_ticks_to_ms(uint32_t shift_ticks, bool advance)
 #define BENCH_CALR_OFF 0
 #endif
 
+#ifndef BENCH_CALR_RESET
+/* Build Override: 1 clears RTC_CALR at boot (logged CALR res=reset). The
+ * register survives a re-flash and a reset, so a run that must start
+ * uncalibrated (the #34 runs) says so; a normal build keeps what it reads. */
+#define BENCH_CALR_RESET 0
+#endif
+
 #ifdef DRIFT_ACTIVE
 
 static RtcCalr_t s_calr;   /* the setting held by RTC->CALR */
@@ -415,6 +422,14 @@ static void drift_init(void)
         if (res[0] == 'o') s_calr = none;
         calr_log(0, none, res);
     }
+#if BENCH_CALR_RESET
+    if (RtcCalr_Pulses(s_calr) != 0) {
+        RtcCalr_t none = { 0u, 0u };
+        const char *res = calr_write(none);
+        if (res[0] == 'o') s_calr = none;
+        calr_log(0, none, (res[0] == 'o') ? "reset" : res);
+    }
+#endif
     DriftEstimator_OnCalr(TIMER_IF_GetMonotonicMs(), RtcCalr_ToPpb(s_calr));
     PROBE_MARK(probe, "init_with_log");
     PROBE_LOG(probe, "drift_init");

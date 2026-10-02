@@ -7,7 +7,7 @@
 # Same Sync schedule as the calibrated run: within the duty-cycle budget, see
 # runtime-calibration.toml.
 description = "Control: C2 rate estimate with the CALR write disabled"
-timeout = "4h"
+timeout = "270m"
 
 [nodes]
 1 = "C3"
@@ -17,6 +17,7 @@ timeout = "4h"
 BENCH_CALR_OFF = "1"
 SYNC_TX_BUDGET = "1u"
 SYNC_CELL_GAP_MS = "9500u"
+BENCH_CALR_RESET = "1"
 
 [[expect]]
 node = 1
@@ -41,6 +42,15 @@ where = { ok = 1 }
 within = "40m"
 
 # The boot line CALR res=boot is not a write; a write of any result is.
+# bench ends a run as soon as every expectation is met, so the duration is held
+# by this one: a DRIFT line per Sync phase (120 s), 115 of them are 3.9 h. The
+# residual after calibration is read from them (resid = rate + applied).
+[[expect]]
+node = 4
+event = "DRIFT"
+count = 115
+within = "255m"
+
 [[forbid]]
 event = "CALR"
 where = { res = "ok" }

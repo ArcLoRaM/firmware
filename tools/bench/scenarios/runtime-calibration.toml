@@ -10,13 +10,16 @@
 # SYNC_TX_BUDGET=1u and SYNC_CELL_GAP_MS=9500u give a Sync phase every 120 s,
 # one packet per phase (0.83 %, never denied: sync-budget-c3.toml on the board,
 # Tests/unit/test_sync_budget.c in 4 h); no TX_DENIED is allowed in the run.
+# RTC_CALR survives a re-flash and a reset, so both runs start by clearing it
+# (BENCH_CALR_RESET=1, logged CALR res=reset): the control run of 2026-10-02 21:19
+# inherited the setting of the calibrated run before it and was aborted.
 # Staged: smoke and lock in the first minutes, the first valid estimate and
 # the first write within the first hour, forbids for the rest.
 # Needs a pair whose rate offset is above 0.72 ppm (the 2026-09-26 pair had
 # +8.1 ppm); on a closer pair no CALR is written and the CALR expectation
 # below fails with that cause, read from the DRIFT rate.
 description = "C2 estimates its rate against the C3 and calibrates RTC_CALR"
-timeout = "4h"
+timeout = "270m"
 
 [nodes]
 1 = "C3"
@@ -25,6 +28,7 @@ timeout = "4h"
 [overrides]
 SYNC_TX_BUDGET = "1u"
 SYNC_CELL_GAP_MS = "9500u"
+BENCH_CALR_RESET = "1"
 
 [[expect]]
 node = 1
@@ -54,6 +58,15 @@ node = 4
 event = "CALR"
 where = { res = "ok" }
 within = "45m"
+
+# bench ends a run as soon as every expectation is met, so the duration is held
+# by this one: a DRIFT line per Sync phase (120 s), 115 of them are 3.9 h. The
+# residual after calibration is read from them (resid = rate + applied).
+[[expect]]
+node = 4
+event = "DRIFT"
+count = 115
+within = "255m"
 
 [[forbid]]
 event = "CALR"

@@ -26,6 +26,12 @@ They give a Sync phase every 120 s (ten cells of 12 s) with one packet per phase
 `sync-budget-c3.toml` shows the schedule on a board, and both runs forbid `TX_DENIED`.
 At one packet per 120 s the estimator is valid after about 20 min (11 packets over 1200 s), the window of 48 samples spans 96 min, and acquisition takes about three packets (6 min) instead of 1.5 min.
 
+## Starting state of the runs
+
+`RTC_CALR` lives in the RTC and survives a re-flash and a reset of the board.
+A run that must start uncalibrated therefore says so: both scenarios use the Build Override `BENCH_CALR_RESET=1`, which clears the register at boot and logs `CALR res=reset` (a normal build keeps what it reads, `res=boot`).
+The first control attempt (2026-10-02 21:19) started without it, inherited the -954 ppb setting the calibrated run had written 20 minutes before (its first `DRIFT` line read `resid=-2142` against `rate=-1188`) and was aborted: it was calibrated, not a control.
+
 ## Hardware
 
 Checked against `bench boards` on 2026-10-02: 2 boards connected, with known Node IDs.
@@ -86,3 +92,5 @@ The probe ran in thread context at boot, with no sleep and no ISR in the timed s
 | 2026-10-02 20:31 | `sync-budget-c3.toml` (4 packets) | `19ee541-obae62b` | PASS | `tools/arclog/runs/20261002T203154Z-19ee541-obae62b/` | Node 1 as C3: `SYNC_TX ce=0` at 5.7, 125.2, 245.2, 365.2 s, 120.0 s apart. Ended at 365 s, before the 366 s where the default schedule is first denied: the scenario then asked for a 5th packet |
 | 2026-10-02 20:39 | `sync-budget-c3.toml` | `19ee541-obae62b` | PASS | `tools/arclog/runs/20261002T203905Z-19ee541-obae62b/` | Five packets alternating `ph=0` and `ph=1`, 120 s apart, the last at 8.1 min; no `TX_DENIED`, no `TX_LATE` |
 | 2026-10-02 20:51 | flags: `--node 4=C2 -D BENCH_PROBE=1 --expect "4 PROBE tag=drift_init"` | `8b0245d-od66516` | PASS | `tools/arclog/runs/20261002T205129Z-8b0245d-od66516/` | The probe helper on the target: `PROBE tag=drift_init seg=init_with_log us=4497 hz=4000000` (the boot `CALR` log line is in that span) |
+| 2026-10-02 20:55 | `runtime-calibration.toml` (before it held the run for 4 h) | `8b0245d-obae62b` | PASS | `tools/arclog/runs/20261002T205533Z-8b0245d-obae62b/` | Staged checks only: it ended at 24 min, when its expectations were met. Node 4 reached ACQ at 127 s and WARM at 367 s; `DRIFT ok=1` at 1447 s (n=11, baseline 1200 s, rate 909 ppb, noise 311 us), then `CALR req=-909 calp=0 calm=1 res=ok` (-954 ppb, residual about -45 ppb). Rate series 556, 808, 909 ppb at n=9, 10, 11. `SYNC_RX` err 0 or 1 ms throughout, no `TX_DENIED`. The pair is only +0.9 ppm apart. Not the several-hour criterion: the scenario was then given the `DRIFT` count that holds it |
+| 2026-10-02 21:19 | `runtime-calibration-off.toml` | `e74c5c9-o96ffe7` | invalid | `tools/arclog/runs/` (aborted at 21:37) | The register still held the setting of the calibrated run (see Starting state): not a control. Aborted by the agent, no verdict; run again with `BENCH_CALR_RESET=1` |
