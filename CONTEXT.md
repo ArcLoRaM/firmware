@@ -567,7 +567,9 @@ typedef struct __attribute__((packed)) {
                                               range 0–86,399,999. C3: the phase's
                                               nominal start from the schedule (cell 0
                                               on air), not an RTC reading; the date
-                                              is read from the RTC at phase entry.
+                                              is the date of that epoch (read from the
+                                              RTC at phase entry, moved by a day when
+                                              the read is across midnight from it).
                                               Receiver: target_ms =
                                               this + sync_cell_index × per_cell_ms;
                                               decompose → H:M:S for HAL_RTC_SetTime. */
@@ -598,10 +600,11 @@ expected_arrival_ms = ms_since_midnight_sync_phase + sync_cell_index × per_cell
 The sum is taken modulo `MS_PER_DAY` (see Day domain): a cell after midnight in
 a phase that started before it is expected at its time of day.
 
-**Known limitation — midnight rollover of the date:** If the sum reaches
-86,400,000, the BCD date in the payload is from the previous day and a node
-setting its RTC from that packet must advance the date by one day. This requires
-calendar arithmetic (variable month lengths, leap years). Issue #28.
+**Date across midnight (issue #28).**
+The date in the payload is the date of the epoch, the Sync phase's nominal start.
+A receiver sets its RTC to the target time (epoch + `sync_cell_index` × `per_cell_ms` + the age carry) with that date, and moves the date by one day when the sum, taken before the modulo, reaches `MS_PER_DAY`: the cell is on the day after the epoch.
+C3 stamps the epoch's date: the RTC is read at phase entry, a Tx lead before the cell on air, so when that read and the epoch are on either side of midnight the date it read is moved by one day (forward for an epoch just after midnight, back for a phase entered mid-way after midnight).
+The calendar step is software (`date_bcd.h`, BCD, 2000-2099, host tested), not `HAL_RTC_DST_Add1Hour`: the HAL call cannot be tested off target, and the MAC no longer sees a target time above a day, since it is reduced to the day domain.
 
 ### CT Sync Propagation Model
 The current implementation uses a **three-tier relay model** with partial
