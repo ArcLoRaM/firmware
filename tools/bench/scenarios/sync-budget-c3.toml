@@ -9,7 +9,7 @@
 # at the rate the overrides set, and the credit is never short. The run is longer
 # than the 6.1 min after which the default schedule is denied.
 description = "C3 sends one Sync packet per 120 s phase and is never denied"
-timeout = "9m"
+timeout = "10m"
 
 [nodes]
 1 = "C3"
@@ -18,13 +18,14 @@ timeout = "9m"
 SYNC_TX_BUDGET = "1u"
 SYNC_CELL_GAP_MS = "9500u"
 
-# One packet per phase, in cell 0, both phases of the frame, for over 6.1 min.
+# One packet per phase, in cell 0, both phases of the frame: the 5th packet is
+# at 8.1 min, past the 6.1 min where the default schedule is denied.
 [[expect]]
 node = 1
 event = "SYNC_TX"
 where = { ce = 0 }
-count = 4
-within = "8m"
+count = 5
+within = "9m"
 
 [[forbid]]
 event = "SYNC_TX"
