@@ -54,13 +54,14 @@ Rationale:
 Struct is 10 bytes (down from 11). Existing `sync_slot_index` field renamed to
 `sync_cell_index` (semantics unchanged; cell == slot in Sync phases with 1 slot/cell).
 
-**Known limitation — midnight rollover:** if `ms_since_midnight_sync_phase +
-sync_cell_index × per_cell_ms ≥ 86,400,000`, the BCD date in the payload is from
-the previous day and the receiver must advance the date by one day after setting
-the time. Direct BCD calendar arithmetic is non-trivial (variable month lengths,
-leap years). `HAL_RTC_DST_Add1Hour` handles the complexity natively (24 calls =
-+1 day). Deferred to a future issue; extremely rare in practice (requires a Sync
-Phase to straddle midnight and the cell offset to push past 00:00:00).
+**Midnight rollover of the date (resolved, issue #28):** the date in the payload
+is the date of the epoch, and a receiver whose target time (epoch + cell offset
++ age carry, before the modulo) reaches 86,400,000 ms moves the date by one day.
+C3 stamps the epoch's date even when its RTC read at phase entry is across
+midnight from the epoch. The first version of this note proposed
+`HAL_RTC_DST_Add1Hour`; the step is a host-tested BCD helper instead
+(`date_bcd.h`), since the MAC reduces the target to the day domain before the
+hook and the HAL call cannot be tested off target.
 
 SSR sub-second correction: ongoing drift beyond `SYNC_PARTICIPATE_THRESHOLD_MS`
 but below `SYNC_RESYNC_THRESHOLD_MS` (8ms–100ms) is corrected via

@@ -32,7 +32,7 @@ Deferred: the driver's radio state (`SubgRf`) is private to the third-party `rad
 - **Wake look-ahead has a Tx case.** Rx slots wake a guard early, all others one Tx lead early: Skip slots are not told apart from Tx slots by the look-ahead, and their wake time does not matter.
 - **Late fire instant.** If the slot task reaches the fire instant after it passed, `TX_LATE` is logged; a Sync packet is dropped and its compliance charge refunded, any other packet is sent late.
 - **`WaitUntilMs` is on every Tx path** (it was a safety net for a Tx slot woken a guard early), with the RTC's 1/4096 s resolution.
-- **C3's epoch is the nominal phase start.** The RTC still gives the date at phase entry, now read a Tx lead before the nominal start: a Sync phase starting less than `TX_LEAD_MS` after midnight carries the previous day's date (issue #28 covers date roll-over).
+- **C3's epoch is the nominal phase start.** The RTC still gives the date at phase entry, now read a Tx lead before the nominal start: a Sync phase starting less than `TX_LEAD_MS` after midnight is read before midnight, so C3 moves the date it read to the epoch's day (issue #28).
 - **C3's first slot starts one Tx lead after the boot wake**, so its first packet is not late.
 - **Tx ramp is a platform constant** (`TX_RAMP_MS` in `subghz_phy_task.c`, 4 ms, measured as `TX_DONE` start − `SYNC_TX` send): SPI commands, TCXO start-up, PLL lock and PA ramp-up from standby RC. A board with a different radio or TCXO measures its own.
 - **Tx lead value.** 20 ms against a measured worst case of 13 ms from wake to on-air; `TX_LATE` shows when it is too short, and issue #46's runs can lower it.
