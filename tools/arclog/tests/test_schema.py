@@ -52,9 +52,21 @@ def test_every_firmware_event_matches_the_schema(repo_root):
     assert not problems, "\n".join(problems)
 
 
+# Events in the schema whose firmware call is not written yet (issue #34, round
+# 2). Remove each from here when its ARCLOG() lands: the second test fails
+# on a stale entry.
+NOT_YET_EMITTED = {"CALR", "DRIFT"}
+
+
 def test_every_schema_event_is_emitted_by_firmware(repo_root):
     emitted = {c[2] for c in arclog_calls(repo_root)}
-    assert set(EVENTS) - emitted == set()
+    assert set(EVENTS) - emitted - NOT_YET_EMITTED == set()
+
+
+def test_no_stale_not_yet_emitted_entry(repo_root):
+    emitted = {c[2] for c in arclog_calls(repo_root)}
+    assert NOT_YET_EMITTED <= set(EVENTS)
+    assert NOT_YET_EMITTED & emitted == set(), "emitted now: drop it from NOT_YET_EMITTED"
 
 
 def test_no_length_modifiers(repo_root):
@@ -91,6 +103,14 @@ def test_boot_with_build_id_is_valid():
     line = ("260925T101010.0000 0S A #00 BOOT cls=C2 id=2 uid=002000415642500a20383354 "
             "fw=1.5.0 build=a1b2c3d-dirty-5e6f")
     assert validate(parse_line(line)) == []
+
+
+def test_calr_and_drift_events_are_valid():
+    calr = "260925T101010.0000 0Y M #07 CALR req=-8100 calp=0 calm=8 res=ok"
+    assert validate(parse_line(calr)) == []
+    drift = "260925T101010.0000 0Y M #08 DRIFT n=27 base=1222 rate=8104 resid=475 noise=361 ok=1"
+    assert validate(parse_line(drift)) == []
+    assert "DRIFT: missing ok" in validate(parse_line(drift.replace(" ok=1", "")))
 
 
 def test_unregistered_board_gives_the_table_entry_to_add():

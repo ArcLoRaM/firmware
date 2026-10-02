@@ -60,6 +60,18 @@ EVENTS: dict[str, Event] = {
         "Y", ("err", "ticks", "res"),
         "Tier 2 sub-second SHIFTR correction; res = ok | fail | busy (a previous shift still pending: not written).",
     ),
+    "CALR": Event(
+        "Y", ("req", "calp", "calm", "res"),
+        "RTC smooth calibration write (#34); req = requested frequency change (ppb, + faster, - slower), "
+        "calp/calm = the CALR fields written (32 s window), res = ok | fail | busy (a recalibration still pending "
+        "(RECALPF): not written).",
+    ),
+    "DRIFT": Event(
+        "Y", ("n", "base", "rate", "resid", "noise", "ok"),
+        "Drift estimator state after a Sync sample (#34); n = samples in the window, base = baseline (s), "
+        "rate = rate offset to cancel (ppb, + local clock fast), resid = rate + applied calibration (ppb), "
+        "noise = sample sigma (us, 0 = not yet estimable), ok = 1 once the estimate may drive a CALR.",
+    ),
     "SYNC_REJ": Event(
         "Y", ("ph", "ce"), "Sync packet dropped: ph is not a Sync phase (corrupt or foreign packet)."
     ),
