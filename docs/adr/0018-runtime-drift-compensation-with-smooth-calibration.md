@@ -38,7 +38,7 @@ No temperature and no Kalman filter in this phase: they are Phase 2 (#41, #43) a
 ## Consequences
 
 - The residual left after calibration is what the guard (#36) and the Sync period (#45) must absorb: it is measured on the bench, with a control stretch with the write disabled (Build Override `BENCH_CALR_OFF=1`), in the Test Record of #34.
-- The estimate is valid after about 20 minutes of packets at the bench cadence of one per 47 s, and before that no CALR is written.
+- The estimate is valid after 20 minutes of packets (40 at the Sync phase period of 30 s), and before that no CALR is written.
 - The window holds a number of samples, not a duration: at a long Sync period it spans a long time, and an age limit will be needed once #45 fixes the period.
 - The CALR write runs in the context of the Sync packet processing, as the shift and set writes do, and is subject to the same write-protect rule (#75).
 - On the CM0+ the module and its platform code cost about 5 KB of flash and 670 bytes of RAM (bench build 2964ff8-d069b91), with no floating point.

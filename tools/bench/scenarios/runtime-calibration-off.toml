@@ -1,0 +1,60 @@
+# Purpose: acceptance (control stretch). Issue #34, Test Record
+# docs/test-tracker/34-runtime-calibration.md.
+# Same pair, same duration as runtime-calibration.toml with the RTC_CALR write
+# disabled (BENCH_CALR_OFF=1): the estimator and the DRIFT events still run, so
+# the uncalibrated rate of the pair is measured the same way (the 2026-09-26
+# bench gave +8.1 ppm) and the calibrated run has its comparison.
+description = "Control: C2 rate estimate with the CALR write disabled"
+timeout = "4h"
+
+[nodes]
+1 = "C3"
+2 = "C2"
+
+[overrides]
+BENCH_CALR_OFF = "1"
+
+[[expect]]
+node = 1
+event = "SYNC_TX"
+
+[[expect]]
+node = 2
+event = "CLK"
+where = { to = "ACQ" }
+within = "3m"
+
+[[expect]]
+node = 2
+event = "CLK"
+where = { to = "WARM" }
+within = "8m"
+
+[[expect]]
+node = 2
+event = "DRIFT"
+where = { ok = 1 }
+within = "40m"
+
+# The boot line CALR res=boot is not a write; a write of any result is.
+[[forbid]]
+event = "CALR"
+where = { res = "ok" }
+
+[[forbid]]
+event = "CALR"
+where = { res = "fail" }
+
+[[forbid]]
+event = "CALR"
+where = { res = "busy" }
+
+[[forbid]]
+event = "SYNC_RX"
+where = { act = "t3" }
+
+[[forbid]]
+event = "SYNC_SILENCE"
+
+[[forbid]]
+event = "SLOT_SUSPECT"

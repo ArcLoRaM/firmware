@@ -1,0 +1,61 @@
+# Purpose: acceptance. Issue #34, Test Record docs/test-tracker/34-runtime-calibration.md.
+# C3 + C2 for hours: the C2 estimates its rate offset against the C3 from the
+# Sync errors (DRIFT), writes RTC_CALR only when the estimate is valid and the
+# residual reaches 3/4 of a step (CALR), and nothing in the shift and re-anchor
+# paths breaks (no Tier 3, no silence). The residual after calibration is read
+# from the DRIFT events of the run, against the control scenario
+# runtime-calibration-off.toml (same pair, same duration, the write disabled).
+# Staged: smoke and lock in the first minutes, the first valid estimate and
+# the first write within the first hour, forbids for the rest.
+# Needs a pair whose rate offset is above 0.72 ppm (the 2026-09-26 pair had
+# +8.1 ppm); on a closer pair no CALR is written and the CALR expectation
+# below fails with that cause, read from the DRIFT rate.
+description = "C2 estimates its rate against the C3 and calibrates RTC_CALR"
+timeout = "4h"
+
+[nodes]
+1 = "C3"
+2 = "C2"
+
+[[expect]]
+node = 1
+event = "SYNC_TX"
+
+[[expect]]
+node = 2
+event = "CLK"
+where = { to = "ACQ" }
+within = "3m"
+
+[[expect]]
+node = 2
+event = "CLK"
+where = { to = "WARM" }
+within = "8m"
+
+# 20 min of baseline at one packet per 30 s, plus the lock.
+[[expect]]
+node = 2
+event = "DRIFT"
+where = { ok = 1 }
+within = "40m"
+
+[[expect]]
+node = 2
+event = "CALR"
+where = { res = "ok" }
+within = "45m"
+
+[[forbid]]
+event = "CALR"
+where = { res = "fail" }
+
+[[forbid]]
+event = "SYNC_RX"
+where = { act = "t3" }
+
+[[forbid]]
+event = "SYNC_SILENCE"
+
+[[forbid]]
+event = "SLOT_SUSPECT"
