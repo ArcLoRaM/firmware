@@ -22,6 +22,13 @@ Hands on the bench: plugging the two boards in.
 No CubeMX regeneration.
 The worst-case relay airtime of a 4-hop line is a host computation here, checked on hardware in the #76 record.
 
+## Finding (2026-10-02, from #34)
+
+The bring-up table (two Sync phases of ten cells, a cell every 3 s, C3 and a relaying C2 sending in the first three cells of each) is 9.9 % duty cycle: 5.95 s of airtime per 60 s frame against the 1 % limit.
+The 36 s compliance credit is gone after 6.1 min, then each node sends one packet per 99 s and the other Sync slots are `TX_DENIED`; the traces of 2026-09-29 and 2026-10-01 show the first denial 6.1 to 6.6 min after boot.
+`Tests/unit/test_sync_budget.c` computes it with the real compliance engine and table.
+This issue must replace the table; until then a multi-hour run uses the Build Overrides `SYNC_TX_BUDGET=1u` and `SYNC_CELL_GAP_MS=9500u` (a Sync phase every 120 s, 0.83 %, see `34-runtime-calibration.md`).
+
 ## Criteria
 
 - [ ] The residual drift rate from #34 and the Sync period derived from it, in the ADR.
