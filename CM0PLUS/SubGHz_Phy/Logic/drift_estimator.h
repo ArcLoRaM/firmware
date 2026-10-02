@@ -79,14 +79,16 @@
  * --------------------------------------------------------------------------- */
 
 /*! Samples kept: the fit window. At the bench cadence (a Sync packet every
- *  ~47 s) it covers ~37 min, the memory of the estimator (a slow rate change
+ *  ~47 s) it covers ~37 min, ~24 min at one per 30 s, the memory of the estimator (a slow rate change
  *  from temperature is followed with about that lag). 12 bytes each. */
 #define DRIFT_WINDOW_SAMPLES     48u
 
 /*! Samples closer than this to the previous one (same segment) are not kept:
  *  they add no independent information on the slope and would shrink the
- *  window to seconds. */
-#define DRIFT_MIN_SPACING_S      30u
+ *  window to seconds (the cells of one Sync phase are 3 s apart). Under the
+ *  Sync phase period (30 s today, so a packet is never lost to the second
+ *  rounding of the sample times), over the cell spacing. */
+#define DRIFT_MIN_SPACING_S      20u
 
 /*! Minimum samples for a valid estimate: enough degrees of freedom to
  *  estimate the noise (the bench had 13). */

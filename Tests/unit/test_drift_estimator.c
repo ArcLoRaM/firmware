@@ -147,6 +147,30 @@ void test_first_valid_estimate_is_within_one_step(void)
     TEST_ASSERT_TRUE_MESSAGE(sqrt(sum_sq / SEEDS) < 300.0, "rms error at the gate above 0.3 ppm");
 }
 
+/* The Sync phase period of the bench schedule: a packet every 30 s. At the
+ * gate Stt ~ 4.8e6 s^2, sigma_b ~ 0.16 ppm; one step is 6 sigma. */
+void test_first_valid_estimate_at_the_30_s_sync_period(void)
+{
+    int32_t worst = 0;
+    for (int seed = 1; seed <= SEEDS; seed++) {
+        DriftEstimator_Init();
+        Sim s = sim_make((uint32_t)seed, 8.1);
+        int samples = 0;
+        DriftEstimate_t e = DriftEstimator_Get();
+        while (!e.valid && samples < 200) {
+            sim_wait(&s, 30.0);
+            TEST_ASSERT_EQUAL(DRIFT_SAMPLE_ACCEPTED, sim_sample(&s));   /* none lost to the spacing rule */
+            samples++;
+            e = DriftEstimator_Get();
+        }
+        TEST_ASSERT_TRUE(e.valid);
+        TEST_ASSERT_TRUE(e.baseline_s >= DRIFT_MIN_BASELINE_S && e.baseline_s <= DRIFT_MIN_BASELINE_S + 30);
+        int32_t err = abs32(e.rate_ppb - 8100);
+        if (err > worst) worst = err;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(worst < STEP_PPB, "first valid estimate more than one step off");
+}
+
 void test_estimate_with_a_full_window_is_within_400_ppb(void)
 {
     for (int seed = 1; seed <= SEEDS; seed++) {
@@ -399,9 +423,9 @@ void test_samples_closer_than_the_minimum_spacing_are_dropped(void)
         if (r == DRIFT_SAMPLE_TOO_SOON) dropped++;
         sim_wait(&s, 10.0);
     }
-    TEST_ASSERT_EQUAL_INT(34, accepted);        /* t = 0, 30, ..., 990 */
-    TEST_ASSERT_EQUAL_INT(66, dropped);
-    TEST_ASSERT_EQUAL_UINT16(34, DriftEstimator_Get().n);
+    TEST_ASSERT_EQUAL_INT(50, accepted);        /* t = 0, 20, ..., 980 */
+    TEST_ASSERT_EQUAL_INT(50, dropped);
+    TEST_ASSERT_EQUAL_UINT16(DRIFT_WINDOW_SAMPLES, DriftEstimator_Get().n);
 }
 
 /* ---- gaps, forgetting, limits --------------------------------------------- */
@@ -494,6 +518,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_first_valid_estimate_is_within_one_step);
+    RUN_TEST(test_first_valid_estimate_at_the_30_s_sync_period);
     RUN_TEST(test_estimate_with_a_full_window_is_within_400_ppb);
     RUN_TEST(test_a_slow_clock_gives_a_negative_rate);
     RUN_TEST(test_the_bench_baseline_is_not_valid);
