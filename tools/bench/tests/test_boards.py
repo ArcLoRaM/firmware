@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from arclog.capture import DailyWriter
+from bench import boards
 from bench.boards import Board, format_uid, load_node_table, parse_node_table, parse_ports, parse_uid
 from bench.build import BuildLog, BuildResult
 from bench.capture import Capture, capture_command, parse_processes
@@ -265,6 +266,15 @@ def test_flash_returns_when_each_board_was_flashed(tmp_path):
 
 def test_no_port_present_is_no_port():
     assert parse_ports("") == {}
+
+
+def test_a_port_name_in_the_oem_codepage_does_not_break_the_query(monkeypatch):
+    # A Bluetooth port on a localised Windows: PowerShell writes cp850, not UTF-8 (0xa0 is "a" with acute).
+    out = ("Liaison s\xa0rie standard sur Bluetooth (COM3)|BTHENUM\\DEV_0\n".encode("latin-1")
+           + PORTS.encode())
+    monkeypatch.setattr(boards.subprocess, "run",
+                        lambda *a, **k: boards.subprocess.CompletedProcess(a, 0, stdout=out))
+    assert boards.query_ports() == {SN9: "COM9", SN8: "COM8"}
 
 
 def test_no_probe_connected_is_no_board(tmp_path):
