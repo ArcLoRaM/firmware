@@ -368,12 +368,13 @@ static int32_t shift_ticks_to_ms(uint32_t shift_ticks, bool advance)
 #define BENCH_CALR_OFF 0
 #endif
 
-#ifndef BENCH_CALR_RESET
-/* Build Override: 1 clears RTC_CALR at boot (logged CALR res=reset). The
- * register survives a re-flash and a reset, so a run that must start
- * uncalibrated (the #34 runs) says so; a normal build keeps what it reads. */
-#define BENCH_CALR_RESET 0
-#endif
+/* Build Override BENCH_CALR_BOOT_PULSES=<N>: write the net pulses N of
+ * RTC_CALR at boot (logged CALR res=preset), where the register would
+ * otherwise be read as it is. The register survives a re-flash and a reset, so
+ * a run that must start from a known setting says so: 0 starts uncalibrated;
+ * +8 detunes the RTC by +7.6 ppm, as a wrong static calibration (#23) would,
+ * so a pair that is well matched by luck still has a rate to cancel.
+ * Not defined in a normal build, which keeps what it reads (res=boot). */
 
 #ifdef DRIFT_ACTIVE
 
@@ -422,12 +423,16 @@ static void drift_init(void)
         if (res[0] == 'o') s_calr = none;
         calr_log(0, none, res);
     }
-#if BENCH_CALR_RESET
-    if (RtcCalr_Pulses(s_calr) != 0) {
-        RtcCalr_t none = { 0u, 0u };
-        const char *res = calr_write(none);
-        if (res[0] == 'o') s_calr = none;
-        calr_log(0, none, (res[0] == 'o') ? "reset" : res);
+#ifdef BENCH_CALR_BOOT_PULSES
+    {
+        /* Logged also when the register already holds it (no write then). */
+        RtcCalr_t   preset = RtcCalr_FromPulses(BENCH_CALR_BOOT_PULSES);
+        const char *res    = "preset";
+        if (RtcCalr_Pulses(s_calr) != RtcCalr_Pulses(preset)) {
+            res = calr_write(preset);
+            if (res[0] == 'o') { s_calr = preset; res = "preset"; }
+        }
+        calr_log(RtcCalr_ToPpb(preset), preset, res);
     }
 #endif
     DriftEstimator_OnCalr(TIMER_IF_GetMonotonicMs(), RtcCalr_ToPpb(s_calr));

@@ -6,12 +6,10 @@ Purpose: acceptance. Issue: #34.
 
 | Scenario | Proves or measures |
 |---|---|
-| `tools/bench/scenarios/runtime-calibration.toml` | C3 (Node 1) + C2 (Node 4) for 4 h, on the budget-compliant Sync schedule (below): the C2 reaches `CLOCK_WARM`, its `DRIFT` rate estimate becomes valid (`ok=1`) within 40 min, `CALR` is written (`res=ok`) within 45 min and never fails, and no Tier 3, `SYNC_SILENCE` or `SLOT_SUSPECT` occurs |
-| `tools/bench/scenarios/runtime-calibration-off.toml` | The control stretch: the same pair, the same schedule, the same 4 h with the Build Override `BENCH_CALR_OFF=1` (the estimator and `DRIFT` still run, no `CALR` write): the uncalibrated rate of the pair (the 2026-09-26 bench gave +8.1 ppm) |
+| `tools/bench/scenarios/runtime-calibration.toml` | C3 (Node 1) + C2 (Node 4, detuned +7.6 ppm at boot) for 3.9 h, on the budget-compliant Sync schedule (below): the C2 reaches `CLOCK_WARM`, a Tier 2 shift is made and unwrapped, its `DRIFT` rate estimate becomes valid (`ok=1`) within 40 min, `CALR` is written (`res=ok`) within 45 min and never fails, the residual stays within one step (954 ppb) for 30 estimates after it, and no Tier 3, `SYNC_SILENCE` or `SLOT_SUSPECT` occurs |
+| `tools/bench/scenarios/runtime-calibration-off.toml` | The control stretch: the same detuned pair and schedule for 2.1 h with the Build Override `BENCH_CALR_OFF=1` (the estimator and `DRIFT` still run, no `CALR` write): the residual stays at about 8.2 ppm (7000 to 9500 ppb for 20 estimates) and several Tier 2 shifts correct the clock |
 | `tools/bench/scenarios/sync-budget-c3.toml` | One C3 (Node 1) on the schedule of the two runs above: a `SYNC_TX` in cell 0 of each 120 s phase, five of them (8.1 min, past the 6.1 min after which the default schedule is denied), no `TX_DENIED`, no `TX_LATE`. At most 10 min and 1 node, so it is part of the derived regression suite |
 | `tools/bench/scenarios/calr-boot.toml` | One board (Node 4 as C2, no C3): the platform reads `RTC_CALR` at boot and logs `CALR res=boot`, with no `DRIFT` and no write. At most 10 min and 1 node, so it is part of the derived regression suite |
-
-The first scenario assumes a pair whose rate offset is above 0.72 ppm, the residual at which a write is due; on a closer pair no `CALR` is written, and its `CALR` expectation fails with that cause (read it from the `DRIFT` rate).
 
 ## Sync schedule of the runs: the duty-cycle budget
 
@@ -26,11 +24,18 @@ They give a Sync phase every 120 s (ten cells of 12 s) with one packet per phase
 `sync-budget-c3.toml` shows the schedule on a board, and both runs forbid `TX_DENIED`.
 At one packet per 120 s the estimator is valid after about 20 min (11 packets over 1200 s), the window of 48 samples spans 96 min, and acquisition takes about three packets (6 min) instead of 1.5 min.
 
-## Starting state of the runs
+## Starting state of the runs: the register and the pair
 
 `RTC_CALR` lives in the RTC and survives a re-flash and a reset of the board.
-A run that must start uncalibrated therefore says so: both scenarios use the Build Override `BENCH_CALR_RESET=1`, which clears the register at boot and logs `CALR res=reset` (a normal build keeps what it reads, `res=boot`).
-The first control attempt (2026-10-02 21:19) started without it, inherited the -954 ppb setting the calibrated run had written 20 minutes before (its first `DRIFT` line read `resid=-2142` against `rate=-1188`) and was aborted: it was calibrated, not a control.
+A run that must start from a known setting therefore says so, with the Build Override `BENCH_CALR_BOOT_PULSES=<N>`: the setting of N net pulses is written at boot and logged `CALR res=preset` (a normal build keeps what it reads, `res=boot`).
+The first control attempt (2026-10-02 21:19) had no such override, inherited the -954 ppb setting the calibrated run had written 20 minutes before (its first `DRIFT` line read `resid=-2142` against `rate=-1188`) and was aborted: it was calibrated, not a control.
+
+Node 1 (C3) and Node 4 (C2) are matched to **+0.59 ppm**: with the register at 0 the estimate settled at 574 to 602 ppb over 40 min (run of 21:42), under the 715 ppb residual at which a write is due, so no `CALR` was written, as designed.
+The criteria need a rate to cancel, and the 2026-09-26 bench had +8.1 ppm between two other boards, so both runs detune the C2's RTC at boot through the same register with `BENCH_CALR_BOOT_PULSES=8` (+8 pulses, +7.63 ppm), as a wrong static calibration (#23) would.
+The C2 then runs about +8.2 ppm fast against the C3.
+The estimator knows the applied setting: its `rate` is the one with no calibration (about 0.6 ppm, the crystals' own offset) and its `resid` is `rate + applied`, about 8.2 ppm, which the write must bring under one step.
+The control run keeps the detune and disables the write: its residual stays at about 8.2 ppm and the Tier 2 shift is its only correction.
+The natural +0.59 ppm is a result in itself: this pair needs no calibration, and the rule leaves it alone.
 
 ## Hardware
 
@@ -40,7 +45,7 @@ Checked against `bench boards` on 2026-10-02: 2 boards connected, with known Nod
 |---|---|---|
 | Node 1 flashed as C3, probe `003D003D3234510833353533`, COM8 | yes | connected |
 | Node 4 flashed as C2, probe `004D00303333511431363730`, COM10 | yes | connected |
-| Host on AC power, Windows sleep off, for the 4 h runs (twice) | yes | per session; a sleep invalidates the run |
+| Host on AC power, Windows sleep off, for the 3.9 h and 2.1 h runs | yes | per session; a sleep invalidates the run |
 
 Hands on the bench: none while the two boards stay plugged in.
 No CubeMX regeneration.
@@ -94,3 +99,5 @@ The probe ran in thread context at boot, with no sleep and no ISR in the timed s
 | 2026-10-02 20:51 | flags: `--node 4=C2 -D BENCH_PROBE=1 --expect "4 PROBE tag=drift_init"` | `8b0245d-od66516` | PASS | `tools/arclog/runs/20261002T205129Z-8b0245d-od66516/` | The probe helper on the target: `PROBE tag=drift_init seg=init_with_log us=4497 hz=4000000` (the boot `CALR` log line is in that span) |
 | 2026-10-02 20:55 | `runtime-calibration.toml` (before it held the run for 4 h) | `8b0245d-obae62b` | PASS | `tools/arclog/runs/20261002T205533Z-8b0245d-obae62b/` | Staged checks only: it ended at 24 min, when its expectations were met. Node 4 reached ACQ at 127 s and WARM at 367 s; `DRIFT ok=1` at 1447 s (n=11, baseline 1200 s, rate 909 ppb, noise 311 us), then `CALR req=-909 calp=0 calm=1 res=ok` (-954 ppb, residual about -45 ppb). Rate series 556, 808, 909 ppb at n=9, 10, 11. `SYNC_RX` err 0 or 1 ms throughout, no `TX_DENIED`. The pair is only +0.9 ppm apart. Not the several-hour criterion: the scenario was then given the `DRIFT` count that holds it |
 | 2026-10-02 21:19 | `runtime-calibration-off.toml` | `e74c5c9-o96ffe7` | invalid | `tools/arclog/runs/` (aborted at 21:37) | The register still held the setting of the calibrated run (see Starting state): not a control. Aborted by the agent, no verdict; run again with `BENCH_CALR_RESET=1` |
+| 2026-10-02 21:42 | `runtime-calibration.toml` (natural pair, register at 0) | `f3ec6ae-o1569be` | FAIL | `tools/arclog/runs/20261002T214247Z-f3ec6ae-o1569be/` | `CALR res=ok` not within 45 min: no write was due. Estimate 321, 229, ..., 574 ppb (n=12 to 21), `noise` 280-324 us, `SYNC_RX` err 1 to 2 ms, no `TX_DENIED`: the pair is +0.59 ppm, under the 715 ppb threshold. Not a firmware defect; the runs now detune the C2 (see Starting state). The first 11 estimates read `rate=0 noise=0`: the errors were all the same 1 ms, a flat quantised line, which the 0.7 ms the pair gains in 20 min does not bend |
+| 2026-10-02 22:28 | `runtime-calibration-off.toml` (natural pair) | `f3ec6ae-o96ffe7` | invalid | `tools/arclog/runs/` (aborted at 22:40) | Started automatically after the failed run; it would only have measured the natural 0.59 ppm. Aborted by the agent, no verdict |

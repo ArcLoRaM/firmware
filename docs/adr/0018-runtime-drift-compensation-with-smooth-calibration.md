@@ -37,7 +37,7 @@ No temperature and no Kalman filter in this phase: they are Phase 2 (#41, #43) a
 
 ## Consequences
 
-- The residual left after calibration is what the guard (#36) and the Sync period (#45) must absorb: it is measured on the bench, with a control stretch with the write disabled (Build Override `BENCH_CALR_OFF=1`), in the Test Record of #34.
+- The residual left after calibration is what the guard (#36) and the Sync period (#45) must absorb: it is measured on the bench, with a control stretch with the write disabled (Build Override `BENCH_CALR_OFF=1`) and a C2 detuned on purpose through the register (`BENCH_CALR_BOOT_PULSES`), because the bench's two boards are matched to 0.6 ppm, under the threshold at which a write is due, in the Test Record of #34.
 - The estimate is valid after 20 minutes of packets (40 at the Sync phase period of 30 s, 11 at the 120 s of the calibration runs), and before that no CALR is written.
 - The default Sync table is 9.9 % duty cycle against the band's 1 %: the compliance credit is gone after 6.1 min and C3 and C2 are denied from then on. The calibration runs therefore use a schedule inside the budget (Build Overrides `SYNC_TX_BUDGET=1u`, `SYNC_CELL_GAP_MS=9500u`: a Sync phase every 120 s, 0.83 %), so that the figure measured is the field's, not a starved link's. The product schedule is #45's.
 - The window holds a number of samples, not a duration: at a long Sync period it spans a long time, and an age limit will be needed once #45 fixes the period.
