@@ -8,6 +8,7 @@ Purpose: acceptance. Issue: #34.
 |---|---|
 | `tools/bench/scenarios/runtime-calibration.toml` | C3 + C2 for 4 h: the C2 reaches `CLOCK_WARM`, its `DRIFT` rate estimate becomes valid (`ok=1`) within 40 min, `CALR` is written (`res=ok`) within 45 min and never fails, and no Tier 3, `SYNC_SILENCE` or `SLOT_SUSPECT` occurs |
 | `tools/bench/scenarios/runtime-calibration-off.toml` | The control stretch: the same pair for the same 4 h with the Build Override `BENCH_CALR_OFF=1` (the estimator and `DRIFT` still run, no `CALR` write): the uncalibrated rate of the pair (the 2026-09-26 bench gave +8.1 ppm) |
+| `tools/bench/scenarios/calr-boot.toml` | One board (Node 4 as C2, no C3): the platform reads `RTC_CALR` at boot and logs `CALR res=boot`, with no `DRIFT` and no write. At most 10 min and 1 node, so it is part of the derived regression suite |
 
 The first scenario assumes a pair whose rate offset is above 0.72 ppm, the residual at which a write is due; on a closer pair no `CALR` is written, and its `CALR` expectation fails with that cause (read it from the `DRIFT` rate).
 
@@ -37,7 +38,7 @@ Logic is proven on the host, so the bench only has to show what the host cannot:
 
 ## Criteria
 
-- [ ] The C2's rate estimate converges (`DRIFT` events), and `CALR` is written only when the estimate moves by a step (`CALR` events).
+- [ ] The C2's rate estimate converges (`DRIFT` events), and `CALR` is written only when the residual reaches 3/4 of a step (`CALR` events).
 - [ ] The residual rate after calibration is measured and reported with its uncertainty, against the control stretch with calibration off. This figure is the input of #45.
 - [ ] No Tier 3, `SYNC_LOST` or lost lines during the run; shift and re-anchor paths unchanged.
 - [x] The duration of the `HAL_RTCEx_SetSmoothCalib` call is measured with `timing-probe` and recorded here, before the calling context is chosen. (Measurement below. The write was put in the Sync packet context first, as the shift writes; the 52 us confirms the choice.)
@@ -65,3 +66,4 @@ The probe ran in thread context at boot, with no sleep and no ISR in the timed s
 | 2026-10-02 19:54 | flags: `--node 4=C2 --expect "4 CALR res=boot" --forbid DRIFT` | `969efc9` | PASS | `tools/arclog/runs/20261002T195400Z-969efc9/` | One board, no C3. The boot path on the target: `CALR req=0 calp=0 calm=0 res=boot` right after `MAC_INIT`, the register held 0. Not an acceptance run: the criteria need the pair |
 | 2026-10-02 19:57 | flags as above plus `-D BENCH_CALR_PROBE=1` | `969efc9-db7efdd-o494085` | measurement | `tools/arclog/runs/20261002T195718Z-969efc9-db7efdd-o494085/` | The timing probe of the section above; the board ends with `CALR` back to 0 |
 | 2026-10-02 20:00 | flags: `--node 4=C2 --expect "4 CALR res=boot"` | `969efc9` | PASS | `tools/arclog/runs/20261002T200049Z-969efc9/` | After the probe: `CALR req=0 calp=0 calm=0 res=boot`, the board is back to no calibration |
+| 2026-10-02 20:14 | `calr-boot.toml` | `eb30626` | PASS | `tools/arclog/runs/20261002T201429Z-eb30626/` | The saved scenario of the boot path: `CALR req=0 calp=0 calm=0 res=boot` on Node 4, no `DRIFT`, no write |
