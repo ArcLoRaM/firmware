@@ -266,12 +266,12 @@ void test_rx_window_ends_at_latest_packet_start(void)
     start_chain();
     ArcLog_CaptureReset();
     TdmaMachine_SlotTask();
-    /* Slot at T0 = 20, woken at 0: last = 20 + 2500 + 200 - 991 = 1729,
-     * cap = 2720 (both from now = 0) */
+    /* Slot at T0 = 20, woken at 0: last = 20 + 2500 + 100 - 991 = 1629,
+     * cap = 2620 (both from now = 0) */
     TEST_ASSERT_EQUAL(1, s_radio_set_rx_calls);
     TEST_ASSERT_EQUAL(T0 + WIN_LAST_MS, s_rx_start_window_ms);
     TEST_ASSERT_EQUAL(T0 + WIN_CAP_MS, s_rx_cap_ms);
-    TEST_ASSERT_ARCLOG("RX_WIN last=1729 cap=2720");
+    TEST_ASSERT_ARCLOG("RX_WIN last=1629 cap=2620");
 }
 
 void test_rx_window_measured_from_early_wake(void)
@@ -583,7 +583,7 @@ void test_rx_end_with_epoch_drops_guard_from_next_wake(void)
     TdmaMachine_OnRxEnd();
 
     TEST_ASSERT_EQUAL(T0 + SLOT_STEP_MS - TX_LEAD_MS, s_alarm_programmed);
-    TEST_ASSERT_ARCLOG("WAKE_ADJ from=2820 to=3000");
+    TEST_ASSERT_ARCLOG("WAKE_ADJ from=2920 to=3000");
 
     step_slot();              /* cell 1 → TX, fired at the nominal start */
     TEST_ASSERT_EQUAL(1, s_wait_until_ms_calls);
@@ -667,7 +667,7 @@ void test_suspect_wake_drops_to_cold_without_rtc_write(void)
 
     s_rtc_ms = 0u;
     start_chain();
-    TdmaMachine_SlotTask();                  /* next alarm 3020 - guard = 2820 */
+    TdmaMachine_SlotTask();                  /* next alarm 3020 - guard = 2920 */
     s_rtc_ms = s_alarm_programmed + 4000u;   /* 4000 ms late > 3750 */
     ArcLog_CaptureReset();
     TdmaMachine_SlotTask();
@@ -676,7 +676,7 @@ void test_suspect_wake_drops_to_cold_without_rtc_write(void)
     TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
     TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
     TEST_ASSERT_EQUAL(rtc_sets_before, s_mac_rtc_set_calls);
-    TEST_ASSERT_ARCLOG("SLOT_SUSPECT exp=2820 now=6820");
+    TEST_ASSERT_ARCLOG("SLOT_SUSPECT exp=2920 now=6920");
     TEST_ASSERT_ARCLOG("CLK from=WARM to=COLD why=suspect");
 }
 
@@ -687,7 +687,7 @@ void test_suspect_wake_stops_chain_and_scans(void)
     TdmaMachine_SlotTask();
     int alarms_before = s_alarm_calls;
 
-    s_rtc_ms = s_alarm_programmed + 4000u;   /* 2820 + 4000 = 6820 */
+    s_rtc_ms = s_alarm_programmed + 4000u;   /* 2920 + 4000 = 6920 */
     ArcLog_CaptureReset();
     TdmaMachine_SlotTask();
 
@@ -882,14 +882,14 @@ void test_chain_runs_across_midnight(void)
 
 void test_bootstrap_just_before_midnight_wakes_before_it(void)
 {
-    /* Packet 1 at 23:59:57.100: the next cell starts at 00:00:00.100, so
-     * its guarded wake is 23:59:59.900, in the day domain. */
+    /* Packet 1 at 23:59:57.050: the next cell starts at 00:00:00.050, so
+     * its guarded wake is 50 ms - guard before midnight, in the day domain. */
     acquire_mac();
-    TdmaMachine_BootstrapFromSync(0u, 0u, MS_PER_DAY - 2900u);
-    TEST_ASSERT_EQUAL(MS_PER_DAY - (MAX_GUARD_TIME_MS - 100u), s_alarm_programmed);
+    TdmaMachine_BootstrapFromSync(0u, 0u, MS_PER_DAY - 2950u);
+    TEST_ASSERT_EQUAL(MS_PER_DAY - (MAX_GUARD_TIME_MS - 50u), s_alarm_programmed);
     step_slot();
     TEST_ASSERT_FALSE(TdmaMachine_IsCursorSuspect());
-    TEST_ASSERT_EQUAL(3100u - MAX_GUARD_TIME_MS, s_alarm_programmed);
+    TEST_ASSERT_EQUAL(3050u - MAX_GUARD_TIME_MS, s_alarm_programmed);
 }
 
 int main(void)

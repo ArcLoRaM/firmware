@@ -54,7 +54,7 @@
  *          future revision by splitting SYNC_RESYNC_THRESHOLD_MS into its
  *          own value. For now they are unified.
  */
-#define MAX_GUARD_TIME_MS  200u  /* bench value: absorbs the ~100 ms preamble detection latency while it is uncompensated */
+#define MAX_GUARD_TIME_MS  100u  /* 3 x T_S at SF12/BW125 (ADR-0012); the SyncStamp is RxDone - ToA, so the preamble detection latency no longer needs absorbing */
 
 /*!
  * \brief   Tier-3 drift threshold: preamble offset error at or above

@@ -428,12 +428,13 @@ void test_the_rate_survives_a_cold_gap(void)
 }
 
 /* After a long silence the slope error has had time to add up: the first
- * sample is judged against a correspondingly wider prediction. */
+ * sample is judged against a correspondingly wider prediction. 1.5 ppm: at
+ * 8 ppm, three hours would be past the resync threshold (a Tier 3 sample). */
 void test_the_first_sample_after_a_long_silence_is_not_an_outlier(void)
 {
     for (int seed = 1; seed <= SEEDS; seed++) {
         DriftEstimator_Init();
-        Sim s = sim_make((uint32_t)seed, 8.1);
+        Sim s = sim_make((uint32_t)seed, 1.5);
         sim_steps(&s, 60);
         sim_wait(&s, 3 * 3600);
         sim_wait(&s, PERIOD_S);
