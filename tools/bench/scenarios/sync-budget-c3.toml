@@ -12,7 +12,7 @@ description = "C3 sends one Sync packet per 120 s phase and is never denied"
 timeout = "9m"
 
 [nodes]
-4 = "C3"
+1 = "C3"
 
 [overrides]
 SYNC_TX_BUDGET = "1u"
@@ -20,7 +20,7 @@ SYNC_CELL_GAP_MS = "9500u"
 
 # One packet per phase, in cell 0, both phases of the frame, for over 6.1 min.
 [[expect]]
-node = 4
+node = 1
 event = "SYNC_TX"
 where = { ce = 0 }
 count = 4

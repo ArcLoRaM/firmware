@@ -11,7 +11,7 @@ timeout = "4h"
 
 [nodes]
 1 = "C3"
-2 = "C2"
+4 = "C2"
 
 [overrides]
 BENCH_CALR_OFF = "1"
@@ -23,19 +23,19 @@ node = 1
 event = "SYNC_TX"
 
 [[expect]]
-node = 2
+node = 4
 event = "CLK"
 where = { to = "ACQ" }
 within = "4m"
 
 [[expect]]
-node = 2
+node = 4
 event = "CLK"
 where = { to = "WARM" }
 within = "10m"
 
 [[expect]]
-node = 2
+node = 4
 event = "DRIFT"
 where = { ok = 1 }
 within = "40m"

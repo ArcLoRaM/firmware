@@ -20,7 +20,7 @@ timeout = "4h"
 
 [nodes]
 1 = "C3"
-2 = "C2"
+4 = "C2"
 
 [overrides]
 SYNC_TX_BUDGET = "1u"
@@ -31,26 +31,26 @@ node = 1
 event = "SYNC_TX"
 
 [[expect]]
-node = 2
+node = 4
 event = "CLK"
 where = { to = "ACQ" }
 within = "4m"
 
 [[expect]]
-node = 2
+node = 4
 event = "CLK"
 where = { to = "WARM" }
 within = "10m"
 
 # 20 min of baseline at one packet per 120 s, plus the lock.
 [[expect]]
-node = 2
+node = 4
 event = "DRIFT"
 where = { ok = 1 }
 within = "40m"
 
 [[expect]]
-node = 2
+node = 4
 event = "CALR"
 where = { res = "ok" }
 within = "45m"
