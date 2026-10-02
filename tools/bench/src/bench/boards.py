@@ -82,9 +82,12 @@ def parse_ports(text: str) -> dict[str, str]:
 
 
 def query_ports() -> dict[str, str]:
+    # Windows PowerShell writes its OEM codepage, not UTF-8: a port with an accented friendly name
+    # (a Bluetooth COM port on a localised Windows) would break strict decoding. The port regex only
+    # needs ASCII, so undecodable bytes are replaced.
     out = subprocess.run(["powershell.exe", "-NoProfile", "-Command", _PORTS_PS],
-                         capture_output=True, text=True, check=True, cwd="/mnt/c").stdout
-    return parse_ports(out)
+                         capture_output=True, check=True, cwd="/mnt/c").stdout
+    return parse_ports(out.decode("utf-8", errors="replace"))
 
 
 def capture_node(port: str) -> str:
