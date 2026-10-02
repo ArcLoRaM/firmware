@@ -66,6 +66,21 @@ add_unity_test(test_day_ms
     test_day_ms.c
 )
 
+# The Sync schedule against the 1 % duty cycle: the bring-up table (denied after
+# ~7 min) and the Build Overrides of the multi-hour runs (never denied).
+add_unity_test(test_sync_budget_default
+    test_sync_budget.c
+    ../../Common/Protocol/tdma_table.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+)
+add_unity_test(test_sync_budget_run
+    test_sync_budget.c
+    ../../Common/Protocol/tdma_table.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+)
+target_compile_definitions(test_sync_budget_run PRIVATE
+    SYNC_TX_BUDGET=1u SYNC_CELL_GAP_MS=9500u EXPECT_WITHIN_BUDGET)
+
 add_unity_test(test_rtc_set_plan
     test_rtc_set_plan.c
 )

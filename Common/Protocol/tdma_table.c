@@ -32,6 +32,24 @@
  *
  * Replace with the full frame layout once all Phase Types are finalised.
  * ========================================================================= */
+#ifndef SYNC_CELL_GAP_MS
+/*!
+ * Gap after each Sync cell, ms. The default schedule (two Sync phases of ten
+ * cells, a cell every 3 s, C3 and C2 sending in the first SYNC_TX_BUDGET = 3
+ * cells of each) puts 5.95 s of airtime in every 60 s frame: 9.9 % duty cycle
+ * against the band's 1 %. The 36 s credit is gone after 6.7 min, then a node
+ * sends one packet in ~99 s (TX_DENIED in between). That is a bring-up
+ * schedule, not a product one (#45).
+ *
+ * A multi-hour run needs a schedule inside the budget: the Build Overrides
+ * SYNC_TX_BUDGET=1u and SYNC_CELL_GAP_MS=9500u give a Sync phase every 120 s
+ * with one packet per phase and node, 0.83 % duty cycle, never denied
+ * (Tests/unit/test_sync_budget.c computes both with the real compliance
+ * engine).
+ */
+#define SYNC_CELL_GAP_MS  500u
+#endif
+
 static const Phase_t s_sync_phase_0 = {
     .type             = PHASE_TYPE_SYNC,
     .participant_mask = PARTICIPANT_C1 | PARTICIPANT_C2 | PARTICIPANT_C3,
@@ -39,7 +57,7 @@ static const Phase_t s_sync_phase_0 = {
     .cell_count       = 10u,
     .slot_count       = 1u,
     .slot_active_ms   = 2500u,    /* SF12/BW125 Sync packet airtime (conservative) */
-    .gap_after_slot_ms = 500u,  /* Inter-cell guard gap */
+    .gap_after_slot_ms = SYNC_CELL_GAP_MS,  /* Inter-cell guard gap */
     .header           = { .duration_ms = 0u },
     .footer           = { .duration_ms = 0u },
 };
@@ -51,7 +69,7 @@ static const Phase_t s_sync_phase_1 = {
     .cell_count       = 10u,
     .slot_count       = 1u,
     .slot_active_ms   = 2500u,    /* SF12/BW125 Sync packet airtime (conservative) */
-    .gap_after_slot_ms = 500u,  /* Inter-cell guard gap */
+    .gap_after_slot_ms = SYNC_CELL_GAP_MS,  /* Inter-cell guard gap */
     .header           = { .duration_ms = 0u },
     .footer           = { .duration_ms = 0u },
 };

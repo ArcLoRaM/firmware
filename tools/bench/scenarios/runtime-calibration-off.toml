@@ -4,6 +4,8 @@
 # disabled (BENCH_CALR_OFF=1): the estimator and the DRIFT events still run, so
 # the uncalibrated rate of the pair is measured the same way (the 2026-09-26
 # bench gave +8.1 ppm) and the calibrated run has its comparison.
+# Same Sync schedule as the calibrated run: within the duty-cycle budget, see
+# runtime-calibration.toml.
 description = "Control: C2 rate estimate with the CALR write disabled"
 timeout = "4h"
 
@@ -13,6 +15,8 @@ timeout = "4h"
 
 [overrides]
 BENCH_CALR_OFF = "1"
+SYNC_TX_BUDGET = "1u"
+SYNC_CELL_GAP_MS = "9500u"
 
 [[expect]]
 node = 1
@@ -22,13 +26,13 @@ event = "SYNC_TX"
 node = 2
 event = "CLK"
 where = { to = "ACQ" }
-within = "3m"
+within = "4m"
 
 [[expect]]
 node = 2
 event = "CLK"
 where = { to = "WARM" }
-within = "8m"
+within = "10m"
 
 [[expect]]
 node = 2
@@ -52,6 +56,9 @@ where = { res = "busy" }
 [[forbid]]
 event = "SYNC_RX"
 where = { act = "t3" }
+
+[[forbid]]
+event = "TX_DENIED"
 
 [[forbid]]
 event = "SYNC_SILENCE"

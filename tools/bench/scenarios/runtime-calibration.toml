@@ -5,6 +5,11 @@
 # paths breaks (no Tier 3, no silence). The residual after calibration is read
 # from the DRIFT events of the run, against the control scenario
 # runtime-calibration-off.toml (same pair, same duration, the write disabled).
+# Schedule: the default Sync table is 9.9 % duty cycle and starves the C3 after
+# 6.1 min (TX_DENIED), which the field will not see. The Build Overrides
+# SYNC_TX_BUDGET=1u and SYNC_CELL_GAP_MS=9500u give a Sync phase every 120 s,
+# one packet per phase (0.83 %, never denied: sync-budget-c3.toml on the board,
+# Tests/unit/test_sync_budget.c in 4 h); no TX_DENIED is allowed in the run.
 # Staged: smoke and lock in the first minutes, the first valid estimate and
 # the first write within the first hour, forbids for the rest.
 # Needs a pair whose rate offset is above 0.72 ppm (the 2026-09-26 pair had
@@ -17,6 +22,10 @@ timeout = "4h"
 1 = "C3"
 2 = "C2"
 
+[overrides]
+SYNC_TX_BUDGET = "1u"
+SYNC_CELL_GAP_MS = "9500u"
+
 [[expect]]
 node = 1
 event = "SYNC_TX"
@@ -25,15 +34,15 @@ event = "SYNC_TX"
 node = 2
 event = "CLK"
 where = { to = "ACQ" }
-within = "3m"
+within = "4m"
 
 [[expect]]
 node = 2
 event = "CLK"
 where = { to = "WARM" }
-within = "8m"
+within = "10m"
 
-# 20 min of baseline at one packet per 30 s, plus the lock.
+# 20 min of baseline at one packet per 120 s, plus the lock.
 [[expect]]
 node = 2
 event = "DRIFT"
@@ -53,6 +62,9 @@ where = { res = "fail" }
 [[forbid]]
 event = "SYNC_RX"
 where = { act = "t3" }
+
+[[forbid]]
+event = "TX_DENIED"
 
 [[forbid]]
 event = "SYNC_SILENCE"
