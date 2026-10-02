@@ -41,6 +41,7 @@
 #include "drift_estimator.h"      /* DriftEstimator_* */
 #include "rtc_calr.h"            /* RtcCalr_* */
 #include "calr_policy.h"         /* CalrPolicy_Decide */
+#include "probe.h"               /* PROBE_* (BENCH_PROBE only) */
 #include "node_id.h"          /* NodeId_ReadUid, NodeId_FromUid */
 
 /* =========================================================================
@@ -387,10 +388,13 @@ static const char *calr_write(RtcCalr_t c)
         return "busy";
     }
     hrtc.IsEnabled.RtcFeatures = UINT32_MAX;
+    PROBE_START(probe);
     HAL_StatusTypeDef st = HAL_RTCEx_SetSmoothCalib(
         &hrtc, RTC_SMOOTHCALIB_PERIOD_32SEC,
         c.calp ? RTC_SMOOTHCALIB_PLUSPULSES_SET : RTC_SMOOTHCALIB_PLUSPULSES_RESET,
         c.calm);
+    PROBE_MARK(probe, "setsmoothcalib");
+    PROBE_LOG(probe, "calr_write");
     return (st == HAL_OK) ? "ok" : (st == HAL_BUSY) ? "busy" : "fail";
 }
 
@@ -399,6 +403,7 @@ static const char *calr_write(RtcCalr_t c)
  * that selects a short window is not ours: clear it. */
 static void drift_init(void)
 {
+    PROBE_START(probe);
     DriftEstimator_Init();
     RtcCalr_t c;
     if (RtcCalr_FromReg(RTC->CALR, &c)) {
@@ -411,6 +416,8 @@ static void drift_init(void)
         calr_log(0, none, res);
     }
     DriftEstimator_OnCalr(TIMER_IF_GetMonotonicMs(), RtcCalr_ToPpb(s_calr));
+    PROBE_MARK(probe, "init_with_log");
+    PROBE_LOG(probe, "drift_init");
 }
 
 /* Sync sample hook (MAC_Hooks_t::sync_sample): feed the estimator, log its

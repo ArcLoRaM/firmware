@@ -30,6 +30,11 @@ EVENTS: dict[str, Event] = {
         "(0 = board not registered), MCU unique ID (w0 w1 w2) and firmware version.",
         ("cls", "id", "uid", "fw", "build"),
     ),
+    "PROBE": Event(
+        "S", ("tag", "seg", "us", "hz"),
+        "Timing probe (Common/Log/probe.h, only in a build with BENCH_PROBE=1): segment seg of the probed path tag "
+        "took us microseconds, with the core clock hz. Logged after the timed path.",
+    ),
     "INIT_DONE": Event("S", ("phases",), "CM0+ protocol machines initialised; TDMA table phase count."),
     # --- Inter-core ----------------------------------------------------------
     "CORE_SYNC": Event("X", ("stage",), "CM4/CM0+ boot handshake stage."),

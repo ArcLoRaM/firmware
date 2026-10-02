@@ -81,6 +81,17 @@ add_unity_test(test_sync_budget_run
 target_compile_definitions(test_sync_budget_run PRIVATE
     SYNC_TX_BUDGET=1u SYNC_CELL_GAP_MS=9500u EXPECT_WITHIN_BUDGET)
 
+# Timing probe helper: with BENCH_PROBE (lines, wrap, limit) and production (nothing).
+add_unity_test(test_probe
+    test_probe.c
+    ../../Common/Log/probe.c
+)
+target_compile_definitions(test_probe PRIVATE BENCH_PROBE)
+add_unity_test(test_probe_off
+    test_probe.c
+    ../../Common/Log/probe.c
+)
+
 add_unity_test(test_rtc_set_plan
     test_rtc_set_plan.c
 )
