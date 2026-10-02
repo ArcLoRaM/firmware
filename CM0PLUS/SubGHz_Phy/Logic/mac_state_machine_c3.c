@@ -23,6 +23,7 @@
  *
  */
 #include "mac_state_machine.h"
+#include "date_bcd.h"
 #include "tdma_table.h"
 #include "arclog.h"
 #include <stddef.h>
@@ -96,6 +97,19 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
                                           &s_sync_phase_day,
                                           &s_sync_phase_month,
                                           &s_sync_phase_year);
+                /* The packets carry the date of the epoch. The RTC read is
+                 * on the other side of midnight when the epoch is a Tx lead
+                 * after it, or when the phase is entered mid-way after it
+                 * (issue #28). */
+                int64_t epoch_day_pos = (int64_t)now_ms
+                                        + DayMs_Diff(s_sync_phase_epoch_ms, now_ms);
+                if (epoch_day_pos >= (int64_t)MS_PER_DAY) {
+                    DateBcd_AddDays(&s_sync_phase_day, &s_sync_phase_month,
+                                    &s_sync_phase_year, 1);
+                } else if (epoch_day_pos < 0) {
+                    DateBcd_AddDays(&s_sync_phase_day, &s_sync_phase_month,
+                                    &s_sync_phase_year, -1);
+                }
             }
             ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "SYNC_EPOCH", "ph=%u ep=%u",
                    (unsigned)cursor->phase_index,

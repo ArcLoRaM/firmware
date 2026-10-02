@@ -17,6 +17,7 @@
  *
  */
 #include "mac_state_machine.h"
+#include "date_bcd.h"
 #include "tdma_table.h"
 #include "guard_time_resolver.h"
 #include "arclog.h"
@@ -103,14 +104,19 @@ static void log_sync_rx(const SyncPayload_t *p, uint32_t stamp_ms,
            ArcLog_ClockName(s_clock_state), act);
 }
 
-/* Set the RTC so that the new domain reads target_ms at the SyncStamp
+/* Set the RTC so that the new domain reads the target time at the SyncStamp
  * instant. The hook runs from RxDone, about one airtime after the stamp, so
  * the time elapsed since the stamp is carried over; without it the new
  * domain would lag the sender by the airtime, while every later
  * stamp-to-expected comparison would still read zero error. Returns the
  * elapsed ms (0 when the stamp is older than SYNC_STAMP_MAX_AGE_MS, which
- * means it is unusable). */
-static uint32_t rtc_set_at_stamp(const SyncPayload_t *p, uint32_t target_ms,
+ * means it is unusable).
+ *
+ * The packet's date is the date of the phase epoch. The target time is the
+ * epoch plus the cells before it plus the carry; when that sum reaches a
+ * day, the target is on the next day and the date moves with it (issue #28).
+ * The sum is taken here, before it is reduced to the day domain. */
+static uint32_t rtc_set_at_stamp(const SyncPayload_t *p, uint32_t per_cell,
                                  uint32_t stamp_ms)
 {
     uint32_t age_ms = 0u;
@@ -122,7 +128,14 @@ static uint32_t rtc_set_at_stamp(const SyncPayload_t *p, uint32_t target_ms,
         age_ms = (age >= 0 && (uint32_t)age <= SYNC_STAMP_MAX_AGE_MS) ? (uint32_t)age : 0u;
     }
     if (s_hooks.rtc_set != NULL) {
-        s_hooks.rtc_set(DayMs_Add(target_ms, (int32_t)age_ms), p->day, p->month, p->year);
+        uint32_t target_ms = p->ms_since_midnight_sync_phase
+                             + (uint32_t)p->sync_cell_index * per_cell
+                             + age_ms;
+        uint8_t day = p->day, month = p->month, year = p->year;
+        if (target_ms >= MS_PER_DAY) {
+            DateBcd_AddDays(&day, &month, &year, 1);
+        }
+        s_hooks.rtc_set(target_ms % MS_PER_DAY, day, month, year);
     }
     return age_ms;
 }
@@ -259,7 +272,7 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
                              % MS_PER_DAY; //the sender claimed nominal start of cell time
 
         /* The new RTC domain reads target_ms at the stamp instant. */
-        (void)rtc_set_at_stamp(payload, target_ms, stamp_ms);
+        (void)rtc_set_at_stamp(payload, per_cell, stamp_ms);
 
         uint32_t rtc_now = 0u;
         if (s_hooks.get_rtc_snapshot != NULL) {
@@ -335,7 +348,7 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
 
         } else {
             /* Tier 3: drift ≥ MAX_GUARD_TIME_MS — full re-anchor via rtc_set */
-            (void)rtc_set_at_stamp(payload, expected_arrival, stamp_ms);
+            (void)rtc_set_at_stamp(payload, per_cell, stamp_ms);
             trigger_sync_lost("tier3");
         }
     }
