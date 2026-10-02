@@ -70,6 +70,10 @@ add_unity_test(test_rtc_set_plan
     test_rtc_set_plan.c
 )
 
+add_unity_test(test_rtc_calr
+    test_rtc_calr.c
+)
+
 add_unity_test(test_date_bcd
     test_date_bcd.c
 )
