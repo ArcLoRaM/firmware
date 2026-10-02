@@ -8,6 +8,9 @@
 
 static int      s_rtc_set_calls;
 static uint32_t s_rtc_set_target_ms;
+static uint8_t  s_rtc_set_day;
+static uint8_t  s_rtc_set_month;
+static uint8_t  s_rtc_set_year;
 static int      s_sync_locked_calls;
 static int      s_sync_lost_calls;
 static int      s_sync_bootstrapped_calls;
@@ -24,7 +27,9 @@ static uint8_t  s_snapshot_year;
 static void stub_rtc_set(uint32_t target_ms,
                           uint8_t day, uint8_t month, uint8_t year)
 {
-    (void)day; (void)month; (void)year;
+    s_rtc_set_day       = day;
+    s_rtc_set_month     = month;
+    s_rtc_set_year      = year;
     s_rtc_set_target_ms = target_ms;
     s_rtc_set_calls++;
     /* After rtc_set, pretend RTC now reads target_ms */
@@ -912,6 +917,84 @@ void test_c2_cold_rtc_set_carry_wraps_at_midnight(void)
     TEST_ASSERT_EQUAL(500u, s_rtc_set_target_ms);  /* 1000 ms later, wrapped */
 }
 
+#define EP_BEFORE_MIDNIGHT  (MS_PER_DAY - 6000u)   /* 23:59:54.000 */
+
+/* ------- Date of the RTC set (issue #28) -----------------------------------
+ * A Sync packet's date is the date of the phase epoch. A node whose target
+ * time falls on the next day must set that next day's date. */
+
+static void make_dated_sync_pkt(SyncPayload_t *p, uint8_t cell, uint32_t ms_midnight,
+                                uint8_t day, uint8_t month, uint8_t year)
+{
+    make_sync_pkt(p, cell, ms_midnight);
+    p->day   = day;
+    p->month = month;
+    p->year  = year;
+}
+
+void test_c2_cold_set_in_the_epoch_day_keeps_the_date(void)
+{
+    SyncPayload_t p;
+    make_dated_sync_pkt(&p, 2u, 43200000u, 0x14u, 0x03u, 0x26u);   /* 12:00:00 + 6 s */
+    s_snapshot_ms = 43206000u;
+    MAC_OnSyncPacketReceived(&p, 43206000u);
+
+    TEST_ASSERT_EQUAL_HEX8(0x14, s_rtc_set_day);
+    TEST_ASSERT_EQUAL_HEX8(0x03, s_rtc_set_month);
+    TEST_ASSERT_EQUAL_HEX8(0x26, s_rtc_set_year);
+}
+
+void test_c2_cold_set_on_a_cell_after_midnight_advances_the_date(void)
+{
+    SyncPayload_t p;
+    make_dated_sync_pkt(&p, 2u, EP_BEFORE_MIDNIGHT, 0x31u, 0x12u, 0x25u);
+    s_snapshot_ms = 0u;
+    MAC_OnSyncPacketReceived(&p, 0u);                /* cell 2 = 00:00:00 */
+
+    TEST_ASSERT_EQUAL_UINT32(0u, s_rtc_set_target_ms);
+    TEST_ASSERT_EQUAL_HEX8(0x01, s_rtc_set_day);
+    TEST_ASSERT_EQUAL_HEX8(0x01, s_rtc_set_month);
+    TEST_ASSERT_EQUAL_HEX8(0x26, s_rtc_set_year);
+}
+
+void test_c2_cold_set_on_a_cell_before_midnight_keeps_the_date(void)
+{
+    SyncPayload_t p;
+    make_dated_sync_pkt(&p, 1u, EP_BEFORE_MIDNIGHT, 0x31u, 0x12u, 0x25u);
+    s_snapshot_ms = MS_PER_DAY - 3000u;
+    MAC_OnSyncPacketReceived(&p, MS_PER_DAY - 3000u);  /* cell 1 = 23:59:57 */
+
+    TEST_ASSERT_EQUAL_HEX8(0x31, s_rtc_set_day);
+    TEST_ASSERT_EQUAL_HEX8(0x12, s_rtc_set_month);
+    TEST_ASSERT_EQUAL_HEX8(0x25, s_rtc_set_year);
+}
+
+void test_c2_cold_set_whose_carry_crosses_midnight_advances_the_date(void)
+{
+    SyncPayload_t p;
+    make_dated_sync_pkt(&p, 0u, MS_PER_DAY - 500u, 0x29u, 0x02u, 0x24u);
+    s_snapshot_ms = 400u;                      /* old domain wrapped */
+    MAC_OnSyncPacketReceived(&p, MS_PER_DAY - 600u);
+
+    TEST_ASSERT_EQUAL_UINT32(500u, s_rtc_set_target_ms);
+    TEST_ASSERT_EQUAL_HEX8(0x01, s_rtc_set_day);
+    TEST_ASSERT_EQUAL_HEX8(0x03, s_rtc_set_month);   /* 29 Feb 2024 + 1 day */
+    TEST_ASSERT_EQUAL_HEX8(0x24, s_rtc_set_year);
+}
+
+void test_c2_tier3_set_on_a_cell_after_midnight_advances_the_date(void)
+{
+    sync_mac();
+    SyncPayload_t p;
+    make_dated_sync_pkt(&p, 2u, EP_BEFORE_MIDNIGHT, 0x31u, 0x12u, 0x25u);
+    s_snapshot_ms = 500u;
+    MAC_OnSyncPacketReceived(&p, 500u);   /* cell 2 due at 00:00:00, 500 ms late */
+
+    TEST_ASSERT_EQUAL_HEX8(0x01, s_rtc_set_day);
+    TEST_ASSERT_EQUAL_HEX8(0x01, s_rtc_set_month);
+    TEST_ASSERT_EQUAL_HEX8(0x26, s_rtc_set_year);
+}
+
 /* ------- Cursor suspect --------------------------------------------------- */
 
 void test_c2_cursor_suspect_drops_to_cold_without_rtc_write(void)
@@ -959,8 +1042,6 @@ void test_c2_sync_pkt_with_non_sync_phase_is_rejected(void)
  * The RTC reads ms since midnight and wraps at MS_PER_DAY. A Sync phase that
  * starts before midnight has cells after it: their expected arrival must be
  * taken modulo a day, and every comparison must be midnight-safe. */
-
-#define EP_BEFORE_MIDNIGHT  (MS_PER_DAY - 6000u)   /* 23:59:54.000 */
 
 /* P1 at cell 0 (23:59:54), P2 at cell 1 (23:59:57), P3 at cell 2 (00:00:00,
  * stamped 0 by the wrapped RTC). */
@@ -1132,5 +1213,10 @@ int main(void)
     RUN_TEST(test_c2_packet1_after_midnight_bootstraps_in_day_domain);
     RUN_TEST(test_c2_silence_timeout_spans_midnight);
     RUN_TEST(test_c2_tier2_after_midnight_passes_day_domain_expected);
+    RUN_TEST(test_c2_cold_set_in_the_epoch_day_keeps_the_date);
+    RUN_TEST(test_c2_cold_set_on_a_cell_after_midnight_advances_the_date);
+    RUN_TEST(test_c2_cold_set_on_a_cell_before_midnight_keeps_the_date);
+    RUN_TEST(test_c2_cold_set_whose_carry_crosses_midnight_advances_the_date);
+    RUN_TEST(test_c2_tier3_set_on_a_cell_after_midnight_advances_the_date);
     return UNITY_END();
 }

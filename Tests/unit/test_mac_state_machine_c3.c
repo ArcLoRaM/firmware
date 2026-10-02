@@ -206,17 +206,69 @@ void test_c3_sync_phase_epoch_wraps_at_midnight(void)
 
 void test_c3_sync_phase_date_captured_at_phase_entry(void)
 {
-    s_snapshot_ms    = 43200000u;
+    s_snapshot_ms    = 43200000u - 20u;   /* a Tx lead before the slot */
     s_snapshot_day   = 0x15u;
     s_snapshot_month = 0x06u;
     s_snapshot_year  = 0x25u;
     FrameCursor_t c = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
-    MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u), 0u);
+    MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u), 43200000u);
 
     uint8_t d, mo, y;
     MAC_GetSyncPhaseDate(&d, &mo, &y);
     TEST_ASSERT_EQUAL_HEX8(0x15u, d);
     TEST_ASSERT_EQUAL_HEX8(0x06u, mo);
+    TEST_ASSERT_EQUAL_HEX8(0x25u, y);
+}
+
+/* The date stamped in the packets is the date of the epoch (issue #28): the
+ * RTC read at phase entry is on the other side of midnight when the epoch is
+ * a Tx lead after it, or when the phase is entered mid-way after midnight. */
+
+void test_c3_sync_phase_date_is_the_epoch_day_when_the_epoch_is_after_midnight(void)
+{
+    s_snapshot_ms    = MS_PER_DAY - 15u;      /* 23:59:59.985, 31 Dec 2025 */
+    s_snapshot_day   = 0x31u;
+    s_snapshot_month = 0x12u;
+    s_snapshot_year  = 0x25u;
+    FrameCursor_t c = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c, TdmaTable_GetPhase(0u), 5u);   /* epoch 00:00:00.005 */
+
+    uint8_t d, mo, y;
+    MAC_GetSyncPhaseDate(&d, &mo, &y);
+    TEST_ASSERT_EQUAL_HEX8(0x01u, d);
+    TEST_ASSERT_EQUAL_HEX8(0x01u, mo);
+    TEST_ASSERT_EQUAL_HEX8(0x26u, y);
+}
+
+void test_c3_sync_phase_date_is_the_epoch_day_when_entered_mid_phase_after_midnight(void)
+{
+    s_snapshot_ms    = 980u;                  /* 00:00:00.980, 1 Jan 2026 */
+    s_snapshot_day   = 0x01u;
+    s_snapshot_month = 0x01u;
+    s_snapshot_year  = 0x26u;
+    FrameCursor_t c = {.phase_index = 0u, .cell_index = 1u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c, &s_sync_phase_6, 1000u);   /* epoch 23:59:58 the day before */
+
+    uint8_t d, mo, y;
+    MAC_GetSyncPhaseDate(&d, &mo, &y);
+    TEST_ASSERT_EQUAL_HEX8(0x31u, d);
+    TEST_ASSERT_EQUAL_HEX8(0x12u, mo);
+    TEST_ASSERT_EQUAL_HEX8(0x25u, y);
+}
+
+void test_c3_sync_phase_date_is_kept_when_only_later_cells_cross_midnight(void)
+{
+    s_snapshot_ms    = MS_PER_DAY - 6000u - 20u;   /* epoch 23:59:54, read a lead before */
+    s_snapshot_day   = 0x31u;
+    s_snapshot_month = 0x12u;
+    s_snapshot_year  = 0x25u;
+    FrameCursor_t c = {.phase_index = 0u, .cell_index = 0u, .slot_index = 0u};
+    MAC_OnSlotOpportunity(&c, &s_sync_phase_6, MS_PER_DAY - 6000u);
+
+    uint8_t d, mo, y;
+    MAC_GetSyncPhaseDate(&d, &mo, &y);
+    TEST_ASSERT_EQUAL_HEX8(0x31u, d);
+    TEST_ASSERT_EQUAL_HEX8(0x12u, mo);
     TEST_ASSERT_EQUAL_HEX8(0x25u, y);
 }
 
@@ -295,6 +347,9 @@ int main(void)
     RUN_TEST(test_c3_sync_phase_epoch_entered_mid_phase_is_phase_start);
     RUN_TEST(test_c3_sync_phase_epoch_wraps_at_midnight);
     RUN_TEST(test_c3_sync_phase_date_captured_at_phase_entry);
+    RUN_TEST(test_c3_sync_phase_date_is_the_epoch_day_when_the_epoch_is_after_midnight);
+    RUN_TEST(test_c3_sync_phase_date_is_the_epoch_day_when_entered_mid_phase_after_midnight);
+    RUN_TEST(test_c3_sync_phase_date_is_kept_when_only_later_cells_cross_midnight);
     RUN_TEST(test_c3_sync_phase_date_not_captured_on_non_sync_phase);
     RUN_TEST(test_c3_epoch_updated_on_each_sync_phase_entry);
     RUN_TEST(test_c3_beacon_tx_budget_bypassed);
