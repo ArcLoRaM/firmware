@@ -735,6 +735,26 @@ This is the "no evidence either way" degradation path, distinct from Tier 3 ("ev
 the clock is wrong"), which remains immediate.
 See ADR-0013.
 
+### Rate Offset
+How much faster (positive) or slower the local RTC runs than its Sync sender's clock, in ppb, with no calibration applied.
+It belongs to the crystal, not to the lock: it is kept across `CLOCK_COLD`.
+_Avoid_: drift (it also means the accumulated error), skew
+
+### Drift Estimator
+The module that estimates the Rate Offset from the Sync errors, with every correction the node made to its own clock removed.
+It reports a **Residual** and is valid only after a minimum baseline of Sync packets.
+Phase 1 (#34) is a least squares fit; the Kalman estimator of Phase 2 (#43) replaces it behind the same interface.
+
+### Smooth Calibration
+The RTC's own rate correction (`RTC_CALR`): pulses added or masked over a 32 s cycle, in discrete **Calibration Steps** of about 0.954 ppm, between -487.1 and +488.5 ppm.
+It is the only correction that acts on the clock's rate; the Tier 2 shift and the RTC set act on its phase.
+C1 and C2 calibrate against their Sync sender; C3, the time reference, does not.
+_Avoid_: CALR (the register), trimming
+
+### Residual
+The rate the clock still gains with the Smooth Calibration applied: the Rate Offset minus the correction applied.
+It is what the guard and the Sync period must absorb.
+
 ### Sync Algorithm — summary
 
 **Acquisition (CLOCK_COLD → CLOCK_WARM):** requires 1 RTC-set packet + 2 consecutive
