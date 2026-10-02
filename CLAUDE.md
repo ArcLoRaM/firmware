@@ -32,7 +32,7 @@ An artifact or shared doc is only a view of them: write the fact to the repo bef
 
 Timing on the boards (a budget, a latency, time lost in a write) is measured, not estimated: skill `timing-probe` (a temporary SysTick probe behind a Build Override, numbers kept in the Test Record, probe never committed).
 
-Probe uses so far: 1 (#55, 2026-10-01).
+Probe uses so far: 2 (#55, 2026-10-01; #75, 2026-10-02).
 Add one here at each probe run of a new topic. At 3, propose to Simon a committed probe helper instead of hand-written probes: a header with start/mark/log macros compiled only under a Build Override, and a permanent generic `PROBE` event in arclog, which removes the schema edit and the clean-up from every measurement.
 
 ### Domain docs
