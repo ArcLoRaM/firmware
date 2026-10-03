@@ -106,6 +106,12 @@ For #45 (the Sync period): the clock gains 0.36 ppm after calibration for this p
 Tier 1 (8 ms) is left after 6.1 h at 0.36 ppm (3.1 h at the 0.72 ppm ceiling) instead of 16 min, and the 100 ms guard after 77 h (39 h at the ceiling) instead of 3.4 h.
 This is a single pair at a single temperature over a few hours: slow temperature drift is Phase 2 (#41, #43).
 
+## Log fields added after the runs
+
+`CALR` and `DRIFT` gained the baseline and trim fields (`cal0`, `trim`, ADR-0019) on 2026-10-03, after the runs above, so their traces do not carry them (the baseline of those runs is the preset: `CALR res=preset req=7629`).
+`calr-boot.toml` now expects `cal0=0 trim=0` on the boot line.
+The firmware builds (`4d472d7-d680888`); the scenario has not been run since, no board being connected: to run when Node 4 is back.
+
 ## Runs
 
 | Date (UTC) | Scenario | Build ID | Verdict | Record | Notes |

@@ -1,7 +1,7 @@
 # ADR-0018: Runtime drift compensation with the RTC smooth calibration
 
 ## Status
-Accepted
+Accepted. Refined by ADR-0019: the write follows the sender in this phase; the target is a baseline calibration against an ideal clock plus a bounded runtime trim.
 
 ## Context
 Until now the Sync corrections acted on the phase only: Tier 2 shifts the clock, Tier 3 and Packet 1 set it.

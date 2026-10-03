@@ -751,6 +751,16 @@ It is the only correction that acts on the clock's rate; the Tier 2 shift and th
 C1 and C2 calibrate against their Sync sender; C3, the time reference, does not.
 _Avoid_: CALR (the register), trimming
 
+### Baseline Calibration
+The Smooth Calibration setting of a board measured once against an ideal clock and loaded at boot: the common absolute footing of every node.
+Until a factory value exists, the setting read from the register at boot stands for it.
+_Avoid_: static calibration, factory trim
+
+### Calibration Trim
+What the runtime estimate adds to the Baseline Calibration, applied minus baseline: it follows what changes after the baseline and is bounded to a window that belongs to the clock type.
+It does not follow a neighbour's clock.
+_Avoid_: runtime calibration (it is the baseline plus the trim that is applied)
+
 ### Residual
 The rate the clock still gains with the Smooth Calibration applied: the Rate Offset minus the correction applied.
 It is what the guard and the Sync period must absorb.
