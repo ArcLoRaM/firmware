@@ -65,9 +65,9 @@ Logic is proven on the host, so the bench only has to show what the host cannot:
 
 ## Criteria
 
-- [ ] The C2's rate estimate converges (`DRIFT` events), and `CALR` is written only when the residual reaches 3/4 of a step (`CALR` events).
-- [ ] The residual rate after calibration is measured and reported with its uncertainty, against the control stretch with calibration off. This figure is the input of #45.
-- [ ] No Tier 3, `SYNC_LOST` or lost lines during the run; shift and re-anchor paths unchanged.
+- [x] The C2's rate estimate converges (`DRIFT` events), and `CALR` is written only when the residual reaches 3/4 of a step (`CALR` events). (Run `329ce7e-o9e2476`: the rate settled at 600 ppb, sd 45, from the first valid estimate; one `CALR` write in 3.9 h, at the first valid estimate, none after although the residual moved between -429 and -182 ppb, never reaching the 715 threshold. The pending-recalibration skip: two writes back to back give `res=ok` then `res=busy`, see Runs.)
+- [x] The residual rate after calibration is measured and reported with its uncertainty, against the control stretch with calibration off. This figure is the input of #45. (Result below: **-0.362 ppm** after, **+8.118 ppm** in the control.)
+- [x] No Tier 3, `SYNC_LOST` or lost lines during the run; shift and re-anchor paths unchanged. (Both runs: no Tier 3, no `SYNC_SILENCE`, no `CLK to=COLD`, no `TX_DENIED`, no lost line; the Tier 2 shift made 7 times in the control and once in the calibrated run, unwrapped by the estimator.)
 - [x] The duration of the `HAL_RTCEx_SetSmoothCalib` call is measured with `timing-probe` and recorded here, before the calling context is chosen. (Measurement below. The write was put in the Sync packet context first, as the shift writes; the 52 us confirms the choice.)
 
 The `HAL_RTCEx_SetSmoothCalib` call runs in the context of the Sync packet processing (the radio ISR), as the shift and set writes do, and is skipped while `RECALPF` is set; the duration criterion above checks that choice.
@@ -86,6 +86,26 @@ The write is as cheap as a register write: in the radio ISR, next to the shift w
 A second write less than about 0.1 ms after the first would find `RECALPF` set and be skipped; the writes are at least one Sync packet (30 s) apart, so it does not happen.
 The probe ran in thread context at boot, with no sleep and no ISR in the timed span.
 
+## Result: the residual rate after calibration
+
+The pair is Node 1 (C3) and Node 4 (C2), the C2 detuned by +7.63 ppm at boot to stand for a wrong static calibration (see Starting state); Sync phase every 120 s.
+The raw `SYNC_RX` error is the measure that does not depend on the estimator: its slope between Tier 2 shifts, by least squares.
+
+| | Control (write off), 2.1 h | Calibrated, 3.9 h |
+|---|---|---|
+| Raw `SYNC_RX` error slope (the clock against the C3) | **+8.118 ppm** (58 points, pooled between 7 shifts) | **-0.362 ppm**, 1 sd 0.008 (103 points after the write, scatter 0.29 ms) |
+| Estimator `resid` (rate + applied) | 8128 ppb, sd 34 (32 estimates) | -354 ppb, sd 45, from -429 to -182 (104 estimates) |
+| Estimator `rate` (no calibration, shifts and setting unwrapped) | 409 to 554 ppb, 530 at the end | 600 ppb, sd 45 |
+| Correction applied | the Tier 2 shift only: 7 shifts (8 to 9 ms), one per 16 to 18 min | one shift at 16 min, then `CALR req=-534 calp=0 calm=1` (-954 ppb) at the first valid estimate (n=11, baseline 1200 s), nothing after |
+| Raw error | rises 8 to 9 ms in 16 to 18 min | stays between -1 and 3 ms for 3.4 h |
+
+The two measures agree: 8.118 against 8.128, and -0.362 against -0.354 ppm.
+The uncertainty is the formal one for white noise (the scatter is 0.29 ms, the quantised stamp), so it is the floor; the sd of the estimator's own residual, 45 ppb, is the more honest spread.
+
+For #45 (the Sync period): the clock gains 0.36 ppm after calibration for this pair, and at most about 0.72 ppm by design (the write threshold) plus the estimate's noise, against 8.1 ppm without it.
+Tier 1 (8 ms) is left after 6.1 h at 0.36 ppm (3.1 h at the 0.72 ppm ceiling) instead of 16 min, and the 100 ms guard after 77 h (39 h at the ceiling) instead of 3.4 h.
+This is a single pair at a single temperature over a few hours: slow temperature drift is Phase 2 (#41, #43).
+
 ## Runs
 
 | Date (UTC) | Scenario | Build ID | Verdict | Record | Notes |
@@ -102,4 +122,7 @@ The probe ran in thread context at boot, with no sleep and no ISR in the timed s
 | 2026-10-02 21:42 | `runtime-calibration.toml` (natural pair, register at 0) | `f3ec6ae-o1569be` | FAIL | `tools/arclog/runs/20261002T214247Z-f3ec6ae-o1569be/` | `CALR res=ok` not within 45 min: no write was due. Estimate 321, 229, ..., 574 ppb (n=12 to 21), `noise` 280-324 us, `SYNC_RX` err 1 to 2 ms, no `TX_DENIED`: the pair is +0.59 ppm, under the 715 ppb threshold. Not a firmware defect; the runs now detune the C2 (see Starting state). The first 11 estimates read `rate=0 noise=0`: the errors were all the same 1 ms, a flat quantised line, which the 0.7 ms the pair gains in 20 min does not bend |
 | 2026-10-02 22:28 | `runtime-calibration-off.toml` (natural pair) | `f3ec6ae-o96ffe7` | invalid | `tools/arclog/runs/` (aborted at 22:40) | Started automatically after the failed run; it would only have measured the natural 0.59 ppm. Aborted by the agent, no verdict |
 | 2026-10-02 22:33 | `runtime-calibration-off.toml` | `329ce7e-o66055a` | PASS | `tools/arclog/runs/20261002T223324Z-329ce7e-o66055a/` | The control, 2.1 h (60 `DRIFT`). Node 4 detuned by `CALR res=preset req=7629`. Residual with no calibration: 8128 ppb mean, sd 34, 8035 to 8183 over the 32 valid estimates (7629 applied + the pair's own offset). Seven Tier 2 shifts (err 8 or 9 ms, 32 or 36 ticks) at 16 to 18 min intervals, the only correction. The estimator's own `rate` (no calibration, the 7 shifts unwrapped): 409 ppb at the first valid estimate (n=11), then 466 to 554 ppb, 530 at the end: the pair's offset again, as with the register at 0 (574 to 602 ppb), so the shifts did not bend the slope on the target. `noise` 246 to 306 us. No `TX_DENIED`, Tier 3 or silence |
+| 2026-10-03 00:36 | `runtime-calibration.toml` | `329ce7e-o9e2476` | PASS | `tools/arclog/runs/20261003T003655Z-329ce7e-o9e2476/` | The calibrated run, 3.9 h, 115 `DRIFT`. `CALR res=preset` (+8 pulses) at boot; one Tier 2 shift at 00:55 (err 8 ms); first valid estimate and `CALR req=-534 calp=0 calm=1 res=ok` at 01:01:01 (n=11, rate 534 ppb, noise 488 us); then 104 estimates with `resid` -429 to -182 ppb and the window full (48 samples) from 02:33. All expectations met, including 30 estimates within one step. Raw error slope after the write -0.362 ppm (see Result) |
+| 2026-10-03 04:31 | flags: `--node 4=C2 -D BENCH_CALR_BUSY_TEST=1 --expect "4 CALR req=2 res=busy"` | `329ce7e-dab5767-oc4fa40` | PASS | `tools/arclog/runs/20261003T043127Z-329ce7e-dab5767-oc4fa40/` | Spontaneous, with a temporary patch (not committed): two `calr_write` calls back to back at boot give `res=ok` then `res=busy`: a recalibration still pending (`RECALPF`) is skipped at once, not waited for |
+| 2026-10-03 04:33 | flags: `--node 4=C2 -D BENCH_CALR_BOOT_PULSES=0` | `329ce7e-o9ec7b4` | PASS | `tools/arclog/runs/20261003T043308Z-329ce7e-o9ec7b4/` | Node 4's register put back to 0 after the tests: `CALR req=0 calp=0 calm=0 res=preset` |
 
