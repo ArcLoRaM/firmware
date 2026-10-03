@@ -39,6 +39,8 @@ The natural +0.59 ppm is a result in itself: this pair needs no calibration, and
 
 ## Hardware
 
+Both boards are NUCLEO boards with the NUCLEO Clock (NDK NX3215SA crystal, see CONTEXT.md): every figure of this record is a NUCLEO Clock result and does not transfer to the Production Clock (SiT1552 TCXO, +-5 ppm).
+
 Checked against `bench boards` on 2026-10-02: 2 boards connected, with known Node IDs.
 
 | Item | Needed | Today |

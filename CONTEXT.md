@@ -751,6 +751,17 @@ It is the only correction that acts on the clock's rate; the Tier 2 shift and th
 C1 and C2 calibrate against their Sync sender; C3, the time reference, does not.
 _Avoid_: CALR (the register), trimming
 
+### Production Clock
+The SiTime SiT1552 32.768 kHz MEMS TCXO of the production node, grade E: +-5 ppm over -40 to +85 C, +-1 ppm ageing the first year.
+It is temperature compensated inside the device, so it has no parabola: its error is bounded, not a function of temperature the node must model.
+Every statement of this project that does not name its clock means this one.
+_Avoid_: the crystal, the RTC clock (without saying which)
+
+### NUCLEO Clock
+The 32.768 kHz crystal of the NUCLEO development board (NDK NX3215SA): +-20 ppm at 25 C, a parabola of -0.04 ppm/C^2 around a turnover between 20 and 30 C, so up to about 200 ppm slow at -40 C and 5.6 ppm/C of rate change in the cold.
+The bench boards carry it, and it is the clock of every bench result until the production hardware is on the bench: a result, a record or an ADR that comes from it says "NUCLEO".
+Its figures do not transfer to the Production Clock (a calibration residual, a drift rate, a temperature behaviour).
+
 ### Baseline Calibration
 The Smooth Calibration setting of a board measured once against an ideal clock and loaded at boot: the common absolute footing of every node.
 Until a factory value exists, the setting read from the register at boot stands for it.

@@ -29,21 +29,25 @@ Two mechanisms, applied together in the one `RTC_CALR` register: `applied = base
   To be confirmed experimentally.
 - **The log carries the split.** `CALR` and `DRIFT` events have `cal0` (the baseline, ppb, constant for a boot) and `trim` (applied minus baseline), so a replay and Phase 2 see the two apart.
 
-The mechanism is the same for both clock types of the project.
-Only the window differs, and how much the estimator has to do:
+The mechanism is the same for the two clocks of the project, defined in CONTEXT.md (Production Clock, NUCLEO Clock).
+Only the window differs, and how much the estimator has to do. A statement that does not name its clock means the Production Clock.
 
-| | Development board: NDK NX3215SA crystal | Production node: SiTime SiT1552 TCXO |
+| | NUCLEO Clock (development board): NDK NX3215SA crystal | Production Clock: SiTime SiT1552 TCXO, grade E |
 |---|---|---|
-| Tolerance at 25 C | +-20 ppm (not including ageing) | +-5, +-10 or +-20 ppm over temperature by grade (+-10, +-13, +-22 with the initial offset) |
-| Temperature behaviour | parabola, turnover 20 to 30 C, -0.04 ppm/C^2 (maximum) | factory-trimmed over temperature, no parabola |
-| Over -40 to +85 C | up to about 200 ppm slow at -40 C, 170 ppm at +85 C | within the grade |
-| Rate of change of the rate | 2 ppm/C at 0 C, up to 5.6 ppm/C at -40 C | within the grade |
+| Tolerance | +-20 ppm at 25 C (not including ageing) | +-5 ppm over -40 to +85 C (+-10 ppm with the initial offset, which the baseline removes) |
+| Temperature behaviour | parabola, turnover 20 to 30 C, -0.04 ppm/C^2 (maximum) | compensated inside the device, no parabola |
+| Over -40 to +85 C | up to about 200 ppm slow at -40 C, 170 ppm at +85 C | within +-5 ppm |
+| Rate of change of the rate | 2 ppm/C at 0 C, up to 5.6 ppm/C at -40 C | within the +-5 ppm |
 | Ageing | not in the datasheet (a few ppm a year is typical for a tuning fork) | +-1 ppm the first year |
+| Supply | not specified | +-1.5 ppm over 1.5 to 3.63 V |
 | Where it is used | the lab, 15 to 35 C: 1 to 9 ppm from the turnover | the arctic, -40 to +85 C |
-| Trim window | a few ppm in the lab; about 200 ppm if the board were taken to the cold | of the order of the grade plus ageing: +-5 ppm and 1 ppm a year for grade E, +-10 ppm for grade F |
+| Trim window | a few ppm in the lab; about 200 ppm if the board were taken to the cold | +-5 ppm for the temperature, plus 1 ppm a year of ageing |
 
 Sources: NDK NX3215SA specification NDKX01-00001 (Table 1, items 4 to 7), SiTime SiT1552 datasheet rev 1.43 (Table 1).
-A quartz crystal over an arctic temperature range therefore needs a trim far above 5 ppm; the production TCXO does not, which is why a window of about 5 ppm is the right order for it.
+A quartz crystal over an arctic temperature range needs a trim far above 5 ppm; the Production Clock does not, which is why a window of about 5 ppm is right for it.
+
+The runtime layer is kept on the Production Clock.
+What it has to follow there is small and slow: the baseline's own error, the ageing, the supply, and, in the mesh, a sender that is off (the reason for the window).
 
 ## Considered Options
 
@@ -54,13 +58,14 @@ A quartz crystal over an arctic temperature range therefore needs a trim far abo
 ## Consequences
 
 - The Phase 1 code (ADR-0018) still follows the sender and has no window: it is unbounded until the windows below are chosen. This ADR names the gap; it does not close it.
-- Phase 2 (#41 temperature, #43 Kalman) can tell whether a deviation comes from the sender or from the node, which this phase cannot: with a baseline and a temperature model, what is left of the estimate belongs to the sender.
+- Phase 2 (#41 temperature, #43 Kalman) was meant to model the temperature. On the Production Clock the temperature is compensated in the device, so a temperature model and a Kalman filter on it add little there: the estimator's job is the baseline error and the ageing. The temperature model matters for the NUCLEO Clock, a development tool. The scope of #41 and #43 should follow this (open decision below).
+- Every bench result of #34 and of the long runs that follow is a NUCLEO Clock result: the figures (0.36 ppm residual, 0.59 ppm pair offset, +8.1 ppm detune) do not transfer to the Production Clock, which has to be measured on its own hardware.
 - The bench runs of #34 used a preset as a wrong baseline: in them `trim` reads -8.6 ppm (the trim cancelling the detune), which is the intended use of the split, not an anomaly.
 
 ## Open decisions
 
-- The numeric trim window of each clock type (the SiT1552 grade of the production node is not chosen; the register holds -487 to +488 ppm).
+- The numeric trim window of the NUCLEO Clock (the Production Clock's is +-5 ppm plus ageing; the register holds -487 to +488 ppm).
 - Whether the trim has a rate limit: none for now, to be confirmed experimentally in the cold.
 - What the node does with an estimate outside the window: saturate at the edge, or ignore it; and how it flags a suspect sender.
-- Whether a TCXO node needs the runtime layer beyond ageing, or leaves it dormant until the estimate exceeds the grade.
+- The scope of #41 (temperature measurement) and #43 (Kalman estimator) now that the Production Clock is temperature compensated.
 - The baseline measurement procedure and its ideal reference (#23, #22), and the disciplined C3 (#47).

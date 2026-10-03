@@ -1,0 +1,70 @@
+# Purpose: performance. Test Record docs/test-tracker/perf-pair-drift-12h.md.
+# C3 (Node 1) + C2 (Node 4), NUCLEO boards (NUCLEO Clock), for 12 h overnight, on
+# the production behaviour: the runtime calibration enabled, no detune, the
+# baseline cleared at boot (BENCH_CALR_BOOT_PULSES=0) so the run starts from a
+# known setting, Sync phase every 120 s inside the duty-cycle budget
+# (SYNC_TX_BUDGET=1u, SYNC_CELL_GAP_MS=9500u, see runtime-calibration.toml).
+# It measures, with nothing injected: the reception ratio of the Sync packets
+# over 12 h (#45), the stability of the pair's rate and the noise of the
+# estimator (#36, Phase 2), whether the runtime trim ever acts, the Tier 2
+# shifts it needs, and that the duty-cycle budget holds on air for 12 h.
+# bench ends a run as soon as every expectation is met: the duration is held by
+# the DRIFT count, a line per Sync phase (350 of them are 11.7 h). The forbids
+# are the conditions that invalidate the premise or lose the clock; any of them
+# ends the run, which is then itself the finding.
+description = "NUCLEO pair, 12 h, production behaviour, nothing injected"
+timeout = "780m"
+
+[nodes]
+1 = "C3"
+4 = "C2"
+
+[overrides]
+SYNC_TX_BUDGET = "1u"
+SYNC_CELL_GAP_MS = "9500u"
+BENCH_CALR_BOOT_PULSES = "0"
+
+[[expect]]
+node = 1
+event = "SYNC_TX"
+
+[[expect]]
+node = 4
+event = "CALR"
+where = { res = "preset", cal0 = 0, trim = 0 }
+within = "1m"
+
+[[expect]]
+node = 4
+event = "CLK"
+where = { to = "WARM" }
+within = "10m"
+
+[[expect]]
+node = 4
+event = "DRIFT"
+where = { ok = 1 }
+within = "40m"
+
+[[expect]]
+node = 4
+event = "DRIFT"
+count = 350
+within = "730m"
+
+[[forbid]]
+event = "TX_DENIED"
+
+[[forbid]]
+event = "SYNC_RX"
+where = { act = "t3" }
+
+[[forbid]]
+event = "SYNC_SILENCE"
+
+[[forbid]]
+event = "SLOT_SUSPECT"
+
+[[forbid]]
+event = "CALR"
+where = { res = "fail" }
