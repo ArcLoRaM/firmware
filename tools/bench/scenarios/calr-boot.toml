@@ -16,7 +16,7 @@ event = "MAC_INIT"
 [[expect]]
 node = 4
 event = "CALR"
-where = { res = "boot", calp = 0, calm = 0 }
+where = { res = "boot", calp = 0, calm = 0, cal0 = 0, trim = 0 }
 within = "1m"
 
 [[forbid]]

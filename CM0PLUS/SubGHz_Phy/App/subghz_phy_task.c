@@ -378,12 +378,17 @@ static int32_t shift_ticks_to_ms(uint32_t shift_ticks, bool advance)
 
 #ifdef DRIFT_ACTIVE
 
-static RtcCalr_t s_calr;   /* the setting held by RTC->CALR */
+static RtcCalr_t s_calr;      /* the setting held by RTC->CALR */
+static int32_t   s_cal0_ppb;  /* the baseline: the setting the node started from (ADR-0019) */
 
+/* Logged with the baseline (cal0) and the trim, applied minus baseline, as
+ * they stand after the event: the runtime trim stays apart from the baseline
+ * calibration in every replay. */
 static void calr_log(int32_t req_ppb, RtcCalr_t c, const char *res)
 {
-    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "CALR", "req=%d calp=%u calm=%u res=%s",
-           (int)req_ppb, (unsigned)c.calp, (unsigned)c.calm, res);
+    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_L, "CALR", "req=%d calp=%u calm=%u res=%s cal0=%d trim=%d",
+           (int)req_ppb, (unsigned)c.calp, (unsigned)c.calm, res,
+           (int)s_cal0_ppb, (int)(RtcCalr_ToPpb(s_calr) - s_cal0_ppb));
 }
 
 /* Write the setting, 32 s window. A recalibration still pending (RECALPF) is
@@ -416,11 +421,13 @@ static void drift_init(void)
     RtcCalr_t c;
     if (RtcCalr_FromReg(RTC->CALR, &c)) {
         s_calr = c;
+        s_cal0_ppb = RtcCalr_ToPpb(c);
         calr_log(RtcCalr_ToPpb(c), c, "boot");
     } else {
         RtcCalr_t none = { 0u, 0u };
         const char *res = calr_write(none);
         if (res[0] == 'o') s_calr = none;
+        s_cal0_ppb = RtcCalr_ToPpb(s_calr);
         calr_log(0, none, res);
     }
 #ifdef BENCH_CALR_BOOT_PULSES
@@ -432,6 +439,7 @@ static void drift_init(void)
             res = calr_write(preset);
             if (res[0] == 'o') { s_calr = preset; res = "preset"; }
         }
+        s_cal0_ppb = RtcCalr_ToPpb(s_calr);   /* the preset is the baseline of the run */
         calr_log(RtcCalr_ToPpb(preset), preset, res);
     }
 #endif
@@ -448,9 +456,10 @@ static void mac_hook_sync_sample(int32_t err_ms)
         return;
     }
     DriftEstimate_t e = DriftEstimator_Get();
-    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "DRIFT", "n=%u base=%u rate=%d resid=%d noise=%u ok=%u",
+    ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "DRIFT", "n=%u base=%u rate=%d resid=%d noise=%u ok=%u trim=%d",
            (unsigned)e.n, (unsigned)e.baseline_s, (int)e.rate_ppb, (int)e.residual_ppb,
-           (unsigned)e.noise_us, (unsigned)e.valid);
+           (unsigned)e.noise_us, (unsigned)e.valid,
+           (int)(RtcCalr_ToPpb(s_calr) - s_cal0_ppb));
 #if !BENCH_CALR_OFF
     CalrDecision_t d = CalrPolicy_Decide(&e, s_calr);
     if (d.write) {

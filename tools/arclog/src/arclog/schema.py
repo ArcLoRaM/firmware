@@ -66,16 +66,19 @@ EVENTS: dict[str, Event] = {
         "Tier 2 sub-second SHIFTR correction; res = ok | fail | busy (a previous shift still pending: not written).",
     ),
     "CALR": Event(
-        "Y", ("req", "calp", "calm", "res"),
+        "Y", ("req", "calp", "calm", "res", "cal0", "trim"),
         "RTC smooth calibration write (#34); req = requested frequency change (ppb, + faster, - slower), "
         "calp/calm = the CALR fields written (32 s window), res = ok | fail | busy (a recalibration still pending "
-        "(RECALPF): not written) | boot (the setting read from the register at boot, nothing written) | preset (BENCH_CALR_BOOT_PULSES: the setting written at boot).",
+        "(RECALPF): not written) | boot (the setting read from the register at boot, nothing written) | preset (BENCH_CALR_BOOT_PULSES: the setting written at boot). "
+        "cal0 = the baseline calibration, ppb: the setting the node started from (the register at boot, or the preset); "
+        "trim = the runtime trim after the event, ppb: applied minus cal0 (ADR-0019).",
     ),
     "DRIFT": Event(
-        "Y", ("n", "base", "rate", "resid", "noise", "ok"),
+        "Y", ("n", "base", "rate", "resid", "noise", "ok", "trim"),
         "Drift estimator state after a Sync sample (#34); n = samples in the window, base = baseline (s), "
         "rate = rate offset to cancel (ppb, + local clock fast), resid = rate + applied calibration (ppb), "
-        "noise = sample sigma (us, 0 = not yet estimable), ok = 1 once the estimate may drive a CALR.",
+        "noise = sample sigma (us, 0 = not yet estimable), ok = 1 once the estimate may drive a CALR, "
+        "trim = the runtime trim now applied, ppb (applied calibration minus the baseline cal0 of the CALR boot line).",
     ),
     "SYNC_REJ": Event(
         "Y", ("ph", "ce"), "Sync packet dropped: ph is not a Sync phase (corrupt or foreign packet)."

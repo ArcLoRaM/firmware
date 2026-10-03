@@ -106,9 +106,9 @@ def test_boot_with_build_id_is_valid():
 
 
 def test_calr_and_drift_events_are_valid():
-    calr = "260925T101010.0000 0Y M #07 CALR req=-8100 calp=0 calm=8 res=ok"
+    calr = "260925T101010.0000 0Y M #07 CALR req=-8100 calp=0 calm=8 res=ok cal0=0 trim=-7629"
     assert validate(parse_line(calr)) == []
-    drift = "260925T101010.0000 0Y M #08 DRIFT n=27 base=1222 rate=8104 resid=475 noise=361 ok=1"
+    drift = "260925T101010.0000 0Y M #08 DRIFT n=27 base=1222 rate=8104 resid=475 noise=361 ok=1 trim=-7629"
     assert validate(parse_line(drift)) == []
     assert "DRIFT: missing ok" in validate(parse_line(drift.replace(" ok=1", "")))
 
