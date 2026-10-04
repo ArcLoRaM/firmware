@@ -145,9 +145,11 @@ static void on_tx_timeout(void)
 
 static void on_rx_done(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr)
 {
+    PROBE_START(probe);
     uint32_t rxd_ticks = s_irq_stamp_ticks;
     uint32_t rxd   = s_irq_stamp_ms;
     uint32_t toa   = plat_radio_toa((uint8_t)size);
+    PROBE_MARK(probe, "toa_ms_driver");
     /* SyncStamp: packet start, in RTC ticks and in the RTC day domain (a
      * packet received just after midnight started before it): RxDone minus
      * the time on air in microseconds (991 232 us for a Sync packet, not the
@@ -156,6 +158,8 @@ static void on_rx_done(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr
     uint32_t stamp_ticks = SyncStamp_FromRxDone(rxd_ticks, plat_radio_toa_us((uint8_t)size),
                                                 RX_DONE_LATENCY_MS * 1000u);
     uint32_t stamp = RtcTicks_ToMs(stamp_ticks);
+    PROBE_MARK(probe, "stamp_ticks");
+    PROBE_LOG(probe, "rx_stamp");
 
     UTIL_TIMER_Stop(&s_rx_cap_timer);
     ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_M, "RX_DONE",
