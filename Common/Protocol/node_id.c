@@ -35,6 +35,7 @@ static const NodeIdEntry_t k_table[] = {
     { { 0x0026001Au, 0x32325014u, 0x20383543u }, 2u },   /* bench C2 */
     { { 0x004100ADu, 0x32325014u, 0x20383543u }, 3u },   /* bench C2, second */
     { { 0x00340044u, 0x32325014u, 0x20383543u }, 4u },   /* bench C2, third */
+    { { 0x0014001Bu, 0x32325014u, 0x20383543u }, 5u },   /* Pi Node nuna-node-01, remote C3 */
 
     /* End marker: keeps the array non-empty, not counted. */
     { { 0u, 0u, 0u }, NODE_ID_UNPROVISIONED },
