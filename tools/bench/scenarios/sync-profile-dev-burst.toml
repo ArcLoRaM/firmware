@@ -19,10 +19,12 @@ timeout = "8m"
 [overrides]
 SYNC_BOOT_BURST = "5u"
 
+# cell 0 leaves before the run is armed and is not counted; cell 1 is the first seen
 [[expect]]
 node = 1
 event = "SYNC_TX"
-where = { ce = 0 }
+where = { ce = 1 }
+within = "1m"
 
 [[expect]]
 node = 1
