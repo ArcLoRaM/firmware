@@ -37,6 +37,7 @@ The cores share MbMux memory and structure layouts, so mixed builds are a silent
 Only the boards a Scenario names are flashed; the others are reported with the Build ID they last booted.
 
 **Always-on Capture, no board leases.**
+_Superseded in part by ADR-0003: boards are now leased by the command that works on them, and the capture is shared by all worktrees._
 One multi-port `arclog capture` process on Windows records every board and is the only process that opens the COM ports.
 A flash shows up in it as a reset, which `arclog` already survives.
 Runs are time windows over its files, followed by polling, not change notifications.

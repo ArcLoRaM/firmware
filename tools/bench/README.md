@@ -29,7 +29,7 @@ bench build --class C2 --class C3 -D TX_RAMP_MS=5u
 bench build --class C3 --clean              # rebuild everything
 ```
 
-1. Rsyncs the repo (uncommitted changes included) into the Build Tree, `C:\Users\Simon\arcfw-bench\tree`, without `.git`, `tools`, `Tests`, `docs`.
+1. Rsyncs the repo (uncommitted changes included) into the Build Tree, `C:\Users\Simon\arcfw-bench\tree` (a worktree has its own, `arcfw-bench-<worktree>`), without `.git`, `tools`, `Tests`, `docs`.
    Build outputs (`Debug_*`) and the override header in the tree are kept, so builds are incremental.
 2. Computes the Build ID (`a1b2c3d`, `-d<hash>` for uncommitted firmware changes, `-o<hash>` for overrides) and writes it with the overrides to `Common/Bench/bench_overrides.h` in the tree, only when it changed.
 3. Builds both cores of each configuration with `stm32cubeidec.exe` headless, in its own workspace (`arcfw-bench\workspace`): the developer's CubeIDE can stay open.
@@ -58,7 +58,7 @@ bench capture up              # start or complete the always-on capture
 bench capture up --replace    # also stop another capture holding the ports
 ```
 
-One multi-port `arclog capture` on Windows records every connected probe's port into `tools/arclog/runs/bench/` (files `com9-YYYYMMDD.log`, stderr in `capture.err`).
+One multi-port `arclog capture` on Windows records every connected probe's port into `tools/arclog/runs/bench/` of the main checkout (a worktree's `tools/arclog/runs` leads there) (files `com9-YYYYMMDD.log`, stderr in `capture.err`).
 It is started detached (`Win32_Process.Create`) and outlives the session.
 `up` restarts the bench capture when a port is missing from it, and never stops a capture it did not start unless told to (`--replace`).
 
@@ -152,7 +152,64 @@ Everything else is refused before the programmer runs, in particular anything th
 - OTP, the one-time programmable area (`0x1FFF7000`-`0x1FFF73FF`);
 - mass erase, direct memory writes, binary files written at a given address.
 
+A Pi Node follows the same rule: `src/bench/pinode.py` builds every GDB command list itself and checks it against a grammar before GDB runs.
+It allows the connection to the configured endpoint, `monitor reset halt|run`, a read of the three UID words, `file <image>.elf`, `load`, `compare-sections` and `detach`.
+It refuses every other `monitor` command (mass erase, option bytes), memory writes, `load` with an argument, and `shell`, `python` or script files.
+A `MIS-MATCHED` section fails the flash whatever GDB's exit code says.
+
 Before writing, every loadable segment of each image must fall inside its own core's half of main flash (CM4 `0x08000000`-`0x0801FFFF`, CM0+ `0x08020000`-`0x0803FFFF`); anything else, including a swapped image, is refused.
+
+## Map
+
+```sh
+bench map                     # writes tools/arclog/runs/bench-map.html and says where
+bench boards --json           # the same data as JSON
+```
+
+One self-contained page (it follows the viewer's light or dark theme) of what is connected: the probes on this PC and the Pi Nodes on the tailnet, each board with its Node ID, UID, last build and whether it is free, held by another session (with the command and since when), a new board, or not answering.
+A board recorded by another worktree's capture is marked as possibly in use, because a session on code from before leases takes none.
+It is a snapshot of the moment it was made; `bench map` makes a new one.
+
+## Several sessions at once
+
+Agents work in parallel worktrees and share the boards (ADR-0003).
+Each worktree has its own Build Tree, and the capture and the run records are shared, in the main checkout.
+A board has one writer at a time:
+
+- `flash`, `reset`, a UID read over SWD and `run` hold a lease on each board they flash or reset until they end; a run only watching a board holds a shared lease on it.
+- A board another session holds is refused at once: `bench run: 4 is held by 82-fine-stamps: bench run ... (pid 53266, since 19:43:20 UTC) - another session works on it: use other boards, or wait`.
+- `bench boards` marks such a board `HELD by <worktree>: <command>`, and a UID read leaves it alone.
+- A lease is released by the system when its command ends, however it ends, so there is nothing to clean up.
+- A capture that another worktree started and that holds only other boards is left alone; `bench capture up --replace` takes ports from it and is for a board this command needs.
+
+## Remote boards (Pi Nodes)
+
+A board wired to a Raspberry Pi (`github.com/Nuna-Systems/Pi-node`: OpenOCD for SWD over the Pi's GPIO header, the UART as a TCP log server, both on the tailnet) is a Board like any other.
+Its ST-LINK is bypassed, so bench reaches it by name, not by probe serial number or COM port.
+The design and its open points are in `docs/adr/0002-remote-boards-through-pi-nodes.md`.
+
+```toml
+# ~/.config/bench/bench.toml, or the file named by $BENCH_CONFIG
+[[remote]]
+name = "nuna-node-01"     # capture node and display name (default: host)
+host = "nuna-node-01"     # MagicDNS name or tailnet address
+gdb  = 3333               # OpenOCD GDB port of the M4 (default)
+log  = 4000               # UART log port (default)
+```
+
+- The file says where to look.
+  Node IDs and classes stay out of it: a board is recognised by its UID, and its class is the scenario's.
+- `bench boards` lists a Pi Node whose log port answers as `pi-node <name>`, and names the ones that do not answer.
+  It opens only the read-only log port.
+  The GDB port is a debug session, opened to read a UID (`--probe-uids`), flash or reset.
+- `bench capture up` records a Pi Node's log with the local ones, in `<name>-YYYYMMDD.log`.
+  Each line is stamped with the controller's UTC clock; the Pi's own stamp (its local time, no zone) is dropped.
+- UID read, flash and reset go through `src/bench/pinode.py`: GDB (CubeIDE's `arm-none-eabi-gdb.exe`, or `$BENCH_GDB`) to the Pi's OpenOCD.
+- A new board's first run is onboarding: read its UID, add it to `Common/Protocol/node_id.c` with the next free Node ID, flash once.
+  `bench boards --probe-uid nuna-node-02` reads that one board's UID (a GDB session); `--probe-uids` reads every unknown board, which on a Pi Node is a debug session on a shared board.
+- OpenOCD's own README, and where its command reference is, are in `docs/reference/`.
+- Status: host-tested, and run end to end on `nuna-node-02` on 2026-10-04 (UID read, flash of both cores, a scenario run, a reset; `docs/test-tracker/spot-20261004-pinode-c2.md`).
+  Open: the Pi's clock stamps local time (the live stream does not use it), the option bytes before and after a flash, and the Pi-side recorder for long runs (ADR-0002).
 
 ## Overview
 
@@ -172,6 +229,7 @@ Commands:
 | `bench run <scenario>` | Build, flash, arm, fire the scheduled actions, check the expectations, report |
 | `bench reset <node>` | Resets or halts/resumes a board without flashing |
 | `bench capture up` / `status` | Starts or checks the always-on capture of every board |
+| `bench map` | Draws the connected boards, local and on Pi Nodes, and whether each is free |
 
 A quick run without a scenario file uses the same machinery:
 
@@ -184,3 +242,4 @@ bench run --node 1=C3 --node 2=C2 -D TX_RAMP_MS=5
 - `bench` is the only way to build or flash the firmware from an agent: never the toolchain, `make` or `STM32_Programmer_CLI` directly.
 - `bench` never writes option bytes or OTP, never changes readout protection or security, and never mass erases (see [What bench never does to a board](#what-bench-never-does-to-a-board)).
 - `bench` never commits: a run ends with a report, and the human decides what goes in.
+- `bench` never touches a board another session holds, and never takes a port from another capture unasked.

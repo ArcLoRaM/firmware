@@ -6,12 +6,21 @@ description: Build, flash and test the firmware on the bench boards through `too
 # Bench loop
 
 `bench` is the only way to build, flash or reset the firmware (`AGENTS.md`).
-It works on its own Build Tree on `C:` and the boards on this machine; the developer's CubeIDE can stay open.
+It works on a Build Tree of its own on `C:` (one per worktree) and on the boards of this machine and of its configured Pi Nodes; the developer's CubeIDE can stay open.
+Several sessions (worktrees) use the bench at once: a command holds a lease on each board it flashes or resets until it ends, and a board another session holds is refused.
 Command details, the scenario format and the guard live in [`tools/bench/README.md`](../../../tools/bench/README.md); `uv run --project tools/bench bench <cmd> --help` is authoritative for flags.
 Vocabulary (Build ID, Scenario, Run, Action, Smoke Check) is in `tools/bench/CONTEXT.md`.
 
 Run commands from the repo root as `uv run --project tools/bench bench ...`.
 A run takes minutes: start it with `run_in_background`, and read its output file when notified (progress lines are flushed as they happen).
+
+## Start with the map
+
+`bench map` draws the boards connected on this PC and on Pi Nodes and says which are free, held or recorded by another session (a page the user can open; `bench boards` is the text form).
+Choose the boards, the class of each and the Build Overrides yourself when the test is simple: a smoke check, a reset, reading a trace, a rerun of a scenario that already names them.
+Ask the user (AskUserQuestion, your recommendation first) only for an opinionated choice: which board is the C3, or sits at which hop of a line; an override value that changes what the test measures; a run that holds boards for hours.
+Say in the report which choices you made.
+A Pi Node has one operator at a time, as a local board has: the lease is the only coordination `bench` needs.
 
 ## The loop
 
@@ -22,10 +31,11 @@ Every run, whatever its purpose (acceptance, performance or spontaneous), leaves
    Start from `tools/bench/scenarios/`; a one-off can be flags (`--node 2=C2 --expect "2 CLK to=WARM within=8m"`), `--save` it when it is worth keeping.
    Its header comment names the purpose and the issue.
    Done when `bench scenario check <file>` prints the plan you intend, and the Test Record lists the scenario, its hardware and the criteria it covers.
-2. **Board state.** `bench boards` shows each probe, port, Node ID and last Build ID, and ends with the count; tell the user how many boards are connected and which Node IDs they are, before the first run.
-   `bench capture status` must show the bench capture recording every port (`bench capture up` otherwise).
-   A board with an unknown UID needs `--probe-uids` (it reboots that board).
-   The bench holds at most 4 boards (6 once Simon buys more hardware): a scenario names only boards that are connected, and one needing more says so rather than being cut down silently.
+2. **Board state.** `bench boards` lists every board bench can reach, a local probe or a Pi Node, with its Node ID and last Build ID, and ends with the count; tell the user the count and the Node IDs before the first run.
+   A board another session holds shows `HELD by <worktree>: <command>`: it is not yours, so pick other boards or wait, and leave its capture alone (`--replace` is for a port you need).
+   `bench capture status` must show every board recorded, by this capture or another's (`bench capture up` otherwise).
+   A board with an unknown UID is a new board: `--probe-uid <id>` reads that one (a Pi Node: a GDB session; an ST-LINK board: it reboots), then add it to `Common/Protocol/node_id.c` with the next free Node ID.
+   Done when every Node ID the scenario names is listed and free; a scenario that needs a board `bench boards` does not list says so, it is not cut down.
 3. **Run.** `bench run <scenario>`: it builds the working tree (uncommitted changes included), flashes, fires the actions and decides.
    Done when it exits: 0 PASS, 1 FAIL, 2 TIMEOUT, 3 invalid scenario.
 4. **Read the verdict**, then fix and go back to 3:
@@ -50,5 +60,5 @@ Option bytes, OTP, readout protection, security and mass erase are out of reach 
 
 ## Traces without a run
 
-The bench capture writes every board's trace to `tools/arclog/runs/bench/<port>-YYYYMMDD.log` (UTC days).
+The bench capture writes every board's trace to `tools/arclog/runs/bench/<node>-YYYYMMDD.log` (UTC days; `<node>` is the COM port or a Pi Node's name; in a worktree that path leads to the main checkout's shared folder).
 Read those files directly, by polling (`tail`, `grep`, `arclog view`), or check a live condition with `uv run --project tools/arclog arclog expect <file> --dir tools/arclog/runs/bench --since <UTC time> --follow`.

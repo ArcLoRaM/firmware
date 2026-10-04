@@ -5,15 +5,39 @@ Firmware terms (Node Class, Node ID, ArcLog, ...) keep the meaning given in the 
 
 ## Board
 
-One NUCLEO-WL55JC on the bench, reached through its own ST-LINK probe.
-The probe's serial number is how `bench` talks to a board, its chip UID is how `bench` recognizes it.
+One NUCLEO-WL55JC on the bench, reached through its own ST-LINK probe or through a Pi Node.
+The probe's serial number (or the Pi Node's configured name) is how `bench` talks to a board, its chip UID is how `bench` recognizes it.
 A board is addressed by its Node ID, found by reading the UID over SWD and looking it up in the firmware's UID table (`Common/Protocol/node_id.c`).
 A board has no fixed Node Class: the Scenario picks one for each run.
 _Avoid_: naming a board by its COM port, which changes with the USB port it is plugged into.
 
+## Pi Node
+
+A Raspberry Pi wired to a NUCLEO's SWD, reset and UART pins, running OpenOCD and a UART log server on the tailnet.
+It stands in for the board's ST-LINK, and the board keeps its Node ID: only the way `bench` reaches it differs.
+It is named in `bench.toml`, and is a shared resource when the collaborator who owns it runs tests on it.
+_Avoid_: remote board, remote probe.
+
+## Session
+
+One agent or person working in one worktree.
+Several Sessions use the bench at once, each on boards no other Session is using.
+
+## Lease
+
+The hold a command takes on a Board while it flashes, resets or reads it over SWD, released by the system when the command ends.
+A run only watching a Board takes a shared Lease: many may watch, none may flash.
+A Board another Session holds is refused at once, never waited for.
+_Avoid_: lock, reservation, ownership.
+
+## Onboarding
+
+The first run of a new Board: its UID is read, it receives the next free Node ID in the firmware's table (`Common/Protocol/node_id.c`), and it is flashed once with a build that holds the entry.
+A board whose UID is not in the table boots with `id=0`.
+
 ## Build Tree
 
-The copy of the working tree (uncommitted changes included) that `bench` builds from, on the Windows disk (`C:\Users\Simon\arcfw-bench\`), with its own CubeIDE workspace.
+The copy of the working tree (uncommitted changes included) that `bench` builds from, on the Windows disk (`C:\Users\Simon\arcfw-bench\`, and `arcfw-bench-<worktree>` for each worktree), with its own CubeIDE workspace.
 It keeps agent builds away from the developer's IDE, workspace and `Debug_C*` folders, and the Windows compiler reads it at native speed.
 It is synced from the repo before every build and is never edited by hand.
 
@@ -64,6 +88,6 @@ A Scenario adds its own Expectations on top.
 
 ## Capture
 
-The always-on, multi-port `arclog capture` process on Windows that records every board's trace UART (the ST-LINK virtual COM port) into files.
-It is the only process that opens the COM ports; a run reads the files, it never opens a port.
+The always-on, multi-port `arclog capture` process on Windows that records every board's trace UART (the ST-LINK virtual COM port, or a Pi Node's log server over TCP) into files.
+It is the only process that opens the COM ports and the log connections; a run reads the files, it never opens a port.
 `bench capture up` starts it if it is not running, and every run calls it first.
