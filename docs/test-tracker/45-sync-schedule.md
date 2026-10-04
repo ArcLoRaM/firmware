@@ -7,7 +7,7 @@ Purpose: acceptance. Issue: #45.
 | Scenario | Proves or measures |
 |---|---|
 | `tools/bench/scenarios/sync-profile-dev.toml` | C3 (Node 1) + C2 (Node 4), NUCLEO Clock: the default DEV profile on the boards: `SYNC_TX` in cell 0 only, one per 200 s phase, no `TX_DENIED`, and a cold C2 locks (`CLK to=WARM`) within 12 min. Run 2026-10-04: PASS (see Runs) |
-| `tools/bench/scenarios/sync-profile-dev-burst.toml` | The boot burst option (`SYNC_BOOT_BURST=3u`) on the same pair: `SYNC_TX` in cells 0 to 2 of the first phase only, and the C2 booted with the C3 reaches `CLK to=WARM` within 3 min instead of about 10. Run 2026-10-04 with a burst of 5: PASS, WARM at +66.6 s instead of +606.6 s (see Runs) |
+| `tools/bench/scenarios/sync-profile-dev-burst.toml` | The boot burst option (`SYNC_BOOT_BURST=5u`) on the same pair: `SYNC_TX` in cells 1 to 4 seen (cell 0 leaves before the run arms) and none in cell 5 or later, and the C2 booted after the C3 reaches `CLK to=WARM` within 3 min instead of about 10. Run 2026-10-04 with a burst of 5: PASS, WARM at +66.6 s instead of +606.6 s (see Runs) |
 | `tools/bench/scenarios/sync-schedule.toml` (to write once the schedule is chosen) | C3 + C2 for several hours: no `TX_DENIED` on Sync slots after the boot burst, and the C2's `SYNC_RX` rate equals the schedule's |
 
 ## Hardware
