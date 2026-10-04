@@ -28,12 +28,16 @@ One compile-time parameter, `SYNC_PROFILE` (`Common/Protocol/sync_profile.h`), p
 - **Each constant stays overridable on its own** (`-D SYNC_TX_BUDGET=1u`), so a scenario can still vary one value, and the host tests pin `BRINGUP`.
 - **The profile is logged** in the CM0+ `BOOT` line (`sync=`), so a trace says which schedule it ran.
 - The default is DEV while PROD is provisional; it becomes PROD when #45 lands its table.
+- **Boot burst, an option for faster warm-up** (`SYNC_BOOT_BURST=N`, default 1 = none): the first Sync phase after the C3 boots sends N packets in its first cells (20 s apart on DEV), drawn from the full duty-cycle credit (the 36 s bucket holds 36 packets, N is at most the 10 cells of a phase); every later phase sends one.
+  Boards flashed or reset together with the C3 lock within that phase (about 1.5 min for N = 3 on DEV) instead of three phases.
+  It does not help a node reset alone later, nor a node below a relay: they keep the regular schedule.
 
 ## Considered Options
 
 - **A run-time switch (a command from the CM4 or the network).** Rejected: the table is compile-time with one accessor (ADR-0003), and a product node must not be able to change its Sync overhead.
 - **Keep the bring-up table as the development schedule.** Rejected: it starves itself after 6.1 min.
-- **A dense boot burst, then the product period.** Not rejected, not built: it would shorten the cold start of a node that boots with the C3, not of one reset later. Open.
+- **A burst in every phase with a longer period.** Rejected: at the same duty cycle 3 packets per phase stretch the period 3 times, so only the average cold start improves (about 500 s to about 300 s).
+- **A boot burst only.** Adopted as the option above. It shortens the cold start of a node that boots with the C3, not of one reset alone later, which would need the C3 to learn that a node is cold (an uplink request, not built).
 
 ## Consequences
 

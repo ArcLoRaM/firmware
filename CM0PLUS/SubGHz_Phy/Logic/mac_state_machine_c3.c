@@ -40,6 +40,7 @@ static CellEligibilityMask_t s_cell_elig_dl;
 static PhaseTxFlag_t         s_phase_tx_flag;
 static uint8_t               s_last_phase_idx;
 static uint8_t               s_sync_tx_remaining;
+static bool                  s_boot_burst_pending;   /* the first Sync phase after boot sends the burst */
 static uint32_t              s_sync_phase_epoch_ms;
 static uint8_t               s_sync_phase_day;
 static uint8_t               s_sync_phase_month;
@@ -59,6 +60,7 @@ void MAC_Init(const MAC_Hooks_t *hooks)
     s_phase_tx_flag        = 1u;
     s_last_phase_idx       = 0xFFu;
     s_sync_tx_remaining    = SYNC_TX_BUDGET;
+    s_boot_burst_pending   = true;
     s_sync_phase_epoch_ms  = 0u;
     s_sync_phase_day       = 0u;
     s_sync_phase_month     = 0u;
@@ -82,6 +84,14 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
         if (phase->type == PHASE_TYPE_SYNC) {
             s_phase_tx_flag = 1u;
             s_sync_tx_remaining = SYNC_TX_BUDGET;
+            if (s_boot_burst_pending) {
+                /* The first Sync phase after boot: the burst (an option, 1 =
+                 * none), so that boards booted with the C3 lock within it. */
+                s_boot_burst_pending = false;
+                if (SYNC_BOOT_BURST > SYNC_TX_BUDGET) {
+                    s_sync_tx_remaining = SYNC_BOOT_BURST;
+                }
+            }
             /* The epoch is the phase's nominal start from the schedule, the
              * instant cell 0's packet starts on air: an RTC reading here is
              * taken a Tx lead early plus the wake latency. The RTC gives the

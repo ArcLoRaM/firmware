@@ -1,0 +1,45 @@
+# Purpose: acceptance (the boot burst option). Issue #45, Test Record
+# docs/test-tracker/45-sync-schedule.md.
+# SYNC_BOOT_BURST=3u: the first Sync phase after the C3 boots sends its packets in
+# cells 0, 1 and 2 (20 s apart on the DEV profile), from the full credit bucket.
+# A C2 flashed and booted with the C3 gets its three packets (one RTC set, two
+# good) in that phase and is WARM within about 1.5 min, instead of the three
+# phases (about 10 min) of scenario sync-profile-dev.toml. Later phases are one
+# packet again. C3 = Node 1, C2 = Node 4 (NUCLEO Clock).
+description = "Boot burst: a C2 booted with the C3 locks within the first Sync phase"
+timeout = "8m"
+
+[nodes]
+1 = "C3"
+4 = "C2"
+
+[overrides]
+SYNC_BOOT_BURST = "3u"
+
+[[expect]]
+node = 1
+event = "SYNC_TX"
+where = { ce = 0 }
+
+[[expect]]
+node = 1
+event = "SYNC_TX"
+where = { ce = 2 }
+within = "2m"
+
+[[expect]]
+node = 4
+event = "CLK"
+where = { to = "WARM" }
+within = "3m"
+
+# The burst is the first phase only: no packet in cell 3 or later, ever.
+[[forbid]]
+event = "SYNC_TX"
+where = { ce = 3 }
+
+[[forbid]]
+event = "TX_DENIED"
+
+[[forbid]]
+event = "TX_LATE"

@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include "tdma_table.h"
 #include "compliance_engine.h"
-#include "mac_state_machine.h"     /* SYNC_TX_BUDGET */
+#include "mac_state_machine.h"     /* SYNC_TX_BUDGET, MAC_OnSlotOpportunity */
 
 /*
  * The Sync profiles against the duty-cycle budget (ETSI 1 %, issues #34, #45).
@@ -82,6 +82,45 @@ static Outcome simulate(uint32_t first_cell, uint32_t hours)
     return o;
 }
 
+/* The C3: the real MAC decides which cells transmit (the budget, the boot
+ * burst); the compliance engine is asked for each, as the TDMA Machine does. */
+static Outcome simulate_c3(uint32_t hours)
+{
+    Outcome o = { 0, 0, UINT32_MAX, 0 };
+    uint32_t last_grant = 0, t0 = 0;
+    bool     have_t0 = false;
+
+    TdmaTable_Init();
+    MAC_Init(NULL);
+    s_now_ms = 0;
+    ComplianceEngine_Init(NULL, tick);
+
+    uint32_t frame = frame_ms();
+    for (uint32_t k = 0; (uint64_t)k * frame < (uint64_t)hours * 3600000u; k++) {
+        for (uint8_t i = 0; i < TdmaTable_PhaseCount(); i++) {
+            const Phase_t *p = TdmaTable_GetPhase(i);
+            uint32_t per_cell = p->slot_active_ms + p->gap_after_slot_ms;
+            for (uint32_t c = 0; c < p->cell_count; c++) {
+                s_now_ms = k * frame + TdmaTable_PhaseStartOffset_ms(i) + c * per_cell;
+                if ((uint64_t)s_now_ms >= (uint64_t)hours * 3600000u) continue;
+                FrameCursor_t cur = { .phase_index = i, .cell_index = (uint16_t)c, .slot_index = 0u };
+                if (MAC_OnSlotOpportunity(&cur, p, s_now_ms) != SLOT_TX) continue;
+                if (!have_t0) { t0 = s_now_ms; have_t0 = true; }
+                if (ComplianceEngine_RequestChannel(FREQ_HZ, p->slot_active_ms, TX_POWER_DBM) == COMPLIANCE_GRANTED) {
+                    ComplianceEngine_ReportTxDone(FREQ_HZ, SYNC_TOA_MS);
+                    if (o.granted > 0) o.last_grant_gap_ms = s_now_ms - last_grant;
+                    last_grant = s_now_ms;
+                    o.granted++;
+                } else {
+                    if (o.denied == 0) o.first_denied_ms = s_now_ms - t0;
+                    o.denied++;
+                }
+            }
+        }
+    }
+    return o;
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -112,10 +151,21 @@ void test_the_silence_timeout_outlasts_one_lost_packet(void)
 
 void test_c3_is_never_denied_in_4_hours(void)
 {
-    Outcome o = simulate(0, 4);
+    Outcome o = simulate_c3(4);
     TEST_ASSERT_EQUAL_UINT32(0, o.denied);
-    TEST_ASSERT_EQUAL_UINT32((4u * 3600000u + PHASE_MS - 1u) / PHASE_MS, o.granted);   /* one per phase */
+    TEST_ASSERT_EQUAL_UINT32((4u * 3600000u + PHASE_MS - 1u) / PHASE_MS + (SYNC_BOOT_BURST - 1u), o.granted);   /* one per phase, plus the burst */
     TEST_ASSERT_EQUAL_UINT32(PHASE_MS, o.last_grant_gap_ms);
+}
+
+/* The boot burst (an option, SYNC_BOOT_BURST packets in the first phase after
+ * the C3 boots) is paid from the full credit and never denied; afterwards one
+ * packet per phase. With the option off it is the plain profile. */
+void test_the_boot_burst_is_sent_and_never_denied(void)
+{
+    Outcome o = simulate_c3(4);
+    TEST_ASSERT_EQUAL_UINT32(0, o.denied);
+    uint32_t phases = (4u * 3600000u + PHASE_MS - 1u) / PHASE_MS;
+    TEST_ASSERT_EQUAL_UINT32(phases + (SYNC_BOOT_BURST - 1u), o.granted);
 }
 
 void test_a_relaying_c2_is_never_denied_in_4_hours(void)
@@ -127,8 +177,10 @@ void test_a_relaying_c2_is_never_denied_in_4_hours(void)
 /* Margin: the airtime is under 1 % of the time with room to spare. */
 void test_airtime_is_under_one_percent_with_margin(void)
 {
-    Outcome o = simulate(0, 4);
-    uint64_t airtime_ms = (uint64_t)o.granted * SYNC_TOA_MS;
+    Outcome o = simulate_c3(4);
+    /* The duty cycle of the profile is the steady state; the boot burst is a
+     * one-off paid from the credit bucket (checked by its own test). */
+    uint64_t airtime_ms = (uint64_t)(o.granted - (SYNC_BOOT_BURST - 1u)) * SYNC_TOA_MS;
     uint64_t window_ms  = 4ull * 3600000ull;
     TEST_ASSERT_TRUE_MESSAGE(airtime_ms * 100000u <= window_ms * PERCENT_X1000, "above the profile's duty cycle");
     TEST_ASSERT_TRUE_MESSAGE(airtime_ms * 100u < window_ms, "above 1 % of the time");
@@ -165,7 +217,7 @@ void test_default_schedule_is_ten_times_over_the_budget(void)
     TdmaTable_Init();
     TEST_ASSERT_EQUAL_UINT32(30000u, TdmaTable_PhaseDuration_ms(TdmaTable_GetPhase(0)));
     TEST_ASSERT_EQUAL_UINT32(3u, SYNC_TX_BUDGET);
-    Outcome o = simulate(0, 1);
+    Outcome o = simulate_c3(1);
     TEST_ASSERT_TRUE_MESSAGE(o.denied > 0, "never denied");
     TEST_ASSERT_TRUE_MESSAGE(o.first_denied_ms > 6u * 60000u && o.first_denied_ms < 7u * 60000u,
                              "first denial not between 6 and 7 min");
@@ -173,7 +225,7 @@ void test_default_schedule_is_ten_times_over_the_budget(void)
 
 void test_default_schedule_starves_c3_and_c2_alike(void)
 {
-    Outcome c3 = simulate(0, 4);
+    Outcome c3 = simulate_c3(4);
     Outcome c2 = simulate(1, 4);
     /* 1440 packets are scheduled in 4 h. The budget allows the 36 s bucket
      * plus 1 % of 4 h = 180 s of airtime: 181 packets of 991 ms. The rest is
@@ -194,6 +246,7 @@ int main(void)
     RUN_TEST(test_the_schedule_has_the_profile_period_and_one_packet_per_phase);
     RUN_TEST(test_the_silence_timeout_outlasts_one_lost_packet);
     RUN_TEST(test_c3_is_never_denied_in_4_hours);
+    RUN_TEST(test_the_boot_burst_is_sent_and_never_denied);
     RUN_TEST(test_a_relaying_c2_is_never_denied_in_4_hours);
     RUN_TEST(test_airtime_is_under_one_percent_with_margin);
     RUN_TEST(test_credit_never_gets_close_to_the_request);

@@ -85,8 +85,18 @@ foreach(prof BRINGUP DEV PROD)
         test_sync_budget.c
         ../../Common/Protocol/tdma_table.c
         ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+        ../../CM0PLUS/SubGHz_Phy/Logic/mac_state_machine_c3.c
     )
 endforeach()
+# DEV with the largest boot burst (a whole phase of packets): paid from the full credit.
+set(TEST_SYNC_PROFILE SYNC_PROFILE_DEV)
+add_unity_test(test_sync_budget_dev_burst
+    test_sync_budget.c
+    ../../Common/Protocol/tdma_table.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/mac_state_machine_c3.c
+)
+target_compile_definitions(test_sync_budget_dev_burst PRIVATE SYNC_BOOT_BURST=10u)
 set(TEST_SYNC_PROFILE "")
 add_unity_test(test_sync_profile_default
     test_sync_profile.c
@@ -101,6 +111,16 @@ foreach(cls c1 c2)
         ../../Common/Protocol/tdma_table.c
     )
 endforeach()
+
+# The C3's boot burst (SYNC_BOOT_BURST=5), on the DEV profile (one packet per phase).
+set(TEST_SYNC_PROFILE SYNC_PROFILE_DEV)
+add_unity_test(test_mac_sync_boot_burst_c3
+    test_mac_sync_boot_burst_c3.c
+    ../../CM0PLUS/SubGHz_Phy/Logic/mac_state_machine_c3.c
+    ../../Common/Protocol/tdma_table.c
+)
+target_compile_definitions(test_mac_sync_boot_burst_c3 PRIVATE SYNC_BOOT_BURST=5u)
+set(TEST_SYNC_PROFILE SYNC_PROFILE_BRINGUP)
 
 # Timing probe helper: with BENCH_PROBE (lines, wrap, limit) and production (nothing).
 add_unity_test(test_probe

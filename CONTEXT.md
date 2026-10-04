@@ -766,6 +766,7 @@ Its figures do not transfer to the Production Clock (a calibration residual, a d
 ### Sync Profile
 The compile-time choice of how often the network synchronises: `DEV` (the default; a Sync phase every 200 s, one packet per node per phase, inside the duty-cycle budget, for work that assumes synchronised clocks), `PROD` (the product period derived from the drift bound, provisional) and `BRINGUP` (the former 30 s schedule, host tests only).
 It also fixes the Sync Silence Timeout. A trace names it in the `BOOT` line (`sync=`).
+An option, the **boot burst** (`SYNC_BOOT_BURST`), makes the first Sync phase after the C3 boots send several packets so that boards booted with it lock at once.
 _Avoid_: Sync mode, Sync rate
 
 ### Baseline Calibration

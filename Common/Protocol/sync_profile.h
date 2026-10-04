@@ -78,6 +78,25 @@
 #  define SYNC_CELL_GAP_MS  SYNC_PROFILE_CELL_GAP_MS
 #endif
 
+/*! Cells in a Sync phase (the table, tdma_table.c). */
+#define SYNC_PHASE_CELLS  10u
+
+/*!
+ * Boot burst, an option for faster warm-up (default 1: none). The C3 sends
+ * this many packets, in the first cells, of the FIRST Sync phase after it
+ * boots, drawn from its full duty-cycle credit (the 36 s bucket holds 36
+ * packets); every later phase sends SYNC_TX_BUDGET. Boards flashed or reset
+ * together with the C3 then lock within that phase (about 40 s on DEV for 3)
+ * instead of one phase per packet. A node reset alone later, and every relay,
+ * keep the regular schedule. `-D SYNC_BOOT_BURST=3u`.
+ */
+#ifndef SYNC_BOOT_BURST
+#  define SYNC_BOOT_BURST  1u
+#endif
+#if (SYNC_BOOT_BURST < 1u) || (SYNC_BOOT_BURST > SYNC_PHASE_CELLS)
+#  error "SYNC_BOOT_BURST must be between 1 and the cells of a Sync phase"
+#endif
+
 /*! Silence after which a node drops to CLOCK_COLD (ADR-0013). */
 #ifndef SYNC_SILENCE_TIMEOUT_MS
 #  define SYNC_SILENCE_TIMEOUT_MS  SYNC_PROFILE_SILENCE_MS
