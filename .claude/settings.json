@@ -6,6 +6,10 @@
       "Bash(uv run bench:*)",
       "Bash(uv run arclog:*)",
       "Bash(uv run pytest:*)"
+    ],
+    "deny": [
+      "Bash(*arm-none-eabi-gdb*)",
+      "Bash(*STM32_Programmer_CLI*)"
     ]
   }
 }
