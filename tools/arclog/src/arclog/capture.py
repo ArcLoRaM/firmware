@@ -12,12 +12,15 @@ the one host clock at receive time.
 from __future__ import annotations
 
 import queue
+import re
+import socket
 import sys
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator, TextIO
+from urllib.parse import urlsplit
 
 from arclog.model import Line, format_host_time, parse_line
 
@@ -65,6 +68,86 @@ def serial_lines(port: str, baud: int = DEFAULT_BAUD, reconnect: bool = True,
                 return
             if not down:
                 log(f"arclog: {port} unavailable ({exc}); retrying every {RECONNECT_S:.0f} s")
+                down = True
+            time.sleep(RECONNECT_S)
+
+
+#: What a Pi Node's log server (Nuna-Systems/Pi-node) puts before every line: its own receive time,
+#: in the Pi's local time with no zone. The capture drops it and stamps the line with the host UTC
+#: clock like any serial line: a zone-less stamp repeats an hour at the autumn clock change.
+_PI_STAMP_RE = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d+)? \| ?")
+
+
+def parse_tcp_url(url: str) -> tuple[str, int]:
+    """'tcp://host:port[/label]' -> (host, port). The label names the node for the caller; it is ignored here."""
+    parts = urlsplit(url)
+    try:
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        host = port = None
+    if parts.scheme != "tcp" or not host or not port or not 1 <= port <= 65535:
+        raise ValueError(f"not a tcp:// port with a host and a port (tcp://host:4000/name): {url!r}")
+    return host, port
+
+
+def _keepalive(sock: socket.socket) -> None:
+    """Detect a link that died without a close (Wi-Fi, relay): a quiet board must not look alive."""
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    try:
+        if hasattr(socket, "SIO_KEEPALIVE_VALS"):  # Windows: on, idle 30 s, interval 10 s
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 30_000, 10_000))
+        else:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+    except (AttributeError, OSError):
+        pass
+
+
+def tcp_lines(url: str, reconnect: bool = True,
+              log: Callable[[str], None] = lambda m: print(m, file=sys.stderr),
+              duration_s: float | None = None) -> Iterator[tuple[datetime, str]]:
+    """Yield (host UTC time, line) from a Pi Node's log server, reconnecting on errors.
+
+    Same contract as serial_lines. Lines the server sent while this reader was away are not
+    replayed: the live stream keeps nothing (a recorder on the Pi is the way to not lose them).
+    """
+    host, port = parse_tcp_url(url)
+    deadline = time.monotonic() + duration_s if duration_s else None
+    down = False
+    while True:
+        try:
+            with socket.create_connection((host, port), timeout=5.0) as sock:
+                _keepalive(sock)
+                sock.settimeout(1.0)
+                down = False
+                log(f"arclog: listening on {url}")
+                buf = bytearray()
+                while True:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        return
+                    try:
+                        chunk = sock.recv(4096)
+                    except socket.timeout:
+                        continue
+                    if not chunk:
+                        raise ConnectionError(f"{host}:{port} closed the connection")
+                    buf.extend(chunk)
+                    while True:
+                        nl = buf.find(b"\n")
+                        if nl < 0:
+                            break
+                        raw = _PI_STAMP_RE.sub("", bytes(buf[:nl]).decode("utf-8", errors="replace").rstrip("\r"))
+                        del buf[: nl + 1]
+                        if raw.strip():
+                            yield datetime.now(timezone.utc), raw
+        except OSError as exc:
+            if not reconnect:
+                raise
+            if deadline is not None and time.monotonic() >= deadline:
+                return
+            if not down:
+                log(f"arclog: {url} unavailable ({exc}); retrying every {RECONNECT_S:.0f} s")
                 down = True
             time.sleep(RECONNECT_S)
 
@@ -127,6 +210,8 @@ def capture(ports: list[tuple[str, str]], out_dir: Path, baud: int = DEFAULT_BAU
         raise ValueError(f"node name given twice (would share a file): {nodes_seen}")
     if source is None:
         def source(port: str) -> Iterator[tuple[datetime, str]]:
+            if port.startswith("tcp://"):
+                return tcp_lines(port, duration_s=duration_s)
             return serial_lines(port, baud, duration_s=duration_s)
 
     lines: queue.Queue = queue.Queue()

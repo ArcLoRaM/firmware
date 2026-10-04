@@ -124,3 +124,99 @@ def test_an_outage_is_logged_once_and_the_recovery_once(monkeypatch):
     lines = [raw for _, raw in capture_mod.serial_lines("COM6", log=logs.append, duration_s=0.3)]
     assert lines == [BOOT]
     assert [m.split(" (")[0] for m in logs] == ["arclog: COM6 unavailable", "arclog: listening on COM6 @ 9600"]
+
+
+# --- a Pi Node's log over TCP ---------------------------------------------------------------------
+
+PI_LINE = "2026-10-04 20:54:03.180082 | 000102T044054.0161 0T H #20 SLOT ph=1 ty=SYNC"
+SLOT = "000102T044054.0161 0T H #20 SLOT ph=1 ty=SYNC"
+
+
+class Peer:
+    """A TCP server standing in for a Pi Node's log server: one script (byte chunks) per connection."""
+
+    def __init__(self, *scripts):
+        import socket
+        import threading
+        import time
+
+        self.srv = socket.socket()
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(5)
+        self.url = f"tcp://127.0.0.1:{self.srv.getsockname()[1]}/nuna-node-01"
+
+        def serve():
+            for chunks in scripts:
+                conn, _ = self.srv.accept()
+                for chunk in chunks:
+                    conn.sendall(chunk)
+                    time.sleep(0.02)
+                conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+
+    def close(self):
+        self.srv.close()
+
+
+@pytest.fixture
+def peer_factory(monkeypatch):
+    monkeypatch.setattr(capture_mod, "RECONNECT_S", 0.01)
+    made = []
+
+    def make(*scripts):
+        made.append(Peer(*scripts))
+        return made[-1]
+
+    yield make
+    for p in made:
+        p.close()
+
+
+def test_the_pi_stamp_is_removed_and_lines_are_rebuilt_across_chunks(peer_factory):
+    peer = peer_factory([(PI_LINE + "\r\n").encode(),
+                         b"2026-10-04 20:54:06.180128 | 000102T044057.0161 0T H #21 SL",
+                         b"OT ph=1\n",
+                         b"2026-10-04 20:54:07.000000 | \n",       # a stamp with nothing after it
+                         b"not stamped\n"])
+    lines = [raw for _, raw in capture_mod.tcp_lines(peer.url, log=lambda m: None, duration_s=1.0)]
+    assert lines == [SLOT, "000102T044057.0161 0T H #21 SLOT ph=1", "not stamped"]
+
+
+def test_a_line_is_stamped_with_the_controller_clock_in_utc(peer_factory):
+    peer = peer_factory([(PI_LINE + "\n").encode()])
+    before = datetime.now(timezone.utc)
+    [(t, raw)] = list(capture_mod.tcp_lines(peer.url, log=lambda m: None, duration_s=0.6))
+    assert before <= t <= datetime.now(timezone.utc) and t.tzinfo is not None
+    assert raw == SLOT
+
+
+def test_a_dropped_connection_is_retried(peer_factory):
+    peer = peer_factory([(PI_LINE + "\n").encode()], [b"2026-10-04 20:54:09.000000 | 000102T044100.0163 0Y M #22 SYNC_EPOCH\n"])
+    logs = []
+    lines = [raw for _, raw in capture_mod.tcp_lines(peer.url, log=logs.append, duration_s=1.0)]
+    assert lines == [SLOT, "000102T044100.0163 0Y M #22 SYNC_EPOCH"]
+    assert sum("listening on" in m for m in logs) >= 2 and any("unavailable" in m for m in logs)
+
+
+def test_without_reconnect_a_closed_connection_is_an_error(peer_factory):
+    peer = peer_factory([(PI_LINE + "\n").encode()])
+    with pytest.raises(ConnectionError, match="closed"):
+        list(capture_mod.tcp_lines(peer.url, reconnect=False, log=lambda m: None, duration_s=2.0))
+
+
+def test_capture_reads_a_tcp_port_with_the_tcp_source(tmp_path, peer_factory):
+    peer = peer_factory([(PI_LINE + "\n").encode()])
+    capture([(peer.url, "nuna-node-01")], tmp_path, duration_s=0.8)
+    [f] = list(tmp_path.glob("nuna-node-01-*.log"))
+    assert f.read_text(encoding="utf-8").rstrip("\n").endswith("\t" + SLOT)
+
+
+@pytest.mark.parametrize("url", ["tcp://host", "tcp://:4000/x", "tcp://h:99999/x", "tcp://h:0/x", "COM6"])
+def test_a_tcp_url_needs_a_host_and_a_port(url):
+    with pytest.raises(ValueError, match="tcp://"):
+        capture_mod.parse_tcp_url(url)
+
+
+def test_a_tcp_url_gives_host_and_port_and_ignores_the_label():
+    assert capture_mod.parse_tcp_url("tcp://100.64.0.11:4000/nuna-node-01") == ("100.64.0.11", 4000)

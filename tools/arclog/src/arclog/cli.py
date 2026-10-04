@@ -185,7 +185,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("capture", help="record serial ports to daily capture files, one node per port")
     c.add_argument("--port", required=True, action="append",
-                   help="serial port, e.g. /dev/ttyUSB0 or COM5; repeat for several ports")
+                   help="serial port, e.g. /dev/ttyUSB0 or COM5, or a Pi Node's log server, "
+                        "tcp://host:4000/name; repeat for several ports")
     c.add_argument("--node", required=True, action="append",
                    help="node name used in file names, e.g. c3; one per --port, same order")
     c.add_argument("--out", default="runs", help="output directory (default: runs)")
