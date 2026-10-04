@@ -100,7 +100,7 @@ static uint8_t           s_last_tx_len;
 
 static uint32_t plat_radio_toa(uint8_t len);
 static uint32_t plat_radio_toa_us(uint8_t len);
-static uint32_t plat_rx_back_ticks(uint8_t len);
+static uint32_t plat_rx_back_ticks(uint8_t len, uint32_t *toa_ms);
 
 void SubGhzPhyTask_OnRadioIrq(void)
 {
@@ -149,16 +149,15 @@ static void on_rx_done(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr
     PROBE_START(probe);
     uint32_t rxd_ticks = s_irq_stamp_ticks;
     uint32_t rxd   = s_irq_stamp_ms;
-    uint32_t toa   = plat_radio_toa((uint8_t)size);
-    PROBE_MARK(probe, "toa_ms_driver");
+    uint32_t toa   = 0u;     /* ms, for the log, from the same cache */
     /* SyncStamp: packet start, in RTC ticks and in the RTC day domain (a
      * packet received just after midnight started before it): RxDone minus
      * the time on air in microseconds (991 232 us for a Sync packet, not the
      * driver's whole 991 ms) minus the Rx latency (issue #82). `stamp` is its
      * floor in ms, for the log. */
-    uint32_t stamp_ticks = SyncStamp_FromRxDoneTicks(rxd_ticks, plat_rx_back_ticks((uint8_t)size));
+    uint32_t stamp_ticks = SyncStamp_FromRxDoneTicks(rxd_ticks, plat_rx_back_ticks((uint8_t)size, &toa));
     uint32_t stamp = RtcTicks_ToMs(stamp_ticks);
-    PROBE_MARK(probe, "stamp_ticks");
+    PROBE_MARK(probe, "stamp");
     PROBE_LOG(probe, "rx_stamp");
 
     UTIL_TIMER_Stop(&s_rx_cap_timer);
@@ -347,15 +346,18 @@ static uint32_t plat_radio_toa_us(uint8_t len)
  * modem configuration is fixed, so it is computed once per length: the
  * 64-bit formula and conversions cost 550 us per packet at 4 MHz when done
  * in the interrupt (bench probe, 2026-10-04, issue #82). */
-static uint32_t plat_rx_back_ticks(uint8_t len)
+static uint32_t plat_rx_back_ticks(uint8_t len, uint32_t *toa_ms)
 {
     static uint8_t  s_len;
     static uint32_t s_back;
+    static uint32_t s_toa_ms;
     if (s_back == 0u || s_len != len) {
-        s_back = SyncStamp_UsToTicks(plat_radio_toa_us(len))
-               + SyncStamp_UsToTicks(RX_DONE_LATENCY_MS * 1000u);
-        s_len  = len;
+        uint32_t toa_us = plat_radio_toa_us(len);
+        s_back   = SyncStamp_UsToTicks(toa_us) + SyncStamp_UsToTicks(RX_DONE_LATENCY_MS * 1000u);
+        s_toa_ms = (toa_us + 500u) / 1000u;       /* 991 for a Sync packet, as the driver gave */
+        s_len    = len;
     }
+    *toa_ms = s_toa_ms;
     return s_back;
 }
 
