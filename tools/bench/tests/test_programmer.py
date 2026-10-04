@@ -1,6 +1,8 @@
 """The programmer guard: nothing irreversible ever reaches a board."""
 
+import os
 import struct
+import time
 from pathlib import Path
 
 import pytest
@@ -121,10 +123,29 @@ def test_not_an_elf_is_refused(tmp_path):
 REAL = Path("/mnt/c/Users/Simon/arcfw-bench/tree")
 
 
-@pytest.mark.skipif(not (REAL / "CM4/Debug_C2/ArcLoRaM_Base_CM4.elf").exists(), reason="no bench build")
+def _settled(path: Path) -> bool:
+    """A finished image: it exists, is not empty, and was not written in the last 10 s. The Build Tree
+    is shared by every session, so another one may be linking this very file."""
+    return path.exists() and path.stat().st_size > 0 and time.time() - path.stat().st_mtime > 10
+
+
+def test_an_image_being_written_is_not_settled(tmp_path):
+    empty = tmp_path / "a.elf"
+    empty.write_bytes(b"")
+    fresh = tmp_path / "b.elf"
+    fresh.write_bytes(b"\x7fELF")
+    old = tmp_path / "c.elf"
+    old.write_bytes(b"\x7fELF")
+    os.utime(old, (time.time() - 60, time.time() - 60))
+    assert [_settled(empty), _settled(fresh), _settled(old), _settled(tmp_path / "none.elf")] == [False, False, True, False]
+
+
 def test_the_real_images_pass():
-    check_image(REAL / "CM4/Debug_C2/ArcLoRaM_Base_CM4.elf", "CM4")
-    check_image(REAL / "CM0PLUS/Debug_C2/ArcLoRaM_Base_CM0PLUS.elf", "CM0PLUS")
+    images = {"CM4": REAL / "CM4/Debug_C2/ArcLoRaM_Base_CM4.elf", "CM0PLUS": REAL / "CM0PLUS/Debug_C2/ArcLoRaM_Base_CM0PLUS.elf"}
+    if not all(_settled(p) for p in images.values()):
+        pytest.skip("no finished bench build (missing, empty, or being linked by another session)")
+    for core, path in images.items():
+        check_image(path, core)
 
 
 # --- programmer ---------------------------------------------------------------
