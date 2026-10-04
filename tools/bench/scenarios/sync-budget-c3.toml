@@ -1,6 +1,6 @@
 # Purpose: acceptance (schedule for the multi-hour runs). Issue #34, Test Record
 # docs/test-tracker/34-runtime-calibration.md.
-# The default Sync table (a packet in 3 cells of each 30 s phase) is 9.9 % duty
+# The former default Sync table, now SYNC_PROFILE_BRINGUP (a packet in 3 cells of each 30 s phase) is 9.9 % duty
 # cycle: the 36 s credit is gone after 6.1 min and the C3 is denied (TX_DENIED)
 # from then on. A multi-hour run must not be starved, as in the field it will
 # not be (#45). The Build Overrides SYNC_TX_BUDGET=1u and SYNC_CELL_GAP_MS=9500u

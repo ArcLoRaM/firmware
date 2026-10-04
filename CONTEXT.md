@@ -763,6 +763,11 @@ The 32.768 kHz crystal of the NUCLEO development board (NDK NX3215SA): +-20 ppm 
 The bench boards carry it, and it is the clock of every bench result until the production hardware is on the bench: a result, a record or an ADR that comes from it says "NUCLEO".
 Its figures do not transfer to the Production Clock (a calibration residual, a drift rate, a temperature behaviour).
 
+### Sync Profile
+The compile-time choice of how often the network synchronises: `DEV` (the default; a Sync phase every 200 s, one packet per node per phase, inside the duty-cycle budget, for work that assumes synchronised clocks), `PROD` (the product period derived from the drift bound, provisional) and `BRINGUP` (the former 30 s schedule, host tests only).
+It also fixes the Sync Silence Timeout. A trace names it in the `BOOT` line (`sync=`).
+_Avoid_: Sync mode, Sync rate
+
 ### Baseline Calibration
 The Smooth Calibration setting of a board measured once against an ideal clock and loaded at boot: the common absolute footing of every node.
 Until a factory value exists, the setting read from the register at boot stands for it.

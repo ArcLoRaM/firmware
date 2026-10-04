@@ -27,8 +27,8 @@ EVENTS: dict[str, Event] = {
         (),
         "Core booted, with the Build ID (\"dev\" outside the bench, see "
         "Common/Bench/bench_config.h). CM0+ adds node class, Node ID "
-        "(0 = board not registered), MCU unique ID (w0 w1 w2) and firmware version.",
-        ("cls", "id", "uid", "fw", "build"),
+        "(0 = board not registered), MCU unique ID (w0 w1 w2) and firmware version, Build ID and Sync profile (sync_profile.h: BRINGUP, DEV or PROD).",
+        ("cls", "id", "uid", "fw", "build", "sync"),
     ),
     "PROBE": Event(
         "S", ("tag", "seg", "us", "hz"),

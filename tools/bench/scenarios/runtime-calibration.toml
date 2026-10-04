@@ -16,7 +16,7 @@
 # rate with no calibration (~0.6 ppm), and the residual (~8.2 ppm) is what the
 # write must cancel: resid = rate + applied.
 #
-# Schedule: the default Sync table is 9.9 % duty cycle and starves the C3 after
+# Schedule: the former default Sync table (now SYNC_PROFILE_BRINGUP) is 9.9 % duty cycle and starves the C3 after
 # 6.1 min (TX_DENIED), which the field will not see. The Build Overrides
 # SYNC_TX_BUDGET=1u and SYNC_CELL_GAP_MS=9500u give a Sync phase every 120 s,
 # one packet per phase (0.83 %, never denied: sync-budget-c3.toml on the board,

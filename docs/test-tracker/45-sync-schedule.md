@@ -6,6 +6,7 @@ Purpose: acceptance. Issue: #45.
 
 | Scenario | Proves or measures |
 |---|---|
+| `tools/bench/scenarios/sync-profile-dev.toml` | C3 (Node 1) + C2 (Node 4), NUCLEO Clock: the default DEV profile on the boards: `SYNC_TX` in cell 0 only, one per 200 s phase, no `TX_DENIED`, and a cold C2 locks (`CLK to=WARM`) within 12 min. Written, not yet run (no board connected on 2026-10-04) |
 | `tools/bench/scenarios/sync-schedule.toml` (to write once the schedule is chosen) | C3 + C2 for several hours: no `TX_DENIED` on Sync slots after the boot burst, and the C2's `SYNC_RX` rate equals the schedule's |
 
 ## Hardware
@@ -28,6 +29,12 @@ The bring-up table (two Sync phases of ten cells, a cell every 3 s, C3 and a rel
 The 36 s compliance credit is gone after 6.1 min, then each node sends one packet per 99 s and the other Sync slots are `TX_DENIED`; the traces of 2026-09-29 and 2026-10-01 show the first denial 6.1 to 6.6 min after boot.
 `Tests/unit/test_sync_budget.c` computes it with the real compliance engine and table.
 This issue must replace the table; until then a multi-hour run uses the Build Overrides `SYNC_TX_BUDGET=1u` and `SYNC_CELL_GAP_MS=9500u` (a Sync phase every 120 s, 0.83 %, see `34-runtime-calibration.md`).
+
+## Sync profiles (2026-10-04)
+
+The schedule is now a compile-time parameter, ADR-0020: `DEV` (the default, 200 s, one packet per node per phase, 0.496 % of the band) for development, `PROD` (540 s, provisional) for the product, `BRINGUP` (the 9.9 % table above) for the host tests.
+`Tests/unit/test_sync_budget.c` runs the real compliance engine and table for each: BRINGUP is denied after 6.1 min, DEV and PROD never in 4 h.
+This issue replaces the provisional `PROD` numbers.
 
 ## Criteria
 

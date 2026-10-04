@@ -769,11 +769,11 @@ void SubGhzPhyTask_Init(void)
 
     uint32_t uid[NODE_UID_WORDS];
     NodeId_ReadUid(uid);
-    ARCLOG(ARCLOG_MOD_SYS, VLEVEL_ALWAYS, "BOOT", "cls=C%u id=%u uid=%08x%08x%08x fw=%u.%u.%u build=%s",
+    ARCLOG(ARCLOG_MOD_SYS, VLEVEL_ALWAYS, "BOOT", "cls=C%u id=%u uid=%08x%08x%08x fw=%u.%u.%u build=%s sync=%s",
            (unsigned)NODE_CLASS, (unsigned)NodeId_FromUid(uid),
            (unsigned)uid[0], (unsigned)uid[1], (unsigned)uid[2],
            (unsigned)APP_VERSION_MAIN, (unsigned)APP_VERSION_SUB1,
-           (unsigned)APP_VERSION_SUB2, BENCH_BUILD_ID);
+           (unsigned)APP_VERSION_SUB2, BENCH_BUILD_ID, SYNC_PROFILE_NAME);
 
     /* 1. Radio — must be initialised before any UTIL_TIMER usage.
      *    TxTimeoutTimer and RxTimeoutTimer inside the radio driver are created

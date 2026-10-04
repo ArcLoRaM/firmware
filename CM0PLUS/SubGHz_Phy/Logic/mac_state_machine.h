@@ -32,6 +32,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "protocol_types.h"
+#include "sync_profile.h"     /* SYNC_TX_BUDGET, SYNC_SILENCE_TIMEOUT_MS: the Sync profile */
 #include "mac_types.h"
 #include "day_ms.h"          /* MS_PER_DAY, DayMs_* */
 
@@ -69,20 +70,14 @@
 #define BEACON_K_TX_CELLS  2u
 #endif
 
-#ifndef SYNC_TX_BUDGET
-/*!
- * \brief   Maximum sync transmissions per Sync Phase occurrence (C2 and C3).
+/* SYNC_TX_BUDGET: the maximum Sync transmissions per Sync Phase occurrence
+ * (C2 and C3), defined by the Sync profile (sync_profile.h).
  *
- * \details C2: after this many SLOT_TX returns in Sync cells 1+, the MAC
- *          returns SLOT_RX for the remaining cells in the occurrence.
- *          C3: transmits in the first SYNC_TX_BUDGET cells, then returns
- *          SLOT_SKIP for the rest. Prevents unnecessary radio-on time on
- *          large Sync phases while preserving enough relay coverage for
- *          the sequential CT hop chain. Reset to this value at each Sync
- *          Phase entry. C1 is unaffected (always Rx in Sync).
- */
-#define SYNC_TX_BUDGET  3u
-#endif
+ * C2: after this many SLOT_TX returns in Sync cells 1+, the MAC returns
+ * SLOT_RX for the remaining cells in the occurrence. C3: transmits in the
+ * first SYNC_TX_BUDGET cells, then returns SLOT_SKIP for the rest. One
+ * transmission is one repetition. Reset to this value at each Sync Phase
+ * entry. C1 is unaffected (always Rx in Sync). */
 
 #ifndef ROUTE_COST_CHANGE_THRESHOLD
 /*!
@@ -105,20 +100,16 @@
 #define SYNC_STAMP_MAX_AGE_MS  5000u
 #endif
 
-#ifndef SYNC_SILENCE_TIMEOUT_MS
-/*!
- * \brief   Wall-clock silence timeout for ClockState degradation.
+/* SYNC_SILENCE_TIMEOUT_MS is defined by the Sync profile (sync_profile.h).
  *
- * \details When no Sync packet of any tier is received for this duration,
- *          the node degrades \ref ClockState to \ref CLOCK_COLD and fires
- *          \c sync_lost. Measured in wall-clock time (RTC), not slot counts,
- *          to decouple degradation from TDMA table structure. Any received
- *          Sync packet (Tier 1, 2, or 3) resets the timer. See ADR-0013.
- *
- *          15 minutes (provisioned placeholder).
- */
-#define SYNC_SILENCE_TIMEOUT_MS  900000u
-#endif
+ * Wall-clock silence timeout for ClockState degradation. When no Sync packet
+ * of any tier is received for this duration,
+ * the node degrades \ref ClockState to \ref CLOCK_COLD and fires
+ * \c sync_lost. Measured in wall-clock time (RTC), not slot counts, to
+ * decouple degradation from TDMA table structure. Any received Sync packet
+ * (Tier 1, 2, or 3) resets the timer. See ADR-0013. It must outlast the
+ * packets the profile tolerates losing: 15 min for the frequent profiles,
+ * three periods (27 min) for PROD, so that one lost packet is not a COLD. */
 
 /* =========================================================================
  * Injected hook struct

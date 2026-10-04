@@ -5,19 +5,21 @@
 #include "mac_state_machine.h"     /* SYNC_TX_BUDGET */
 
 /*
- * The Sync schedule against the duty-cycle budget (ETSI 1 %, issue #34 / #45).
+ * The Sync profiles against the duty-cycle budget (ETSI 1 %, issues #34, #45).
  *
  * The real compliance engine and the real TDMA table, driven the way the TDMA
  * Machine drives them: each Sync Tx slot asks for slot_active_ms (2500 ms) of
  * credit and, once sent, gives back the difference to the real airtime of the
  * 10-byte Sync packet (991 ms at SF12/BW125, the figure of the Rx window
- * tests). The same file is built twice:
- *  - test_sync_budget_default: the bring-up table (3 Tx cells per phase, a
- *    cell every 3 s): it exhausts the credit, which is why a multi-hour run
- *    cannot use it;
- *  - test_sync_budget_run: the Build Overrides of the calibration runs
- *    (SYNC_TX_BUDGET=1u, SYNC_CELL_GAP_MS=9500u): never denied.
+ * tests). The same file is built once per profile (sync_profile.h):
+ *  - BRINGUP (3 Tx cells per phase, a cell every 3 s): it exhausts the
+ *    credit, which is why no multi-hour run can use it; the host tests pin it;
+ *  - DEV (a phase every 200 s, one packet): never denied, 0.496 % of the band;
+ *  - PROD (a phase every 540 s, one packet, provisional): never denied;
+ *  - the source default (no SYNC_PROFILE given) is DEV.
  */
+
+#include "sync_profile.h"
 
 #define FREQ_HZ      868300000u
 #define TX_POWER_DBM 14
@@ -62,6 +64,7 @@ static Outcome simulate(uint32_t first_cell, uint32_t hours)
             uint32_t per_cell = p->slot_active_ms + p->gap_after_slot_ms;
             for (uint32_t c = first_cell; c < first_cell + SYNC_TX_BUDGET; c++) {
                 s_now_ms = k * frame + TdmaTable_PhaseStartOffset_ms(i) + c * per_cell;
+                if ((uint64_t)s_now_ms >= (uint64_t)hours * 3600000u) continue;   /* past the window */
                 if (!have_t0) { t0 = s_now_ms; have_t0 = true; }
                 ComplianceResult_t r = ComplianceEngine_RequestChannel(FREQ_HZ, p->slot_active_ms, TX_POWER_DBM);
                 if (r == COMPLIANCE_GRANTED) {
@@ -82,23 +85,37 @@ static Outcome simulate(uint32_t first_cell, uint32_t hours)
 void setUp(void) {}
 void tearDown(void) {}
 
-#ifdef EXPECT_WITHIN_BUDGET
+#if SYNC_PROFILE != SYNC_PROFILE_BRINGUP
 
-/* The calibration-run schedule: a Sync phase every 120 s, one packet per phase. */
-void test_run_schedule_has_a_sync_phase_every_120_s(void)
+#if   SYNC_PROFILE == SYNC_PROFILE_DEV
+#  define PHASE_MS      200000u
+#  define PERCENT_X1000 496u      /* the C3's airtime, % x 1000, at most */
+#else
+#  define PHASE_MS      540000u
+#  define PERCENT_X1000 190u
+#endif
+
+void test_the_schedule_has_the_profile_period_and_one_packet_per_phase(void)
 {
     TdmaTable_Init();
-    TEST_ASSERT_EQUAL_UINT32(120000u, TdmaTable_PhaseDuration_ms(TdmaTable_GetPhase(0)));
-    TEST_ASSERT_EQUAL_UINT32(1u, SYNC_TX_BUDGET);
-    TEST_ASSERT_EQUAL_UINT32(240000u, frame_ms());
+    TEST_ASSERT_EQUAL_UINT32(PHASE_MS, TdmaTable_PhaseDuration_ms(TdmaTable_GetPhase(0)));
+    TEST_ASSERT_EQUAL_UINT32(1u, SYNC_TX_BUDGET);               /* one transmission is one repetition */
+    TEST_ASSERT_EQUAL_UINT32(2u * PHASE_MS, frame_ms());
+}
+
+/* A lost packet (k = 1) must not drop the node to COLD: the silence timeout
+ * outlasts two periods. */
+void test_the_silence_timeout_outlasts_one_lost_packet(void)
+{
+    TEST_ASSERT_TRUE(SYNC_SILENCE_TIMEOUT_MS > 2u * PHASE_MS);
 }
 
 void test_c3_is_never_denied_in_4_hours(void)
 {
     Outcome o = simulate(0, 4);
     TEST_ASSERT_EQUAL_UINT32(0, o.denied);
-    TEST_ASSERT_EQUAL_UINT32(4u * 3600u / 120u, o.granted);   /* 120 packets per hour... 120 phases */
-    TEST_ASSERT_EQUAL_UINT32(120000u, o.last_grant_gap_ms);
+    TEST_ASSERT_EQUAL_UINT32((4u * 3600000u + PHASE_MS - 1u) / PHASE_MS, o.granted);   /* one per phase */
+    TEST_ASSERT_EQUAL_UINT32(PHASE_MS, o.last_grant_gap_ms);
 }
 
 void test_a_relaying_c2_is_never_denied_in_4_hours(void)
@@ -113,7 +130,8 @@ void test_airtime_is_under_one_percent_with_margin(void)
     Outcome o = simulate(0, 4);
     uint64_t airtime_ms = (uint64_t)o.granted * SYNC_TOA_MS;
     uint64_t window_ms  = 4ull * 3600000ull;
-    TEST_ASSERT_TRUE_MESSAGE(airtime_ms * 1000u < window_ms * 10u * 85u / 100u, "above 0.85 % of the time");
+    TEST_ASSERT_TRUE_MESSAGE(airtime_ms * 100000u <= window_ms * PERCENT_X1000, "above the profile's duty cycle");
+    TEST_ASSERT_TRUE_MESSAGE(airtime_ms * 100u < window_ms, "above 1 % of the time");
 }
 
 /* Even the longest sleep of a bucket: it only ever fills (never drops under
@@ -172,8 +190,9 @@ void test_default_schedule_starves_c3_and_c2_alike(void)
 int main(void)
 {
     UNITY_BEGIN();
-#ifdef EXPECT_WITHIN_BUDGET
-    RUN_TEST(test_run_schedule_has_a_sync_phase_every_120_s);
+#if SYNC_PROFILE != SYNC_PROFILE_BRINGUP
+    RUN_TEST(test_the_schedule_has_the_profile_period_and_one_packet_per_phase);
+    RUN_TEST(test_the_silence_timeout_outlasts_one_lost_packet);
     RUN_TEST(test_c3_is_never_denied_in_4_hours);
     RUN_TEST(test_a_relaying_c2_is_never_denied_in_4_hours);
     RUN_TEST(test_airtime_is_under_one_percent_with_margin);

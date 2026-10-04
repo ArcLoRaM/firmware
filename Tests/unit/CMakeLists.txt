@@ -19,9 +19,19 @@
 #       ../../CM4/SubGHz_Phy/Logic/scheduler.c
 #   )
 # =============================================================================
+# The Sync profile the host tests build with: the bring-up table (a Sync phase
+# every 30 s, three packets), which the state machine and TDMA tests were
+# written against. A test of another profile sets TEST_SYNC_PROFILE before
+# add_unity_test (empty: the source default).
+set(TEST_SYNC_PROFILE SYNC_PROFILE_BRINGUP)
+
 macro(add_unity_test TEST_NAME)
     # Create an executable from all sources listed after TEST_NAME
     add_executable(${TEST_NAME} ${ARGN})
+
+    if(TEST_SYNC_PROFILE)
+        target_compile_definitions(${TEST_NAME} PRIVATE SYNC_PROFILE=${TEST_SYNC_PROFILE})
+    endif()
 
     # Link the Unity framework and the HAL stubs
     target_link_libraries(${TEST_NAME} PRIVATE unity hal_stubs)
@@ -66,20 +76,22 @@ add_unity_test(test_day_ms
     test_day_ms.c
 )
 
-# The Sync schedule against the 1 % duty cycle: the bring-up table (denied after
-# ~7 min) and the Build Overrides of the multi-hour runs (never denied).
-add_unity_test(test_sync_budget_default
-    test_sync_budget.c
-    ../../Common/Protocol/tdma_table.c
-    ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+# The Sync profiles against the 1 % duty cycle: the bring-up table (denied after
+# ~7 min), DEV and PROD (never denied in 4 h), and the source default (DEV).
+foreach(prof BRINGUP DEV PROD)
+    set(TEST_SYNC_PROFILE SYNC_PROFILE_${prof})
+    string(TOLOWER ${prof} prof_lower)
+    add_unity_test(test_sync_budget_${prof_lower}
+        test_sync_budget.c
+        ../../Common/Protocol/tdma_table.c
+        ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
+    )
+endforeach()
+set(TEST_SYNC_PROFILE "")
+add_unity_test(test_sync_profile_default
+    test_sync_profile.c
 )
-add_unity_test(test_sync_budget_run
-    test_sync_budget.c
-    ../../Common/Protocol/tdma_table.c
-    ../../CM0PLUS/SubGHz_Phy/Logic/compliance_engine.c
-)
-target_compile_definitions(test_sync_budget_run PRIVATE
-    SYNC_TX_BUDGET=1u SYNC_CELL_GAP_MS=9500u EXPECT_WITHIN_BUDGET)
+set(TEST_SYNC_PROFILE SYNC_PROFILE_BRINGUP)
 
 # The MAC takes the SyncStamp in ticks and judges the error in us (C1 and C2 MAC).
 foreach(cls c1 c2)

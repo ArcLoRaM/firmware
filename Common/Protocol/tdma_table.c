@@ -18,38 +18,25 @@
  *
  */
 #include "tdma_table.h"
+#include "sync_profile.h"   /* SYNC_CELL_GAP_MS, SYNC_TX_BUDGET */
 
 /* =========================================================================
  * Two-Sync-phase frame
  *
  * Two Sync Phases, each with ten cells. C3 transmits in the first
- * SYNC_TX_BUDGET cells and skips the rest, which spaces its bursts out;
- * three cells are enough for the three-packet acquisition sequence that
- * drives C1/C2 from CLOCK_COLD to CLOCK_WARM.
+ * SYNC_TX_BUDGET cells and skips the rest, which spaces its packets out; a
+ * cold C1/C2 needs three packets (one RTC set, two good) to go from
+ * CLOCK_COLD to CLOCK_WARM, so with one packet per phase it takes three
+ * phases. The cell gap and the budget come from the Sync profile
+ * (sync_profile.h): how often the network synchronises is a compile-time
+ * choice between a product schedule, a frequent one for development inside
+ * the duty-cycle budget, and the bring-up table of the host tests.
  * The second Sync phase exercises the multi-Sync-phase advance path:
  * after the last cell of Sync0 the cursor moves to Sync1 (same frame),
  * not to the first phase of the next frame.
  *
  * Replace with the full frame layout once all Phase Types are finalised.
  * ========================================================================= */
-#ifndef SYNC_CELL_GAP_MS
-/*!
- * Gap after each Sync cell, ms. The default schedule (two Sync phases of ten
- * cells, a cell every 3 s, C3 and C2 sending in the first SYNC_TX_BUDGET = 3
- * cells of each) puts 5.95 s of airtime in every 60 s frame: 9.9 % duty cycle
- * against the band's 1 %. The 36 s credit is gone after 6.7 min, then a node
- * sends one packet in ~99 s (TX_DENIED in between). That is a bring-up
- * schedule, not a product one (#45).
- *
- * A multi-hour run needs a schedule inside the budget: the Build Overrides
- * SYNC_TX_BUDGET=1u and SYNC_CELL_GAP_MS=9500u give a Sync phase every 120 s
- * with one packet per phase and node, 0.83 % duty cycle, never denied
- * (Tests/unit/test_sync_budget.c computes both with the real compliance
- * engine).
- */
-#define SYNC_CELL_GAP_MS  500u
-#endif
-
 static const Phase_t s_sync_phase_0 = {
     .type             = PHASE_TYPE_SYNC,
     .participant_mask = PARTICIPANT_C1 | PARTICIPANT_C2 | PARTICIPANT_C3,
