@@ -602,8 +602,8 @@ void test_c1_sample_hook_not_called_for_packet1_called_for_good_acquiring(void)
     sample_pkt(&p, 1u); MAC_OnSyncPacketReceived(&p, 3003u);
     sample_pkt(&p, 2u); MAC_OnSyncPacketReceived(&p, 5997u);
     TEST_ASSERT_EQUAL(2, s_sample_n);
-    TEST_ASSERT_EQUAL_INT32(3, s_sample_err[0]);
-    TEST_ASSERT_EQUAL_INT32(-3, s_sample_err[1]);
+    TEST_ASSERT_INT32_WITHIN(250, 3000, s_sample_err[0]);
+    TEST_ASSERT_INT32_WITHIN(250, -3000, s_sample_err[1]);
 }
 
 void test_c1_sample_hook_not_called_for_a_bad_acquiring_packet(void)
@@ -633,9 +633,9 @@ void test_c1_sample_hook_called_for_tier1_and_tier2_not_tier3(void)
     sample_pkt(&p, 4u); MAC_OnSyncPacketReceived(&p, 12050u);   /* t2, +50 */
     sample_pkt(&p, 5u); MAC_OnSyncPacketReceived(&p, 14980u);   /* t2, -20 */
     TEST_ASSERT_EQUAL(3, s_sample_n);
-    TEST_ASSERT_EQUAL_INT32(4, s_sample_err[0]);
-    TEST_ASSERT_EQUAL_INT32(50, s_sample_err[1]);
-    TEST_ASSERT_EQUAL_INT32(-20, s_sample_err[2]);
+    TEST_ASSERT_INT32_WITHIN(250, 4000, s_sample_err[0]);
+    TEST_ASSERT_INT32_WITHIN(250, 50000, s_sample_err[1]);
+    TEST_ASSERT_INT32_WITHIN(250, -20000, s_sample_err[2]);
 
     sample_pkt(&p, 1u);
     MAC_OnSyncPacketReceived(&p, 3000u + SYNC_RESYNC_THRESHOLD_MS);     /* t3 */

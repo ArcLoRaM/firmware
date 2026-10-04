@@ -213,10 +213,10 @@ typedef struct {
      *          \c rtc_align_subsecond, so the error is the one measured
      *          before the shift it causes.
      *
-     * \param err_ms  SyncStamp - expected arrival, ms, signed, as logged
-     *                in SYNC_RX.
+     * \param err_us  SyncStamp - expected arrival, microseconds, signed, as
+     *                logged in SYNC_RX (`erru`).
      */
-    void (*sync_sample)(int32_t err_ms);
+    void (*sync_sample)(int32_t err_us);
 } MAC_Hooks_t;
 
 /* =========================================================================
@@ -275,6 +275,19 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
  */
 void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
                                uint32_t             stamp_ms);
+
+/*!
+ * \brief   A Sync packet was received; the SyncStamp is in RTC ticks (issue #82).
+ *
+ * \details The packet start on air in day ticks (1/4096 s), \ref
+ *          SyncStamp_FromRxDone. The error against the expected arrival is
+ *          taken in microseconds (\ref SyncStamp_ErrorUs), logged as `erru`
+ *          beside `err` (ms, rounded), and every tier is judged on it. The
+ *          millisecond entry point above is this one with the ms converted to
+ *          the nearest tick.
+ */
+void MAC_OnSyncPacketReceivedTicks(const SyncPayload_t *payload,
+                                   uint32_t             stamp_ticks);
 
 /*!
  * \brief   Check whether the sync silence timeout has expired.

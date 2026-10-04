@@ -38,6 +38,8 @@
 #include "tdma_table.h"       /* TdmaTable_PhaseCount */
 #include "guard_time_resolver.h" /* MAX_GUARD_TIME_MS */
 #include "rtc_set_plan.h"         /* RtcSetPlan_*, RtcTicks_* */
+#include "sync_stamp.h"           /* SyncStamp_FromRxDone: the stamp in RTC ticks (#82) */
+#include "lora_toa.h"             /* LoraToa_Us */
 #include "drift_estimator.h"      /* DriftEstimator_* */
 #include "rtc_calr.h"            /* RtcCalr_* */
 #include "calr_policy.h"         /* CalrPolicy_Decide */
@@ -89,6 +91,7 @@
 static RadioEvents_t     s_radio_events;
 static UTIL_TIMER_Object_t s_rx_cap_timer;   /* synced-window hard end */
 static volatile uint32_t s_irq_stamp_ms;   /* RTC at entry of the latest radio IRQ */
+static volatile uint32_t s_irq_stamp_ticks; /* the same, in RTC ticks (1/4096 s) */
 static volatile uint32_t s_pre_stamp_ms;   /* PREAMBLE_DETECTED of the current Rx */
 static volatile uint32_t s_hdr_stamp_ms;   /* HEADER_VALID of the current Rx      */
 static volatile bool     s_pre_valid;
@@ -96,15 +99,20 @@ static volatile bool     s_hdr_valid;
 static uint8_t           s_last_tx_len;
 
 static uint32_t plat_radio_toa(uint8_t len);
+static uint32_t plat_radio_toa_us(uint8_t len);
 
 void SubGhzPhyTask_OnRadioIrq(void)
 {
-    uint32_t stamp = (uint32_t)UTIL_TIMER_GetCurrentTime();
+    /* One RTC read in ticks; the ms of the log and the diagnostics are its
+     * floor (the same value GetTimerTicks gives). */
+    uint32_t ticks = TIMER_IF_GetDayTicks(false);
+    uint32_t stamp = RtcTicks_ToMs(ticks);
     uint16_t irq   = SUBGRF_GetIrqStatus();
 
     /* Keep the latest detection: a false preamble detection on noise earlier
      * in the window is superseded by the real packet's. */
-    s_irq_stamp_ms = stamp;
+    s_irq_stamp_ms    = stamp;
+    s_irq_stamp_ticks = ticks;
     if ((irq & IRQ_PREAMBLE_DETECTED) != 0u) {
         s_pre_stamp_ms = stamp;
         s_pre_valid    = true;
@@ -137,11 +145,17 @@ static void on_tx_timeout(void)
 
 static void on_rx_done(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr)
 {
+    uint32_t rxd_ticks = s_irq_stamp_ticks;
     uint32_t rxd   = s_irq_stamp_ms;
     uint32_t toa   = plat_radio_toa((uint8_t)size);
-    /* SyncStamp: packet start, in the RTC day domain (a packet received just
-     * after midnight started before it). */
-    uint32_t stamp = DayMs_Add(rxd, -(int32_t)(toa + RX_DONE_LATENCY_MS));
+    /* SyncStamp: packet start, in RTC ticks and in the RTC day domain (a
+     * packet received just after midnight started before it): RxDone minus
+     * the time on air in microseconds (991 232 us for a Sync packet, not the
+     * driver's whole 991 ms) minus the Rx latency (issue #82). `stamp` is its
+     * floor in ms, for the log. */
+    uint32_t stamp_ticks = SyncStamp_FromRxDone(rxd_ticks, plat_radio_toa_us((uint8_t)size),
+                                                RX_DONE_LATENCY_MS * 1000u);
+    uint32_t stamp = RtcTicks_ToMs(stamp_ticks);
 
     UTIL_TIMER_Stop(&s_rx_cap_timer);
     ARCLOG(ARCLOG_MOD_RADIO, VLEVEL_M, "RX_DONE",
@@ -152,7 +166,7 @@ static void on_rx_done(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr
            (unsigned)rxd, (unsigned)toa, (unsigned)stamp);
 
     if (size == (uint16_t)sizeof(SyncPayload_t)) {
-        MAC_OnSyncPacketReceived((const SyncPayload_t *)payload, stamp);
+        MAC_OnSyncPacketReceivedTicks((const SyncPayload_t *)payload, stamp_ticks);
     } else if (size == (uint16_t)sizeof(BeaconPayload_t)) {
         MAC_OnBeaconReceived((const BeaconPayload_t *)payload);
     }
@@ -317,6 +331,14 @@ static void     plat_radio_sleep(void)                         { Radio.Sleep(); 
  * header / CRC on). The driver's formula is the reference for duty-cycle
  * accounting and for deriving TX start (TX_DONE) and the SyncStamp
  * (RxDone − ToA). Keep the parameters in step with Radio.SetTxConfig/SetRxConfig. */
+/* Time on air in microseconds, from the formula and the modem configuration
+ * of SubGhzPhyTask_Init (SF12, BW125, CR4/5, 8 preamble symbols, explicit
+ * header, CRC): keep the two in step. */
+static uint32_t plat_radio_toa_us(uint8_t len)
+{
+    return LoraToa_Us(len, 12u, 125000u, 1u, 8u, true, false);
+}
+
 static uint32_t plat_radio_toa(uint8_t len)
 {
     return Radio.TimeOnAir(MODEM_LORA,
@@ -450,9 +472,9 @@ static void drift_init(void)
 
 /* Sync sample hook (MAC_Hooks_t::sync_sample): feed the estimator, log its
  * state, and write a new setting when the policy says so. */
-static void mac_hook_sync_sample(int32_t err_ms)
+static void mac_hook_sync_sample(int32_t err_us)
 {
-    if (DriftEstimator_AddSample(TIMER_IF_GetMonotonicMs(), err_ms) != DRIFT_SAMPLE_ACCEPTED) {
+    if (DriftEstimator_AddSampleUs(TIMER_IF_GetMonotonicMs(), err_us) != DRIFT_SAMPLE_ACCEPTED) {
         return;
     }
     DriftEstimate_t e = DriftEstimator_Get();

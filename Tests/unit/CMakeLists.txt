@@ -81,6 +81,15 @@ add_unity_test(test_sync_budget_run
 target_compile_definitions(test_sync_budget_run PRIVATE
     SYNC_TX_BUDGET=1u SYNC_CELL_GAP_MS=9500u EXPECT_WITHIN_BUDGET)
 
+# The MAC takes the SyncStamp in ticks and judges the error in us (C1 and C2 MAC).
+foreach(cls c1 c2)
+    add_unity_test(test_mac_fine_stamp_${cls}
+        test_mac_fine_stamp.c
+        ../../CM0PLUS/SubGHz_Phy/Logic/mac_state_machine_${cls}.c
+        ../../Common/Protocol/tdma_table.c
+    )
+endforeach()
+
 # Timing probe helper: with BENCH_PROBE (lines, wrap, limit) and production (nothing).
 add_unity_test(test_probe
     test_probe.c
@@ -90,6 +99,14 @@ target_compile_definitions(test_probe PRIVATE BENCH_PROBE)
 add_unity_test(test_probe_off
     test_probe.c
     ../../Common/Log/probe.c
+)
+
+add_unity_test(test_sync_stamp
+    test_sync_stamp.c
+)
+
+add_unity_test(test_lora_toa
+    test_lora_toa.c
 )
 
 add_unity_test(test_rtc_set_plan

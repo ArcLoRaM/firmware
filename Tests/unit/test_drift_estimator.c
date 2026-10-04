@@ -509,6 +509,96 @@ void test_a_month_of_large_shifts_stays_exact(void)
     TEST_ASSERT_TRUE_MESSAGE(abs32(e.rate_ppb - 1000000) < 500, "rate lost over a month");
 }
 
+/* ---- errors in microseconds (issue #82) ----------------------------------- */
+
+/* The stamp in RTC ticks: floor to a tick (244.14 us) instead of to a ms. */
+static int32_t sim_err_us(Sim *s, double sigma_us)
+{
+    double x = s->phase_us + gauss(s) * sigma_us;
+    return (int32_t)lround(floor(x / 244.140625) * 244.140625);
+}
+
+static DriftSampleResult_t sim_sample_us_err(Sim *s, int32_t err_us)
+{
+    return DriftEstimator_AddSampleUs(sim_ms(s), err_us);
+}
+
+/* A perfect line of 8.1 ppm, read to the us: the sub-ms part is kept, so the
+ * rate is exact and the noise nil. The ms entry point could not do this. */
+void test_sub_ms_errors_are_kept(void)
+{
+    for (int i = 0; i < 40; i++) {
+        uint32_t t_ms = (uint32_t)i * 47000u;
+        int32_t  err_us = (int32_t)lround(8.1 * (t_ms / 1000.0));        /* ppm x s = us */
+        DriftEstimator_AddSampleUs(t_ms, err_us + 1500);                  /* 1.5 ms constant offset */
+    }
+    DriftEstimate_t e = DriftEstimator_Get();
+    TEST_ASSERT_TRUE(e.valid);
+    TEST_ASSERT_TRUE_MESSAGE(abs32(e.rate_ppb - 8100) < 20, "sub-ms line not recovered");
+    /* Not exactly 0: the window's mean time is rounded to a whole second, which leaves
+     * rate x 0.5 s = 4 us in the residuals (8.1 ppm), against ~230 us of real noise. */
+    TEST_ASSERT_TRUE_MESSAGE(e.noise_us < 10u, "a perfect line has (almost) no noise");
+}
+
+/* The same series through the ms entry point is quantised to the ms. */
+void test_the_ms_entry_point_is_the_us_one_times_a_thousand(void)
+{
+    DriftEstimator_AddSample(0u, 7);
+    DriftEstimator_AddSample(47000u, 8);
+    DriftEstimate_t a = DriftEstimator_Get();
+    DriftEstimator_Init();
+    DriftEstimator_AddSampleUs(0u, 7000);
+    DriftEstimator_AddSampleUs(47000u, 8000);
+    DriftEstimate_t b = DriftEstimator_Get();
+    TEST_ASSERT_EQUAL_INT32(a.rate_ppb, b.rate_ppb);
+    TEST_ASSERT_EQUAL_UINT16(a.n, b.n);
+}
+
+void test_errors_at_the_resync_threshold_are_not_samples_in_us(void)
+{
+    Sim s = sim_make(2, 8.1);
+    sim_steps(&s, 10);
+    uint16_t n = DriftEstimator_Get().n;
+    sim_wait(&s, PERIOD_S);
+    TEST_ASSERT_EQUAL(DRIFT_SAMPLE_TOO_FAR, sim_sample_us_err(&s, (int32_t)SYNC_RESYNC_THRESHOLD_MS * 1000));
+    sim_wait(&s, PERIOD_S);
+    TEST_ASSERT_EQUAL(DRIFT_SAMPLE_TOO_FAR, sim_sample_us_err(&s, -(int32_t)SYNC_RESYNC_THRESHOLD_MS * 1000));
+    sim_wait(&s, PERIOD_S);
+    TEST_ASSERT_NOT_EQUAL(DRIFT_SAMPLE_TOO_FAR, sim_sample_us_err(&s, (int32_t)SYNC_RESYNC_THRESHOLD_MS * 1000 - 1));
+    /* the two at the threshold are TOO_FAR; the one just under it is a Tier 2 error, far from the
+     * fit, so an outlier: none of the three entered the window */
+    TEST_ASSERT_EQUAL_UINT16(n, DriftEstimator_Get().n);
+}
+
+/* The gain, at the same packets: the stamp in ticks has a noise of about
+ * 0.23 ms (0.21 ms jitter + 0.07 ms of tick) against the 0.36 ms of the ms
+ * stamp. At the validity gate sigma_b = sigma / sqrt(Stt) = 0.23e-3 / 1900 s =
+ * 0.12 ppm, so the rms error over 200 seeds must be under 0.16 ppm (it was
+ * 0.18 ppm with ms) and no seed further than one step (0.954 ppm). */
+void test_ticks_cut_the_rate_error_at_the_gate(void)
+{
+    double sum_sq = 0;
+    int32_t worst = 0;
+    for (int seed = 1; seed <= SEEDS; seed++) {
+        DriftEstimator_Init();
+        Sim s = sim_make((uint32_t)seed, 8.1);
+        DriftEstimate_t e = DriftEstimator_Get();
+        int n = 0;
+        while (!e.valid && n < 100) {
+            sim_wait(&s, PERIOD_S);
+            sim_sample_us_err(&s, sim_err_us(&s, SIGMA_JITTER_US));
+            n++;
+            e = DriftEstimator_Get();
+        }
+        TEST_ASSERT_TRUE(e.valid);
+        int32_t err = abs32(e.rate_ppb - 8100);
+        if (err > worst) worst = err;
+        sum_sq += (double)err * err;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(worst < STEP_PPB, "a first valid estimate more than one step off");
+    TEST_ASSERT_TRUE_MESSAGE(sqrt(sum_sq / SEEDS) < 160.0, "rms error at the gate above 0.16 ppm");
+}
+
 void test_the_error_threshold_is_the_mac_resync_threshold(void)
 {
     TEST_ASSERT_EQUAL_UINT32(MAX_GUARD_TIME_MS, SYNC_RESYNC_THRESHOLD_MS);
@@ -540,6 +630,10 @@ int main(void)
     RUN_TEST(test_a_rate_change_is_followed_by_the_window);
     RUN_TEST(test_the_millisecond_counter_may_wrap);
     RUN_TEST(test_a_month_of_large_shifts_stays_exact);
+    RUN_TEST(test_sub_ms_errors_are_kept);
+    RUN_TEST(test_the_ms_entry_point_is_the_us_one_times_a_thousand);
+    RUN_TEST(test_errors_at_the_resync_threshold_are_not_samples_in_us);
+    RUN_TEST(test_ticks_cut_the_rate_error_at_the_gate);
     RUN_TEST(test_the_error_threshold_is_the_mac_resync_threshold);
     return UNITY_END();
 }

@@ -149,13 +149,23 @@ void DriftEstimator_Init(void);
  * \brief   One Sync reception.
  *
  * \param   t_ms    Monotonic ms of the reception.
- * \param   err_ms  SyncStamp - expected arrival, ms, as logged in SYNC_RX,
- *                  taken before any correction this packet causes.
+ * \param   err_ms  SyncStamp - expected arrival, whole ms, as the old SYNC_RX
+ *                  `err`: this is \ref DriftEstimator_AddSampleUs of err_ms x 1000.
  *
  * \details Call it before the OnShift of the same packet, so the shift counts
  *          for the next samples and not this one.
  */
 DriftSampleResult_t DriftEstimator_AddSample(uint32_t t_ms, int32_t err_ms);
+
+/*!
+ * \brief   One Sync reception, the error in microseconds (issue #82).
+ *
+ * \param   t_ms    Monotonic ms of the reception.
+ * \param   err_us  SyncStamp - expected arrival, us, signed, as logged in
+ *                  SYNC_RX `erru`: the stamp is in RTC ticks, so the error
+ *                  carries the sub-ms part the whole-ms stamp lost.
+ */
+DriftSampleResult_t DriftEstimator_AddSampleUs(uint32_t t_ms, int32_t err_us);
 
 /*!
  * \brief   A phase shift (SHIFTR) was written to the RTC.

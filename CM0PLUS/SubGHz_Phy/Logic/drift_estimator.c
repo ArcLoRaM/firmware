@@ -231,15 +231,20 @@ static bool is_outlier(int32_t t_s, int64_t u_rel)
 
 DriftSampleResult_t DriftEstimator_AddSample(uint32_t t_ms, int32_t err_ms)
 {
+    return DriftEstimator_AddSampleUs(t_ms, err_ms * 1000);
+}
+
+DriftSampleResult_t DriftEstimator_AddSampleUs(uint32_t t_ms, int32_t err_us)
+{
     advance(t_ms);
 
-    if (err_ms >= (int32_t)SYNC_RESYNC_THRESHOLD_MS || err_ms <= -(int32_t)SYNC_RESYNC_THRESHOLD_MS) {
+    if (err_us >= (int32_t)SYNC_RESYNC_THRESHOLD_MS * 1000 || err_us <= -(int32_t)SYNC_RESYNC_THRESHOLD_MS * 1000) {
         return DRIFT_SAMPLE_TOO_FAR;
     }
 
     int32_t t_s = (int32_t)((s_elapsed_ms + 500u) / 1000u);
     /* Unwrapped error: what the crystal alone did (see the header). */
-    int64_t raw_us = (int64_t)err_ms * 1000 - round_div(s_unwrap_ps, 1000000);
+    int64_t raw_us = (int64_t)err_us - round_div(s_unwrap_ps, 1000000);
     if (s_count == 0u) {
         s_u_base_us = raw_us;
     }

@@ -89,14 +89,14 @@ def build_run(drift_ppm: float = 20.0, frames: int = 120, hdr_minus_pre: int = 5
                     hdr=st + hdr_minus_pre, rxd=st + 991, toa=991, st=st)
             err = st - exp
             if clk == "COLD":
-                c2.emit(t_done, "0", "Y", "M", "SYNC_RX", ph=0, ce=ce, ep=ep, st=st, exp=exp, err=err,
+                c2.emit(t_done, "0", "Y", "M", "SYNC_RX", ph=0, ce=ce, ep=ep, st=st, exp=exp, err=err, erru=err * 1000,
                         clk="COLD", act="set")
                 c2.emit(t_done, "0", "Y", "L", "RTC_SET", old=st + 991, new=exp + 991, d=-err,
                         date="260925", shift="ok")
                 c2.emit(t_done, "0", "Y", "L", "CLK", **{"from": "COLD", "to": "ACQ", "why": "rtc_set"})
                 clk, offset_ms = "ACQ", 0.0
             elif clk == "ACQ":
-                c2.emit(t_done, "0", "Y", "M", "SYNC_RX", ph=0, ce=ce, ep=ep, st=st, exp=exp, err=err,
+                c2.emit(t_done, "0", "Y", "M", "SYNC_RX", ph=0, ce=ce, ep=ep, st=st, exp=exp, err=err, erru=err * 1000,
                         clk="ACQ", act="good")
                 good += 1
                 if good == 2:
@@ -105,7 +105,7 @@ def build_run(drift_ppm: float = 20.0, frames: int = 120, hdr_minus_pre: int = 5
                     clk = "WARM"
             else:
                 act = "t1" if abs(err) < 8 else "t2"
-                c2.emit(t_done, "0", "Y", "M", "SYNC_RX", ph=0, ce=ce, ep=ep, st=st, exp=exp, err=err,
+                c2.emit(t_done, "0", "Y", "M", "SYNC_RX", ph=0, ce=ce, ep=ep, st=st, exp=exp, err=err, erru=err * 1000,
                         clk="WARM", act=act)
                 if act == "t2":
                     c2.emit(t_done, "0", "Y", "M", "RTC_SHIFT", err=err, ticks=abs(err) * 4, res="ok")

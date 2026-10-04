@@ -690,13 +690,14 @@ deferred pending empirical validation.
 Algorithm section.
 
 ### SyncStamp
-The start on air of a received Sync packet, in the receiver's RTC (ms since midnight, `GetTimerTicks` domain): `RxDone − ToA(size) − RX_DONE_LATENCY_MS`.
-The RxDone time is the RTC at entry of the radio IRQ, taken first thing in `SUBGHZ_Radio_IRQHandler` (`SubGhzPhyTask_OnRadioIrq`), before HAL dispatch.
-`ToA(size)` is `Radio.TimeOnAir` with the modem configuration, which must match the sender's (the same function derives `TX_DONE`'s start).
-`RX_DONE_LATENCY_MS` is the delay from the last symbol to the IRQ stamp, well under a millisecond (0 until measured with a common time reference).
-It is what `MAC_OnSyncPacketReceived` receives as `stamp_ms`.
+The start on air of a received Sync packet, in the receiver's RTC **in day ticks** (1/4096 s, 244 us; issue #82): `RxDone - ToA - RX_DONE_LATENCY`.
+The RxDone time is the RTC read in ticks at entry of the radio IRQ, taken first thing in `SUBGHZ_Radio_IRQHandler` (`SubGhzPhyTask_OnRadioIrq`), before HAL dispatch.
+`ToA` is the time on air in microseconds from the LoRa formula with the modem configuration (`LoraToa_Us`, 991 232 us for a Sync packet), which must match the sender's; the driver's whole-ms figure (991) left a constant 0.2 ms in the stamp.
+`RX_DONE_LATENCY` is the delay from the last symbol to the IRQ stamp, well under a millisecond (0 until measured with a common time reference, #83).
+It is what `MAC_OnSyncPacketReceivedTicks` receives; `MAC_OnSyncPacketReceived` takes whole ms and converts them to the first tick not before.
+The **Sync error** is the stamp minus the expected arrival, taken in microseconds (`SyncStamp_ErrorUs`, the expected arrival being an exact schedule ms) and judged in microseconds for every tier; the trace gives it in ms (`err`, rounded) and in us (`erru`).
 The `IRQ_PREAMBLE_DETECTED` and `IRQ_HEADER_VALID` times are logged alongside (`pre`, `hdr`) as diagnostics only.
-The preamble detection time is not a usable timing reference: at SF12/BW125 it lands one symbol (32.8 ms) early or late from packet to packet, while `RxDone − ToA` and `HEADER_VALID` track the sender's TX start to within ~3 ms (bench, 2026-09-26).
+The preamble detection time is not a usable timing reference: at SF12/BW125 it lands one symbol (32.8 ms) early or late from packet to packet, while `RxDone - ToA` and `HEADER_VALID` track the sender's TX start to within ~3 ms (bench, 2026-09-26).
 `HEADER_VALID` does not exist once the Sync packet uses implicit header (issue #39); RxDone does.
 Never persisted.
 _Avoid_: PreambleStamp

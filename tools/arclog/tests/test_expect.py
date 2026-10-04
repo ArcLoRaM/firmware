@@ -428,7 +428,7 @@ def test_a_node_ignores_its_lines_before_its_own_flash_ended():
 
 
 def sync_rx(t: Trace, dt: float, node: str, err) -> None:
-    t.emit(dt, node, "0", "SYNC_RX", ph=0, ce=1, ep=0, st=0, exp=0, err=err, clk="WARM", act="t1")
+    t.emit(dt, node, "0", "SYNC_RX", ph=0, ce=1, ep=0, st=0, exp=0, err=err, erru=err * 1000, clk="WARM", act="t1")
 
 
 def test_a_range_counts_only_lines_inside_it():

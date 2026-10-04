@@ -18,6 +18,7 @@
  */
 #include "mac_state_machine.h"
 #include "date_bcd.h"
+#include "sync_stamp.h"     /* SyncStamp_ErrorUs: the stamp in ticks, the error in us */
 #include "tdma_table.h"
 #include "guard_time_resolver.h"
 #include "arclog.h"
@@ -80,14 +81,14 @@ static void set_mac_state(MacState_t to, const char *why)
 /* One line per received Sync packet: the raw datum for drift analysis.
  * act = set (COLD RTC set) | good / bad (ACQUIRING check) | t1 / t2 / t3 (WARM tier). */
 static void log_sync_rx(const SyncPayload_t *p, uint32_t stamp_ms,
-                        uint32_t expected_ms, const char *act)
+                        uint32_t expected_ms, int32_t err_us, const char *act)
 {
     ARCLOG(ARCLOG_MOD_SYNC, VLEVEL_M, "SYNC_RX",
-           "ph=%u ce=%u ep=%u st=%u exp=%u err=%d clk=%s act=%s",
+           "ph=%u ce=%u ep=%u st=%u exp=%u err=%d erru=%d clk=%s act=%s",
            (unsigned)p->sync_phase_index, (unsigned)p->sync_cell_index,
            (unsigned)p->ms_since_midnight_sync_phase,
            (unsigned)stamp_ms, (unsigned)expected_ms,
-           (int)DayMs_Diff(stamp_ms, expected_ms),
+           (int)SyncStamp_UsToMs(err_us), (int)err_us,
            ArcLog_ClockName(s_clock_state), act);
 }
 
@@ -198,9 +199,15 @@ SlotDecision_t MAC_OnSlotOpportunity(const FrameCursor_t *cursor,
     }
 }
 
-void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
-                               uint32_t             stamp_ms)
+void MAC_OnSyncPacketReceivedTicks(const SyncPayload_t *payload,
+                                  uint32_t             stamp_ticks)
 {
+    /* The stamp is kept in RTC ticks; the milliseconds below (the silence
+     * timer, the age carry of a set, the Tier 2 hook) are its floor. The
+     * error is taken in microseconds from the ticks, against the exact
+     * schedule ms, and every tier is judged on it (issue #82). */
+    uint32_t stamp_ms = RtcTicks_ToMs(stamp_ticks);
+
     uint32_t per_cell = sync_per_cell_ms_for_phase(payload->sync_phase_index);
 
     /* A phase index that is not a Sync phase cannot anchor the FrameCursor
@@ -229,7 +236,8 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
             uint8_t d, mo, y;
             s_hooks.get_rtc_snapshot(&rtc_now, &d, &mo, &y);  /* new domain */
         }
-        log_sync_rx(payload, stamp_ms, target_ms, "set");
+        log_sync_rx(payload, stamp_ms, target_ms,
+                    SyncStamp_ErrorUs(stamp_ticks, target_ms), "set");
         s_sync_consecutive = 0u;
         set_clock_state(CLOCK_ACQUIRING, "rtc_set");
         s_last_sync_received_ms = rtc_now;  /* new RTC domain after re-anchor */
@@ -249,13 +257,14 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
         uint32_t expected_arrival = (payload->ms_since_midnight_sync_phase
                                      + (uint32_t)payload->sync_cell_index * per_cell)
                                     % MS_PER_DAY;
-        uint32_t clock_error = DayMs_AbsDiff(stamp_ms, expected_arrival);
-        bool     good        = (clock_error < SYNC_PARTICIPATE_THRESHOLD_MS);
+        int32_t  err_us      = SyncStamp_ErrorUs(stamp_ticks, expected_arrival);
+        uint32_t clock_error = (uint32_t)((err_us < 0) ? -err_us : err_us);   /* us */
+        bool     good        = (clock_error < SYNC_PARTICIPATE_THRESHOLD_MS * 1000u);
 
-        log_sync_rx(payload, stamp_ms, expected_arrival, good ? "good" : "bad");
+        log_sync_rx(payload, stamp_ms, expected_arrival, err_us, good ? "good" : "bad");
         if (good) {
             if (s_hooks.sync_sample != NULL) {
-                s_hooks.sync_sample(DayMs_Diff(stamp_ms, expected_arrival));
+                s_hooks.sync_sample(err_us);
             }
             s_sync_consecutive++;
             if (s_sync_consecutive >= 2u) {
@@ -277,20 +286,21 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
         uint32_t expected_arrival = (payload->ms_since_midnight_sync_phase
                                      + (uint32_t)payload->sync_cell_index * per_cell)
                                     % MS_PER_DAY;
-        uint32_t error = DayMs_AbsDiff(stamp_ms, expected_arrival);
+        int32_t  err_us = SyncStamp_ErrorUs(stamp_ticks, expected_arrival);
+        uint32_t error  = (uint32_t)((err_us < 0) ? -err_us : err_us);        /* us */
 
-        log_sync_rx(payload, stamp_ms, expected_arrival,
-                    (error < SYNC_PARTICIPATE_THRESHOLD_MS) ? "t1"
-                    : (error < SYNC_RESYNC_THRESHOLD_MS)    ? "t2" : "t3");
+        log_sync_rx(payload, stamp_ms, expected_arrival, err_us,
+                    (error < SYNC_PARTICIPATE_THRESHOLD_MS * 1000u) ? "t1"
+                    : (error < SYNC_RESYNC_THRESHOLD_MS * 1000u)    ? "t2" : "t3");
 
-        if (error < SYNC_RESYNC_THRESHOLD_MS && s_hooks.sync_sample != NULL) {
-            s_hooks.sync_sample(DayMs_Diff(stamp_ms, expected_arrival));
+        if (error < SYNC_RESYNC_THRESHOLD_MS * 1000u && s_hooks.sync_sample != NULL) {
+            s_hooks.sync_sample(err_us);
         }
 
-        if (error < SYNC_PARTICIPATE_THRESHOLD_MS) {
+        if (error < SYNC_PARTICIPATE_THRESHOLD_MS * 1000u) {
             /* C1 receives valid epoch; no relay action needed */
             s_epoch_received_this_phase = true;
-        } else if (error < SYNC_RESYNC_THRESHOLD_MS) {
+        } else if (error < SYNC_RESYNC_THRESHOLD_MS * 1000u) {
             /* Tier 2: SSR correction. */
             if (s_hooks.rtc_align_subsecond != NULL) {
                 s_hooks.rtc_align_subsecond(stamp_ms, expected_arrival);
@@ -300,6 +310,12 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
             trigger_sync_lost("tier3");
         }
     }
+}
+
+void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
+                              uint32_t             stamp_ms)
+{
+    MAC_OnSyncPacketReceivedTicks(payload, SyncStamp_MsToTicks(stamp_ms));
 }
 
 void MAC_OnBeaconReceived(const BeaconPayload_t *beacon)

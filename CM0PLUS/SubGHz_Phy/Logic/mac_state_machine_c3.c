@@ -156,6 +156,13 @@ void MAC_OnSyncPacketReceived(const SyncPayload_t *payload,
     (void)stamp_ms;
 }
 
+void MAC_OnSyncPacketReceivedTicks(const SyncPayload_t *payload,
+                                   uint32_t             stamp_ticks)
+{
+    (void)payload;
+    (void)stamp_ticks;
+}
+
 void MAC_OnBeaconReceived(const BeaconPayload_t *beacon)
 {
     if (beacon == NULL) return;

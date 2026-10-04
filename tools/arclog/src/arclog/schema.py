@@ -47,8 +47,9 @@ EVENTS: dict[str, Event] = {
     "CLK": Event("Y", ("from", "to", "why"), "ClockState transition (COLD/ACQ/WARM)."),
     "SYNC_RX": Event(
         "Y",
-        ("ph", "ce", "ep", "st", "exp", "err", "clk", "act"),
-        "Sync packet processed: stamp st vs expected exp, err = st - exp (ms). "
+        ("ph", "ce", "ep", "st", "exp", "err", "erru", "clk", "act"),
+        "Sync packet processed: stamp st vs expected exp, err = st - exp (ms, rounded), erru = the same error in us "
+        "from the stamp in RTC ticks (#82). "
         "act: set (COLD RTC set), good/bad (ACQUIRING), t1/t2/t3 (WARM tier).",
     ),
     "SYNC_TX": Event(

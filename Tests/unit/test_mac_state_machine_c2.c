@@ -240,7 +240,8 @@ void test_c2_acquiring_bad_packet_drops_to_cold(void)
     TEST_ASSERT_EQUAL(CLOCK_COLD, MAC_GetClockState());
     TEST_ASSERT_EQUAL(MAC_STATE_SCANNING, MAC_GetState());
     TEST_ASSERT_EQUAL(0, s_sync_locked_calls);
-    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=2 ep=0 st=6100 exp=6000 err=100 clk=ACQ act=bad");
+    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=2 ep=0 st=6100 exp=6000 err=100 erru=");
+    TEST_ASSERT_ARCLOG("clk=ACQ act=bad");
     TEST_ASSERT_ARCLOG("CLK from=ACQ to=COLD why=acq_bad");
 }
 
@@ -265,7 +266,8 @@ void test_c2_acquiring_checks_packet_against_its_own_epoch(void)
     s_snapshot_ms = 30000u;
     make_sync_pkt(&p, 0u, 30000u);  MAC_OnSyncPacketReceived(&p, 30000u);
     make_sync_pkt(&p, 0u, 60000u);  MAC_OnSyncPacketReceived(&p, 60003u);
-    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=0 ep=60000 st=60003 exp=60000 err=3 clk=ACQ act=good");
+    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=0 ep=60000 st=60003 exp=60000 err=3 erru=");
+    TEST_ASSERT_ARCLOG("clk=ACQ act=good");
     make_sync_pkt(&p, 1u, 60000u);  MAC_OnSyncPacketReceived(&p, 63003u);
     TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
 }
@@ -822,9 +824,11 @@ void test_c2_arclog_acquisition_sequence(void)
 {
     sync_mac();
 
-    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=0 ep=0 st=0 exp=0 err=0 clk=COLD act=set");
+    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=0 ep=0 st=0 exp=0 err=0 erru=");
+    TEST_ASSERT_ARCLOG("clk=COLD act=set");
     TEST_ASSERT_ARCLOG("CLK from=COLD to=ACQ why=rtc_set");
-    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=1 ep=0 st=3000 exp=3000 err=0 clk=ACQ act=good");
+    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=1 ep=0 st=3000 exp=3000 err=0 erru=");
+    TEST_ASSERT_ARCLOG("clk=ACQ act=good");
     TEST_ASSERT_ARCLOG("CLK from=ACQ to=WARM why=lock");
     TEST_ASSERT_ARCLOG("MAC_ST from=SCAN to=SYNC why=lock");
     /* Header: core, module, verbosity letter, sequence number. */
@@ -842,9 +846,12 @@ void test_c2_arclog_warm_tiers(void)
     MAC_OnSyncPacketReceived(&p, 33050u);            /* err 50 ms -> tier 2 */
     MAC_OnSyncPacketReceived(&p, 33500u);            /* err 500   -> tier 3 */
 
-    TEST_ASSERT_ARCLOG("exp=33000 err=4 clk=WARM act=t1");
-    TEST_ASSERT_ARCLOG("exp=33000 err=50 clk=WARM act=t2");
-    TEST_ASSERT_ARCLOG("exp=33000 err=500 clk=WARM act=t3");
+    TEST_ASSERT_ARCLOG("exp=33000 err=4 erru=");
+    TEST_ASSERT_ARCLOG("clk=WARM act=t1");
+    TEST_ASSERT_ARCLOG("exp=33000 err=50 erru=");
+    TEST_ASSERT_ARCLOG("clk=WARM act=t2");
+    TEST_ASSERT_ARCLOG("exp=33000 err=500 erru=");
+    TEST_ASSERT_ARCLOG("clk=WARM act=t3");
     TEST_ASSERT_ARCLOG("CLK from=WARM to=COLD why=tier3");
     TEST_ASSERT_ARCLOG("MAC_ST from=SYNC to=SCAN why=tier3");
 }
@@ -857,7 +864,8 @@ void test_c2_arclog_signed_error(void)
 
     make_sync_pkt(&p, 1u, 30000u);
     MAC_OnSyncPacketReceived(&p, 32995u);            /* 5 ms early */
-    TEST_ASSERT_ARCLOG("st=32995 exp=33000 err=-5 clk=WARM act=t1");
+    TEST_ASSERT_ARCLOG("st=32995 exp=33000 err=-5 erru=");
+    TEST_ASSERT_ARCLOG("clk=WARM act=t1");
 }
 
 void test_c2_arclog_silence(void)
@@ -1060,7 +1068,8 @@ void test_c2_acquires_across_midnight(void)
     sync_mac_across_midnight();
     TEST_ASSERT_EQUAL(CLOCK_WARM, MAC_GetClockState());
     TEST_ASSERT_EQUAL(0, s_sync_lost_calls);
-    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=2 ep=86394000 st=0 exp=0 err=0 clk=ACQ act=good");
+    TEST_ASSERT_ARCLOG("SYNC_RX ph=0 ce=2 ep=86394000 st=0 exp=0 err=0 erru=");
+    TEST_ASSERT_ARCLOG("clk=ACQ act=good");
 }
 
 void test_c2_warm_packet_after_midnight_is_tier1(void)
@@ -1071,7 +1080,8 @@ void test_c2_warm_packet_after_midnight_is_tier1(void)
     ArcLog_CaptureReset();
     MAC_OnSyncPacketReceived(&p, 3002u);           /* cell 3 at 00:00:03, 2 ms late */
     TEST_ASSERT_TRUE(MAC_GetEpochReceivedThisPhase());
-    TEST_ASSERT_ARCLOG("exp=3000 err=2 clk=WARM act=t1");
+    TEST_ASSERT_ARCLOG("exp=3000 err=2 erru=");
+    TEST_ASSERT_ARCLOG("clk=WARM act=t1");
 }
 
 void test_c2_warm_packet_early_before_midnight_has_negative_error(void)
@@ -1082,7 +1092,8 @@ void test_c2_warm_packet_early_before_midnight_has_negative_error(void)
     ArcLog_CaptureReset();
     MAC_OnSyncPacketReceived(&p, MS_PER_DAY - 3u);  /* cell 2 due at 00:00:00, 3 ms early */
     TEST_ASSERT_TRUE(MAC_GetEpochReceivedThisPhase());
-    TEST_ASSERT_ARCLOG("exp=0 err=-3 clk=WARM act=t1");
+    TEST_ASSERT_ARCLOG("exp=0 err=-3 erru=");
+    TEST_ASSERT_ARCLOG("clk=WARM act=t1");
 }
 
 void test_c2_packet1_after_midnight_bootstraps_in_day_domain(void)
@@ -1185,8 +1196,8 @@ void test_c2_sample_hook_not_called_for_packet1_called_for_good_acquiring(void)
     sample_pkt(&p, 1u); MAC_OnSyncPacketReceived(&p, 3003u);
     sample_pkt(&p, 2u); MAC_OnSyncPacketReceived(&p, 5997u);
     TEST_ASSERT_EQUAL(2, s_sample_n);
-    TEST_ASSERT_EQUAL_INT32(3, s_sample_err[0]);
-    TEST_ASSERT_EQUAL_INT32(-3, s_sample_err[1]);
+    TEST_ASSERT_INT32_WITHIN(250, 3000, s_sample_err[0]);
+    TEST_ASSERT_INT32_WITHIN(250, -3000, s_sample_err[1]);
 }
 
 void test_c2_sample_hook_not_called_for_a_bad_acquiring_packet(void)
@@ -1216,9 +1227,9 @@ void test_c2_sample_hook_called_for_tier1_and_tier2_not_tier3(void)
     sample_pkt(&p, 4u); MAC_OnSyncPacketReceived(&p, 12050u);   /* t2, +50 */
     sample_pkt(&p, 5u); MAC_OnSyncPacketReceived(&p, 14980u);   /* t2, -20 */
     TEST_ASSERT_EQUAL(3, s_sample_n);
-    TEST_ASSERT_EQUAL_INT32(4, s_sample_err[0]);
-    TEST_ASSERT_EQUAL_INT32(50, s_sample_err[1]);
-    TEST_ASSERT_EQUAL_INT32(-20, s_sample_err[2]);
+    TEST_ASSERT_INT32_WITHIN(250, 4000, s_sample_err[0]);
+    TEST_ASSERT_INT32_WITHIN(250, 50000, s_sample_err[1]);
+    TEST_ASSERT_INT32_WITHIN(250, -20000, s_sample_err[2]);
 
     sample_pkt(&p, 1u);
     MAC_OnSyncPacketReceived(&p, 3000u + SYNC_RESYNC_THRESHOLD_MS);     /* t3 */
