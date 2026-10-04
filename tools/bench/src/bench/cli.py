@@ -6,8 +6,12 @@ import argparse
 import os
 import subprocess
 import sys
+from contextlib import ExitStack
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from bench.lease import Held, Leases
+from bench.session import RUNS, default_root, ensure_runs_link, lease_dir, shared_root, worktree_name
 from bench.tree import BuildTree
 
 DEFAULT_ROOT = "/mnt/c/Users/Simon/arcfw-bench"
@@ -37,11 +41,24 @@ def _windows(path: Path) -> str:
     return to_windows(path) if str(path).startswith("/mnt/") else str(path)
 
 
+def _root(args: argparse.Namespace, repo: Path) -> Path:
+    """The Build Tree root: --root / $BENCH_ROOT, else one per worktree (a build rewrites the tree)."""
+    return Path(args.root) if args.root else default_root(repo, Path(DEFAULT_ROOT))
+
+
+def _leases(repo: Path, args: argparse.Namespace) -> Leases:
+    return Leases(lease_dir(repo), worktree=worktree_name(repo), command=getattr(args, "command_text", "bench"))
+
+
+def _held_note(exc: Held) -> str:
+    return f"{exc} - another session works on it: use other boards, or wait"
+
+
 def cmd_build(args: argparse.Namespace) -> int:
     from bench.build import build
 
     repo = Path(args.repo) if args.repo else find_repo(Path.cwd())
-    bt = BuildTree(Path(args.root))
+    bt = BuildTree(_root(args, repo))
     overrides = dict(args.define or [])
     try:
         result = build(repo, bt, args.cls, overrides, windows=_windows, clean=args.clean)
@@ -78,30 +95,106 @@ def parse_assignment(text: str) -> tuple[int, str]:
 
 
 def _context(args: argparse.Namespace):
+    """(repo, fleet, ports, node table, capture dir): the fleet is the local ST-LINK boards and the
+    Pi Nodes of bench.toml behind the one programmer-shaped interface."""
     from bench.boards import load_node_table, query_ports
     from bench.capture import CAPTURE_DIR
+    from bench.config import load_remotes
+    from bench.fleet import Fleet
+    from bench.pinode import PiNodeLink
     from bench.programmer import Programmer
 
     repo = Path(args.repo) if args.repo else find_repo(Path.cwd())
-    return repo, Programmer(), query_ports(), load_node_table(repo), repo / CAPTURE_DIR
+    try:
+        remotes = load_remotes()
+    except ValueError as exc:
+        raise SystemExit(f"bench: {exc}") from exc
+    fleet = Fleet(Programmer(), [PiNodeLink(r) for r in remotes])
+    ensure_runs_link(repo)
+    return (repo, fleet, {**query_ports(), **fleet.ports()}, load_node_table(repo),
+            shared_root(repo) / CAPTURE_DIR)
+
+
+def _probe_arg(args: argparse.Namespace) -> bool | set[str]:
+    """--probe-uids reads every unknown UID; --probe-uid ID only the named boards."""
+    return True if args.probe_uids else (set(args.probe_uid) if args.probe_uid else False)
+
+
+def _down_note(prog) -> str:
+    """Said after a failure: the Pi Nodes that were configured but did not answer."""
+    down = getattr(prog, "down", [])
+    return f" (Pi Node(s) not answering: {', '.join(r.name for r in down)})" if down else ""
+
+
+def _survey(args: argparse.Namespace):
+    """What `bench boards` and `bench map` show: (repo, boards, Pi Nodes not answering, boards another
+    session holds, boards another session's capture records). A UID is read over SWD only for the
+    boards asked for and no other session holds."""
+    from bench.capture import Capture
+    from bench.flash import discover
+    from bench.viz import capture_owner
+
+    repo, prog, ports, table, capture_dir = _context(args)
+    leases = _leases(repo, args)
+    with ExitStack() as stack:
+        boards = discover(prog, ports, table, capture_dir, probe_unknown=_probe_arg(args),
+                          may_probe=lambda sn: leases.try_exclusive(stack, sn))
+    # A session on code from before leases takes none; its capture holding a board's port is what shows it.
+    foreign = {x: p.out for p in Capture(repo, data=shared_root(repo)).status([b.port for b in boards if b.port]).foreign
+               for x in p.ports}
+    elsewhere = {b.sn: capture_owner(foreign[b.port]) for b in boards if b.port in foreign}
+    return repo, boards, prog.down, leases.holders([b.sn for b in boards]), elsewhere
+
+
+def _snapshot(args: argparse.Namespace):
+    from datetime import datetime, timezone
+
+    from bench.viz import snapshot
+
+    repo, boards, down, held, elsewhere = _survey(args)
+    return snapshot(boards, down, held, worktree_name(repo), datetime.now(timezone.utc), elsewhere), repo
 
 
 def cmd_boards(args: argparse.Namespace) -> int:
-    from bench.boards import format_uid
-    from bench.flash import discover
+    import json
 
-    repo, prog, ports, table, capture_dir = _context(args)
-    boards = discover(prog, ports, table, capture_dir, probe_unknown=args.probe_uids)
-    if not boards:
+    from bench.boards import format_uid
+
+    if args.json:
+        snap, _ = _snapshot(args)
+        print(json.dumps(snap, indent=2))
+        return 0 if snap["boards"] else 1
+    _, boards, down, held, elsewhere = _survey(args)
+    if not boards and not down:
         print("no ST-LINK probe connected")
         return 1
     for b in boards:
         uid = f"{format_uid(b.uid)} ({b.uid_source})" if b.uid else "unknown (no BOOT in the capture)"
         nid = b.node_id if b.node_id is not None else ("not in node_id.c" if b.uid else "?")
         build = b.build or ("none (firmware without build= in BOOT)" if b.uid_source == "trace" else "?")
-        print(f"probe {b.sn}  {b.port or 'no COM port'}  Node ID {nid}  UID {uid}  last build {build}")
+        where = urlsplit(b.port).netloc if b.remote else (b.port or "no COM port")
+        print(f"{'pi-node' if b.remote else 'probe'} {b.sn}  {where}  Node ID {nid}  UID {uid}  last build {build}"
+              + (f"  HELD by {held[b.sn]}" if b.sn in held else "")
+              + (f"  (recorded by {elsewhere[b.sn]}: may be in use)" if b.sn in elsewhere else ""))
+    for r in down:
+        print(f"pi-node {r.name}  {r.host}:{r.log}  not answering")
     known = sum(1 for b in boards if b.node_id is not None)
-    print(f"{len(boards)} board(s) connected, {known} with a known Node ID")
+    print(f"{len(boards)} board(s) connected, {known} with a known Node ID"
+          + (f", {len(held)} held by another session" if held else "")
+          + (f", {len(down)} Pi Node(s) not answering" if down else ""))
+    return 0 if boards else 1
+
+
+def cmd_map(args: argparse.Namespace) -> int:
+    from bench.viz import render_html
+
+    snap, repo = _snapshot(args)
+    out = Path(args.out) if args.out else shared_root(repo) / RUNS / "bench-map.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render_html(snap), encoding="utf-8")
+    n = snap["boards"]
+    print(f"bench map: {len(n)} board(s) connected ({sum(b['kind'] == 'st-link' for b in n)} local, "
+          f"{sum(b['kind'] == 'pi-node' for b in n)} on Pi Nodes), {len(snap['not_answering'])} not answering -> {out}")
     return 0
 
 
@@ -110,7 +203,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
 
     repo, prog, ports, _, _ = _context(args)
     present = [ports[p.sn] for p in prog.probes() if p.sn in ports]
-    cap = Capture(repo)
+    cap = Capture(repo, data=shared_root(repo))
     if args.action == "status":
         st = cap.status(present)
         if st.running:
@@ -119,15 +212,18 @@ def cmd_capture(args: argparse.Namespace) -> int:
             print("bench capture: not running")
         for p in st.foreign:
             print(f"other capture: pid {p.pid}, ports {', '.join(p.ports)} -> {p.out}")
-        if st.missing:
-            print(f"not recorded: {', '.join(st.missing)} (bench capture up)")
-        return 0 if st.running and not st.missing else 1
+        elsewhere = {x for p in st.foreign for x in p.ports}
+        missing = [m for m in st.missing if m not in elsewhere]
+        if missing:
+            print(f"not recorded: {', '.join(missing)} (bench capture up)")
+        return 0 if st.running and not missing else 1
     try:
-        _, done = cap.up(present, replace=args.replace)
+        _, done = cap.up(present, replace=args.replace, required=[])
     except RuntimeError as exc:
         print(f"bench capture: {exc}", file=sys.stderr)
         return 1
-    print(f"bench capture {done}: {', '.join(present)} -> {cap.dir}")
+    print(f"bench capture {done}: {', '.join(p for p in present if p not in cap.left_alone)} -> {cap.dir}"
+          + (f" ({', '.join(cap.left_alone)} stay with another capture)" if cap.left_alone else ""))
     return 0
 
 
@@ -139,29 +235,38 @@ def cmd_flash(args: argparse.Namespace) -> int:
 
     assignments = dict(args.node)
     repo, prog, ports, table, capture_dir = _context(args)
-    try:
-        boards = select(discover(prog, ports, table, capture_dir, probe_unknown=args.probe_uids), assignments)
-        present = [ports[p.sn] for p in prog.probes() if p.sn in ports]
-        _, done = Capture(repo).up(present)
-        print(f"capture {done}: {', '.join(present)}")
-        result = build(repo, BuildTree(Path(args.root)), sorted(set(assignments.values())),
-                       dict(args.define or []), windows=_windows)
-        if not result.ok:
-            for d in result.log.errors:
-                print(d)
-            print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}")
+    leases = _leases(repo, args)
+    with ExitStack() as stack:     # the leases are held until the command ends
+        try:
+            boards = select(discover(prog, ports, table, capture_dir, probe_unknown=_probe_arg(args),
+                                     may_probe=lambda sn: leases.try_exclusive(stack, sn)), assignments)
+            stack.enter_context(leases.hold(exclusive=[b.sn for b in boards.values()]))
+            present = [ports[p.sn] for p in prog.probes() if p.sn in ports]
+            capture = Capture(repo, data=shared_root(repo))
+            _, done = capture.up(present, required=[b.port for b in boards.values() if b.port])
+            print(f"capture {done}: {', '.join(p for p in present if p not in capture.left_alone)}"
+                  + (f" ({', '.join(capture.left_alone)} stay with another capture)" if capture.left_alone else ""))
+            result = build(repo, BuildTree(_root(args, repo)), sorted(set(assignments.values())),
+                           dict(args.define or []), windows=_windows)
+            if not result.ok:
+                for d in result.log.errors:
+                    print(d)
+                print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}")
+                return 1
+            print(f"build {result.build_id} ok")
+            since, flashed = flash_nodes(prog, boards, table, result, assignments)
+        except Held as exc:
+            print(f"bench flash: {_held_note(exc)}", file=sys.stderr)
             return 1
-        print(f"build {result.build_id} ok")
-        since, flashed = flash_nodes(prog, boards, table, result, assignments)
-    except (LookupError, RuntimeError, ValueError, Refused, ProgrammerError) as exc:
-        print(f"bench flash: {exc}", file=sys.stderr)
-        return 1
-    if args.no_check:
-        return 0
-    ok, verdict = boot_check(capture_dir, since, result.build_id, boards, assignments, flashed,
-                             timeout_s=args.timeout)
-    print(f"boot check: {verdict}")
-    return 0 if ok else 1
+        except (LookupError, RuntimeError, ValueError, Refused, ProgrammerError) as exc:
+            print(f"bench flash: {exc}{_down_note(prog)}", file=sys.stderr)
+            return 1
+        if args.no_check:
+            return 0
+        ok, verdict = boot_check(capture_dir, since, result.build_id, boards, assignments, flashed,
+                                 timeout_s=args.timeout)
+        print(f"boot check: {verdict}")
+        return 0 if ok else 1
 
 
 def cmd_reset(args: argparse.Namespace) -> int:
@@ -171,11 +276,15 @@ def cmd_reset(args: argparse.Namespace) -> int:
     repo, prog, ports, table, capture_dir = _context(args)
     try:
         boards = select(discover(prog, ports, table, capture_dir), {nid: "" for nid in args.node_ids})
-        for nid, b in boards.items():
-            prog.reset(b.sn)
-            print(f"reset Node ID {nid} ({b.port}, probe {b.sn})")
+        with _leases(repo, args).hold(exclusive=[b.sn for b in boards.values()]):
+            for nid, b in boards.items():
+                prog.reset(b.sn)
+                print(f"reset Node ID {nid} ({b.port}, probe {b.sn})")
+    except Held as exc:
+        print(f"bench reset: {_held_note(exc)}", file=sys.stderr)
+        return 1
     except (LookupError, ProgrammerError) as exc:
-        print(f"bench reset: {exc}", file=sys.stderr)
+        print(f"bench reset: {exc}{_down_note(prog)}", file=sys.stderr)
         return 1
     return 0
 
@@ -205,8 +314,6 @@ def _scenario_from_args(args: argparse.Namespace):
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from datetime import datetime, timezone
-
     from bench.build import build
     from bench.capture import Capture
     from bench.flash import discover, flash_nodes, select
@@ -224,31 +331,43 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"scenario saved to {args.save}")
     print(plan(s))
     repo, prog, ports, table, capture_dir = _context(args)
-    try:
-        found = discover(prog, ports, table, capture_dir, probe_unknown=args.probe_uids)
-        boards = select(found, s.nodes)
-        others = [b for b in found if b not in boards.values()]
-        present = [ports[p.sn] for p in prog.probes() if p.sn in ports]
-        _, done = Capture(repo).up(present)
-        print(f"capture {done}: {', '.join(present)}")
-        result = build(repo, BuildTree(Path(args.root)), sorted(set(s.flashed.values())), s.overrides,
-                       windows=_windows)
-        if not result.ok:
-            for d in result.log.errors:
-                print(d)
-            print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}")
+    leases = _leases(repo, args)
+    with ExitStack() as stack:     # the leases are held until the run ends
+        try:
+            found = discover(prog, ports, table, capture_dir, probe_unknown=_probe_arg(args),
+                             may_probe=lambda sn: leases.try_exclusive(stack, sn))
+            boards = select(found, s.nodes)
+            others = [b for b in found if b not in boards.values()]
+            written = set(s.flashed) | {a.reset for a in s.actions}     # flashed or reset: one holder
+            stack.enter_context(leases.hold(
+                exclusive=[boards[n].sn for n in boards if n in written],
+                shared=[boards[n].sn for n in boards if n not in written]))   # only watched: many may
+            present = [ports[p.sn] for p in prog.probes() if p.sn in ports]
+            capture = Capture(repo, data=shared_root(repo))
+            _, done = capture.up(present, required=[b.port for b in boards.values() if b.port])
+            print(f"capture {done}: {', '.join(p for p in present if p not in capture.left_alone)}"
+                  + (f" ({', '.join(capture.left_alone)} stay with another capture)" if capture.left_alone else ""))
+            result = build(repo, BuildTree(_root(args, repo)), sorted(set(s.flashed.values())), s.overrides,
+                           windows=_windows)
+            if not result.ok:
+                for d in result.log.errors:
+                    print(d)
+                print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}")
+                return 1
+            print(f"build {result.build_id} ok")
+            since, flashed = flash_nodes(prog, {n: boards[n] for n in s.flashed}, table, result, s.flashed)
+            outcome = follow(s, boards, result.build_id, capture_dir, since, reset=prog.reset, flashed=flashed)
+        except Held as exc:
+            print(f"bench run: {_held_note(exc)}", file=sys.stderr)
             return 1
-        print(f"build {result.build_id} ok")
-        since, flashed = flash_nodes(prog, {n: boards[n] for n in s.flashed}, table, result, s.flashed)
-        outcome = follow(s, boards, result.build_id, capture_dir, since, reset=prog.reset, flashed=flashed)
-    except (LookupError, RuntimeError, ValueError, Refused, ProgrammerError) as exc:
-        print(f"bench run: {exc}", file=sys.stderr)
-        return 1
-    out = run_dir(repo / "tools/arclog/runs", since, result.build_id)
-    slice_capture(capture_dir, out, [b.node for b in boards.values()], since, outcome.ended)
-    report = write_record(out, text, s, result.build_id, outcome, boards, others)
-    print(f"{outcome.verdict}\nrecord: {report}")
-    return outcome.code
+        except (LookupError, RuntimeError, ValueError, Refused, ProgrammerError) as exc:
+            print(f"bench run: {exc}{_down_note(prog)}", file=sys.stderr)
+            return 1
+        out = run_dir(shared_root(repo) / RUNS, since, result.build_id)
+        slice_capture(capture_dir, out, [b.node for b in boards.values()], since, outcome.ended)
+        report = write_record(out, text, s, result.build_id, outcome, boards, others)
+        print(f"{outcome.verdict}\nrecord: {report}")
+        return outcome.code
 
 
 def cmd_scenario(args: argparse.Namespace) -> int:
@@ -265,8 +384,9 @@ def cmd_scenario(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="bench", description=__doc__)
-    p.add_argument("--root", default=os.environ.get("BENCH_ROOT", DEFAULT_ROOT),
-                   help=f"bench directory on the Windows disk (default: {DEFAULT_ROOT})")
+    p.add_argument("--root", default=os.environ.get("BENCH_ROOT"),
+                   help=f"Build Tree directory on the Windows disk (default: {DEFAULT_ROOT} for the main "
+                        "checkout, <it>-<worktree> for a worktree, so builds do not collide)")
     p.add_argument("--repo", help="firmware repo (default: the git repo of the current directory)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -281,7 +401,16 @@ def build_parser() -> argparse.ArgumentParser:
     bd = sub.add_parser("boards", help="list the connected boards: probe, COM port, UID, Node ID, last build")
     bd.add_argument("--probe-uids", action="store_true",
                     help="read unknown UIDs over SWD (reboots those boards)")
+    bd.add_argument("--probe-uid", action="append", metavar="ID",
+                    help="read this board's UID over SWD (probe serial number or Pi Node name); repeat for several")
+    bd.add_argument("--json", action="store_true", help="print the boards as JSON (what `bench map` draws)")
     bd.set_defaults(func=cmd_boards)
+
+    mp = sub.add_parser("map", help="draw the connected boards, local and on Pi Nodes, as one HTML page")
+    mp.add_argument("--out", metavar="FILE", help="where to write the page (default: tools/arclog/runs/bench-map.html)")
+    mp.add_argument("--probe-uid", action="append", metavar="ID", help="read this board's UID first (see `boards`)")
+    mp.add_argument("--probe-uids", action="store_true", help="read unknown UIDs over SWD (reboots those boards)")
+    mp.set_defaults(func=cmd_map)
 
     c = sub.add_parser("capture", help="the always-on capture of every board's trace")
     c.add_argument("action", choices=["up", "status"])
@@ -295,6 +424,8 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("-D", dest="define", action="append", type=parse_define, metavar="NAME=VALUE",
                    help="Build Override for this build only")
     f.add_argument("--probe-uids", action="store_true", help="read unknown UIDs over SWD (reboots those boards)")
+    f.add_argument("--probe-uid", action="append", metavar="ID",
+                   help="read this board's UID over SWD (probe serial number or Pi Node name)")
     f.add_argument("--timeout", type=float, default=60, help="seconds to wait for the boot check")
     f.add_argument("--no-check", action="store_true", help="do not wait for the boot")
     f.set_defaults(func=cmd_flash)
@@ -315,6 +446,8 @@ def build_parser() -> argparse.ArgumentParser:
     rn.add_argument("--description", help="one line saved with the scenario")
     rn.add_argument("--save", metavar="FILE", help="also save the scenario described by the options")
     rn.add_argument("--probe-uids", action="store_true", help="read unknown UIDs over SWD (reboots those boards)")
+    rn.add_argument("--probe-uid", action="append", metavar="ID",
+                    help="read this board's UID over SWD (probe serial number or Pi Node name)")
     rn.set_defaults(func=cmd_run)
 
     sc = sub.add_parser("scenario", help="check a scenario file without touching the boards")
@@ -333,6 +466,7 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
     args = build_parser().parse_args(argv)
+    args.command_text = " ".join(["bench", *(sys.argv[1:] if argv is None else argv)])[:160]
     try:
         return args.func(args)
     except subprocess.CalledProcessError as exc:

@@ -12,6 +12,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 NODE_ID_C = Path("Common/Protocol/node_id.c")
 
@@ -91,7 +92,14 @@ def query_ports() -> dict[str, str]:
 
 
 def capture_node(port: str) -> str:
-    """Capture file prefix of a port: 'COM9' -> 'com9'."""
+    """Capture file prefix of a port: 'COM9' -> 'com9'.
+
+    A Pi Node's log is read over TCP and named by the label in the URL's path
+    ('tcp://100.64.0.11:4000/nuna-node-01' -> 'nuna-node-01'), not by its host, which may be an address.
+    """
+    if port.startswith("tcp://"):
+        url = urlsplit(port)
+        return (url.path.strip("/") or url.hostname or port).lower()
     return port.lower()
 
 
@@ -103,6 +111,7 @@ class Board:
     uid_source: str = ""        # "trace" (last BOOT in the capture) or "swd"
     node_id: int | None = None  # None: UID unknown or not in node_id.c
     build: str | None = None    # Build ID of the last BOOT in the capture
+    remote: bool = False        # a Pi Node: `sn` is its configured name, `port` its log URL
 
     @property
     def node(self) -> str | None:

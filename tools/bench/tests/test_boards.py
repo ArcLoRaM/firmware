@@ -143,6 +143,47 @@ def test_capture_up_never_stops_a_foreign_capture_unasked(tmp_path):
     assert cap(tmp_path, ps).up(["COM9"], replace=True)[1] == "restarted"
 
 
+OTHER = r"arclog.exe capture --port COM8 --node com8 --port COM10 --node com10 --out C:\other --quiet"
+PI = "tcp://nuna-node-02:4000/nuna-node-02"
+
+
+def test_capture_up_leaves_a_foreign_capture_alone_when_the_command_needs_none_of_its_ports(tmp_path):
+    ps = FakePs([(7, OTHER)])
+    capture = cap(tmp_path, ps)
+    assert capture.up(["COM8", "COM10", PI], required=[PI])[1] == "started"
+    create = ps.scripts[-1]
+    assert f"--port {PI} --node nuna-node-02" in create and "COM8" not in create
+    assert not any("taskkill" in s for s in ps.scripts)
+    assert capture.left_alone == ["COM8", "COM10"]
+
+
+def test_capture_up_still_refuses_when_a_needed_port_is_held_by_a_foreign_capture(tmp_path):
+    ps = FakePs([(7, OTHER)])
+    with pytest.raises(RuntimeError, match="another capture holds the ports: pid 7 COM8,COM10"):
+        cap(tmp_path, ps).up(["COM8", PI], required=["COM8"])
+    assert not any("taskkill" in s or "Create" in s for s in ps.scripts)
+
+
+def test_capture_up_keeps_its_own_complete_capture_when_a_foreign_one_holds_other_ports(tmp_path):
+    ps = FakePs([bench_proc(5, [PI]), (7, OTHER)])
+    assert cap(tmp_path, ps).up(["COM8", "COM10", PI], required=[PI])[1] == "running"
+    assert len(ps.scripts) == 1
+
+
+def test_capture_up_starts_nothing_when_every_port_stays_with_a_foreign_capture(tmp_path):
+    ps = FakePs([(7, OTHER)])
+    assert cap(tmp_path, ps).up(["COM8", "COM10"], required=[])[1] == "skipped"
+    assert not any("Create" in s for s in ps.scripts)
+
+
+def test_the_capture_records_into_the_shared_folder_and_runs_arclog_from_the_worktree(tmp_path):
+    shared, wt = tmp_path / "main", tmp_path / "wt"
+    seen = []
+    c = Capture(wt, ps=FakePs([]), windows=lambda p: seen.append(p) or str(p), data=shared)
+    assert c.dir == shared / "tools/arclog/runs/bench"
+    assert wt / "tools/arclog" in seen and shared / "tools/arclog/runs/bench" in seen
+
+
 # --- discovery and flash ---------------------------------------------------------
 
 T0 = datetime(2026, 9, 29, 10, 0, tzinfo=timezone.utc)
@@ -262,6 +303,27 @@ def test_flash_returns_when_each_board_was_flashed(tmp_path):
     since, flashed = flash_nodes(FakeProg([SN9], {SN9: UID2}), {2: board}, {UID2: 2}, result(tmp_path),
                                  {2: "C2"}, report=lambda m: None, now=lambda: next(clock))
     assert since == T0 - timedelta(seconds=1) and flashed == {2: T0 + timedelta(seconds=7)}
+
+
+def test_a_boards_flash_time_is_taken_before_its_programmer_call(tmp_path):
+    """A Pi Node resets the board inside its GDB session and the session ends some seconds later: the
+    new image's boot lines come before the call returns, and must not pass for the old image's."""
+    board = Board(SN9, "COM9", UID2, "trace", 2)
+    events = []
+
+    class Prog(FakeProg):
+        def flash(self, sn, images):
+            events.append("flash")
+
+    ticks = iter([T0, T0 + timedelta(seconds=7)])
+
+    def now():
+        events.append("now")
+        return next(ticks)
+
+    flash_nodes(Prog([SN9], {SN9: UID2}), {2: board}, {UID2: 2}, result(tmp_path), {2: "C2"},
+                report=lambda m: None, now=now)
+    assert events == ["now", "now", "flash"]
 
 
 def test_no_port_present_is_no_port():

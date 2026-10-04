@@ -5,13 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Collection
 
 from arclog.expect import DirFollower, Run, replay, spec_from_dict
 from arclog.model import Kind, read_lines
 
 from bench.boards import Board, Uid, capture_node, format_uid
 from bench.build import BuildResult, config_of
+from bench.pinode import PI_NODE
 from bench.programmer import Programmer
 
 
@@ -30,16 +31,21 @@ def last_boot(capture_dir: Path, node: str) -> tuple[Uid | None, str | None]:
 
 
 def discover(prog: Programmer, ports: dict[str, str], table: dict[Uid, int], capture_dir: Path,
-             probe_unknown: bool = False) -> list[Board]:
+             probe_unknown: bool | Collection[str] = False,
+             may_probe: Callable[[str], bool] | None = None) -> list[Board]:
     """Every connected probe as a Board. The UID comes from the capture's last BOOT on the probe's
-    port; with probe_unknown, boards without one are read over SWD (which reboots them)."""
+    port; with probe_unknown, boards without one are read over SWD (an ST-LINK read reboots them).
+    probe_unknown is True for every such board, or the ids (probe serial numbers, Pi Node names) of
+    the only boards to read: a Pi Node is a debug session on a shared board. may_probe(id) is asked
+    before each read and says no for a board another session holds."""
     boards = []
     for probe in prog.probes():
-        b = Board(probe.sn, ports.get(probe.sn))
+        b = Board(probe.sn, ports.get(probe.sn), remote=probe.board == PI_NODE)
         if b.port:
             b.uid, b.build = last_boot(capture_dir, capture_node(b.port))
             b.uid_source = "trace" if b.uid else ""
-        if b.uid is None and probe_unknown:
+        wanted = probe_unknown if isinstance(probe_unknown, bool) else probe.sn in probe_unknown
+        if b.uid is None and wanted and (may_probe is None or may_probe(probe.sn)):
             b.uid, b.uid_source = prog.read_uid(probe.sn), "swd"
         b.node_id = table.get(b.uid) if b.uid else None
         boards.append(b)
@@ -99,8 +105,9 @@ def flash_nodes(prog: Programmer, boards: dict[int, Board], table: dict[Uid, int
     """Check every board's UID over SWD, then flash both cores of each board's configuration.
 
     Returns the run's start (just before the first UID read) and, per Node ID, the time its
-    flash ended: its lines before that belong to the previous image (or to the reboot of the
-    UID read, which may be the same build when a board is reflashed)."""
+    flash began: its lines before that belong to the previous image (or to the reboot of the
+    UID read, which may be the same build when a board is reflashed). The new image's first lines
+    may come before the programmer call returns, so the time is not taken after it."""
     expected = {nid: uid for uid, nid in table.items()}
     started = now() - timedelta(seconds=1)
     for nid, board in boards.items():
@@ -112,6 +119,7 @@ def flash_nodes(prog: Programmer, boards: dict[int, Board], table: dict[Uid, int
     for nid, board in boards.items():
         cfg = config_of(assignments[nid])
         report(f"flash Node ID {nid} ({board.port}, probe {board.sn}) as {assignments[nid]}, build {build.build_id}")
-        prog.flash(board.sn, {core: build.elfs[(core, cfg)] for core in ("CM4", "CM0PLUS")})
+        # Taken before the call: a Pi Node resets the board inside its session, which ends seconds later.
         flashed[nid] = now()
+        prog.flash(board.sn, {core: build.elfs[(core, cfg)] for core in ("CM4", "CM0PLUS")})
     return started, flashed
