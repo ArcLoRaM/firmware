@@ -29,7 +29,8 @@ One compile-time parameter, `SYNC_PROFILE` (`Common/Protocol/sync_profile.h`), p
 - **The profile is logged** in the CM0+ `BOOT` line (`sync=`), so a trace says which schedule it ran.
 - The default is DEV while PROD is provisional; it becomes PROD when #45 lands its table.
 - **Boot burst, an option for faster warm-up** (`SYNC_BOOT_BURST=N`, default 1 = none): the first Sync phase after the C3 boots sends N packets in its first cells (20 s apart on DEV), drawn from the full duty-cycle credit (the 36 s bucket holds 36 packets, N is at most the 10 cells of a phase); every later phase sends one.
-  Boards flashed or reset together with the C3 lock within that phase (about 1.5 min for N = 3 on DEV) instead of three phases.
+  Boards flashed or reset together with the C3 lock within that phase (about a minute on DEV) instead of three phases.
+  N must leave three packets after the cells a node misses while it boots: boards are flashed one after the other, so a node is up 8 s or more after the C3 and misses cell 0. The bench of 2026-10-04 showed N = 3 giving a C2 two packets (the RTC set and one good) and a lock a phase later; N = 5 is the value of the scenario.
   It does not help a node reset alone later, nor a node below a relay: they keep the regular schedule.
 
 ## Considered Options

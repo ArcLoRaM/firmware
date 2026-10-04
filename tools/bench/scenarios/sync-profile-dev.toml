@@ -5,6 +5,11 @@
 # needs three packets (one RTC set, two good) to reach WARM, one per phase, so
 # about 10 min. The C3 sends in cell 0 only (never ce=1) and is never denied;
 # the BOOT line names the profile. C3 = Node 1, C2 = Node 4 (NUCLEO Clock).
+# The C3's first packet leaves a few seconds after its boot, before the run is
+# armed and before the C2 (flashed second) is up, so the run counts the packets
+# from the second one: at +205, +405 and +605 s. The C2 takes the second as
+# Packet 1 (ACQ at ~206 s), the third as good, the fourth as good: WARM at
+# ~605 s, 10 min. (First run, 2026-10-04: failed on a count of 3 within 9 min.)
 description = "DEV Sync profile: one packet per 200 s phase, a cold C2 locks in about 10 min"
 timeout = "14m"
 
@@ -17,7 +22,7 @@ node = 1
 event = "SYNC_TX"
 where = { ce = 0 }
 count = 3
-within = "9m"
+within = "11m"
 
 [[expect]]
 node = 4

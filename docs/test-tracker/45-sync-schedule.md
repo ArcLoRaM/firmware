@@ -50,3 +50,6 @@ This issue replaces the provisional `PROD` numbers.
 
 | Date (UTC) | Scenario | Build ID | Verdict | Record | Notes |
 |---|---|---|---|---|---|
+| 2026-10-04 19:23 | `sync-profile-dev.toml` (first version) | `59384f3` | FAIL (scenario) | `tools/arclog/runs/20261004T192509Z-59384f3/` | The profile worked: `BOOT sync=DEV`, `SYNC_TX ce=0` only, one per 200 s, no `TX_DENIED`; the C2 (Node 4) went to ACQ at +206 s on the second packet. The scenario counted the C3's first packet, which leaves about 6 s after its boot, before the run is armed and before the second board is up, so `count = 3 within 9m` saw 2. Counted from the second packet and the window moved to 11 min; to re-run |
+| 2026-10-04 19:37 | `sync-profile-dev-burst.toml` (burst of 3) | `59384f3-o36b106` | FAIL (finding) | `tools/arclog/runs/20261004T193711Z-59384f3-o36b106/` | The C3 sent the burst: `SYNC_TX ce=0,1,2` 20 s apart. The C2 booted 8 s after the C3, missed `ce=0`, took `ce=1` as the RTC set (ACQ) and `ce=2` as good, and had no third packet: WARM only a phase later. A burst of 3 does not serve boards flashed one after the other: the scenario now uses 5 (ADR-0020); to re-run |
+

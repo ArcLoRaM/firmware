@@ -1,3 +1,5 @@
+# Written against the 30 s Sync grid (3 cells per phase, a cell every 3 s): pinned to the
+# BRINGUP profile now that the default is DEV (sync_profile.h, ADR-0020).
 # Issue #54: a C3 and a locked C2 cross RTC midnight on the TDMA grid.
 # BENCH_RTC_START_S = 85800 starts the C3 at 23:50:00: the C2 locks before
 # midnight, and the C3's duty-cycle credit runs out (about boot + 6.5 min)
@@ -11,6 +13,7 @@ timeout = "25m"
 2 = "C2"
 
 [overrides]
+SYNC_PROFILE = "SYNC_PROFILE_BRINGUP"
 BENCH_RTC_START_S = "85800"
 
 [[expect]]

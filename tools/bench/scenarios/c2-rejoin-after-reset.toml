@@ -1,3 +1,5 @@
+# Written against the 30 s Sync grid (3 cells per phase, a cell every 3 s): pinned to the
+# BRINGUP profile now that the default is DEV (sync_profile.h, ADR-0020).
 # The C2 locks, is reset 10 s later, and must lock again.
 description = "C2 rejoins after a reset"
 timeout = "20m"
@@ -5,6 +7,9 @@ timeout = "20m"
 [nodes]
 1 = "C3"
 2 = "C2"
+
+[overrides]
+SYNC_PROFILE = "SYNC_PROFILE_BRINGUP"
 
 [[action]]
 reset = 2

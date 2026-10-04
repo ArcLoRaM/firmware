@@ -1,3 +1,5 @@
+# Written against the 30 s Sync grid (3 cells per phase, a cell every 3 s): pinned to the
+# BRINGUP profile now that the default is DEV (sync_profile.h, ADR-0020).
 # Issue #70: the C3's first Sync packet after boot is late and dropped.
 # Red today (TX_LATE at cell 0); green once cell 0 goes on air at its nominal start.
 description = "C3 sends cell 0 of its first Sync phase, on time"
@@ -5,6 +7,9 @@ timeout = "2m"
 
 [nodes]
 1 = "C3"
+
+[overrides]
+SYNC_PROFILE = "SYNC_PROFILE_BRINGUP"
 
 [[expect]]
 node = 1

@@ -1,3 +1,5 @@
+# Written against the 30 s Sync grid (3 cells per phase, a cell every 3 s): pinned to the
+# BRINGUP profile now that the default is DEV (sync_profile.h, ADR-0020).
 # Issue #28: a cold C2 sets its RTC from a Sync packet whose cell is after
 # midnight, in a phase that started before it, and must set the next day's date.
 # The Sync grid hangs on the C3's boot (phases 30 s apart, 10 cells of 3 s,
@@ -17,6 +19,7 @@ timeout = "8m"
 2 = "C2"
 
 [overrides]
+SYNC_PROFILE = "SYNC_PROFILE_BRINGUP"
 BENCH_RTC_START_S = "86277"
 
 # The C3's boot RTC_SET is logged before the run arms, so the reset is timed

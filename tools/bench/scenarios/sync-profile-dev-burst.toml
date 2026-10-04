@@ -1,11 +1,14 @@
 # Purpose: acceptance (the boot burst option). Issue #45, Test Record
 # docs/test-tracker/45-sync-schedule.md.
-# SYNC_BOOT_BURST=3u: the first Sync phase after the C3 boots sends its packets in
-# cells 0, 1 and 2 (20 s apart on the DEV profile), from the full credit bucket.
-# A C2 flashed and booted with the C3 gets its three packets (one RTC set, two
-# good) in that phase and is WARM within about 1.5 min, instead of the three
-# phases (about 10 min) of scenario sync-profile-dev.toml. Later phases are one
-# packet again. C3 = Node 1, C2 = Node 4 (NUCLEO Clock).
+# SYNC_BOOT_BURST=5u: the first Sync phase after the C3 boots sends its packets in
+# cells 0 to 4 (20 s apart on the DEV profile), from the full credit bucket.
+# Boards are flashed one after the other, so the C2 is up 8 s or more after the
+# C3 and misses cell 0 (first run with a burst of 3, 2026-10-04: ACQ at cell 1,
+# one good packet at cell 2, no third: WARM only a phase later). A burst of 5
+# leaves four packets after a missed first one: the C2 sets its RTC on cell 1,
+# takes cells 2 and 3 as good and is WARM about a minute after the C3 boots,
+# instead of the three phases (about 10 min) of sync-profile-dev.toml. Later
+# phases are one packet again. C3 = Node 1, C2 = Node 4 (NUCLEO Clock).
 description = "Boot burst: a C2 booted with the C3 locks within the first Sync phase"
 timeout = "8m"
 
@@ -14,7 +17,7 @@ timeout = "8m"
 4 = "C2"
 
 [overrides]
-SYNC_BOOT_BURST = "3u"
+SYNC_BOOT_BURST = "5u"
 
 [[expect]]
 node = 1
@@ -24,7 +27,7 @@ where = { ce = 0 }
 [[expect]]
 node = 1
 event = "SYNC_TX"
-where = { ce = 2 }
+where = { ce = 4 }
 within = "2m"
 
 [[expect]]
@@ -33,10 +36,10 @@ event = "CLK"
 where = { to = "WARM" }
 within = "3m"
 
-# The burst is the first phase only: no packet in cell 3 or later, ever.
+# The burst is the first phase only: no packet in cell 5 or later, ever.
 [[forbid]]
 event = "SYNC_TX"
-where = { ce = 3 }
+where = { ce = 5 }
 
 [[forbid]]
 event = "TX_DENIED"

@@ -1,3 +1,5 @@
+# Written against the 30 s Sync grid (3 cells per phase, a cell every 3 s): pinned to the
+# BRINGUP profile now that the default is DEV (sync_profile.h, ADR-0020).
 # Issue #55 (acceptance): after a Packet 1 clock set, the C2's clock matches
 # the C3's within +/-1 ms. The acquisition packets that follow the set
 # (act=good) read err = stamp - expected, so they must stay within -1..1.
@@ -8,6 +10,9 @@ timeout = "5m"
 [nodes]
 1 = "C3"
 2 = "C2"
+
+[overrides]
+SYNC_PROFILE = "SYNC_PROFILE_BRINGUP"
 
 [[expect]]
 node = 2

@@ -86,9 +86,15 @@
  * this many packets, in the first cells, of the FIRST Sync phase after it
  * boots, drawn from its full duty-cycle credit (the 36 s bucket holds 36
  * packets); every later phase sends SYNC_TX_BUDGET. Boards flashed or reset
- * together with the C3 then lock within that phase (about 40 s on DEV for 3)
+ * together with the C3 then lock within that phase (about a minute on DEV)
  * instead of one phase per packet. A node reset alone later, and every relay,
- * keep the regular schedule. `-D SYNC_BOOT_BURST=3u`.
+ * keep the regular schedule. `-D SYNC_BOOT_BURST=5u`.
+ *
+ * Choose N so that three packets remain after the cells the node misses
+ * while it boots: boards are flashed one after the other, so a node is up 8 s
+ * or more after the C3 and misses cell 0 (bench, 2026-10-04: a burst of 3
+ * gave it two packets, not the three a cold node needs). With cells 20 s
+ * apart, N = 5 tolerates a node booting up to 40 s late.
  */
 #ifndef SYNC_BOOT_BURST
 #  define SYNC_BOOT_BURST  1u

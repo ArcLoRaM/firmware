@@ -1,3 +1,5 @@
+# Written against the 30 s Sync grid (3 cells per phase, a cell every 3 s): pinned to the
+# BRINGUP profile now that the default is DEV (sync_profile.h, ADR-0020).
 # Issue #33: a WARM C2 that hears no Sync packet for SYNC_SILENCE_TIMEOUT_MS
 # (15 min) drops to CLOCK_COLD and scans.
 # Hands on the bench: once the C2 is WARM, unplug node 1's USB so the C3 goes
@@ -9,6 +11,9 @@ timeout = "35m"
 [nodes]
 1 = "C3"
 2 = "C2"
+
+[overrides]
+SYNC_PROFILE = "SYNC_PROFILE_BRINGUP"
 
 [[expect]]
 node = 2
