@@ -19,6 +19,7 @@ A run takes minutes: start it with `run_in_background`, and read its output file
 `bench map` draws the boards connected on this PC and on Pi Nodes and says which are free, held or recorded by another session (a page the user can open; `bench boards` is the text form).
 Choose the boards, the class of each and the Build Overrides yourself when the test is simple: a smoke check, a reset, reading a trace, a rerun of a scenario that already names them.
 Ask the user (AskUserQuestion, your recommendation first) only for an opinionated choice: which board is the C3, or sits at which hop of a line; an override value that changes what the test measures; a run that holds boards for hours.
+The C3 is the board connected to this PC unless the user says otherwise; the other classes go to Pi Nodes, or to other local boards when there are no Pi Nodes.
 Say in the report which choices you made.
 A Pi Node has one operator at a time, as a local board has: the lease is the only coordination `bench` needs.
 

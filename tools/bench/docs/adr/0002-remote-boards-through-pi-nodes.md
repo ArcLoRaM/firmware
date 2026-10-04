@@ -128,7 +128,13 @@ Rejected: not the setup being built, and it keeps the USB passthrough problem AD
    No OpenOCD restart over SSH was needed; why the attach works while the firmware sleeps is not established.
 2. **Flash time.** Measured 2026-10-04: UID read, both images written and verified, and reset take about 10 s over the tailnet from this PC (run start 20:23:20 UTC, first `BOOT` 20:23:30.7).
 3. **UID read** through `monitor mdw`: settled 2026-10-04 (`0026001a3232501420383543`, Node ID 2 on `nuna-node-02`).
-   Still open: the option bytes read before and after a flash, to show the path writes nothing else.
+   Option bytes are not checked here: that is a phase 3 matter, and the allowlist already refuses every command that writes them.
 4. **Name resolution and routing from WSL.** Settled 2026-10-04: MagicDNS resolves from WSL and from Windows, and WSL opens TCP connections to `nuna-node-01` and `nuna-node-02` (ports 22 and 4000), so the controller needs no extra install for the log.
 5. **Pi clock.** Measured 2026-10-04: the Pi stamps local time with no zone (20:54 against 18:54 UTC, so UTC+2 until the clock change on 2026-10-25).
    NTP state and the skew against the controller are still to measure.
+
+## Later
+
+- **Positions.** An optional, permanent coordinate per board UID (not per Node ID: it travels with the board), so that bench knows the topology by itself: which nodes can hear each other, the distance of a link, the expected path loss, and the context of a result.
+  Coordinates are placement data, not a time source.
+  Where they are stored is not decided.

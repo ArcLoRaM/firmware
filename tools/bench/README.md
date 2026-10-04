@@ -209,7 +209,7 @@ log  = 4000               # UART log port (default)
   `bench boards --probe-uid nuna-node-02` reads that one board's UID (a GDB session); `--probe-uids` reads every unknown board, which on a Pi Node is a debug session on a shared board.
 - OpenOCD's own README, and where its command reference is, are in `docs/reference/`.
 - Status: host-tested, and run end to end on `nuna-node-02` on 2026-10-04 (UID read, flash of both cores, a scenario run, a reset; `docs/test-tracker/spot-20261004-pinode-c2.md`).
-  Open: the Pi's clock stamps local time (the live stream does not use it), the option bytes before and after a flash, and the Pi-side recorder for long runs (ADR-0002).
+  Open: the Pi's clock stamps local time (the live stream does not use it) and the Pi-side recorder for long runs (ADR-0002).
 
 ## Overview
 

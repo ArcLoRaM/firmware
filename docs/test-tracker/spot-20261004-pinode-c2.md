@@ -18,7 +18,7 @@ Checked against `bench boards` on 2026-10-04: two local ST-LINK boards (Node IDs
 | Item | Needed | Today |
 |---|---|---|
 | Node 2 flashed as C2: the board wired to Pi Node `nuna-node-02` | yes | present: UID `0026001a3232501420383543` read through the Pi's GDB on 2026-10-04 is Node ID 2 in `node_id.c`, so no onboarding; Node 2 is not on the local bench |
-| A sender: the board on Pi Node `nuna-node-01`, running its own firmware | yes | log answers; left untouched, its Node ID is not needed |
+| A sender: the board on Pi Node `nuna-node-01`, running its own firmware | yes | log answers; a C3 (`build=dev`) with UID `0014001b3232501420383543`, registered as Node ID 5 in `node_id.c` on 2026-10-04 (its firmware still logs `id=0` until reflashed); left untouched |
 | Pi Node `nuna-node-02`: OpenOCD (GDB 3333) and UART log (4000) | yes | log port answers; the GDB port has not been tried |
 | Tailnet route from this PC (the bench tailnet), `~/.config/bench/bench.toml` | yes | present |
 | CubeIDE `arm-none-eabi-gdb.exe` on the Windows host | yes | present (`C:\ST\STM32CubeIDE_2.1.1`) |
