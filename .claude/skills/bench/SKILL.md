@@ -36,6 +36,7 @@ Every run, whatever its purpose (acceptance, performance or spontaneous), leaves
    A board another session holds shows `HELD by <worktree>: <command>`: it is not yours, so pick other boards or wait, and leave its capture alone (`--replace` is for a port you need).
    `bench capture status` must show every board recorded, by this capture or another's (`bench capture up` otherwise).
    A board with an unknown UID is a new board: `--probe-uid <id>` reads that one (a Pi Node: a GDB session; an ST-LINK board: it reboots), then add it to `Common/Protocol/node_id.c` with the next free Node ID.
+   A node whose capture file has had no new line for over 60 s while its port answers is a node silence: add a row to `docs/test-tracker/node-silences.md` (the fourth gets an investigation), then reset it.
    Done when every Node ID the scenario names is listed and free; a scenario that needs a board `bench boards` does not list says so, it is not cut down.
 3. **Run.** `bench run <scenario>`: it builds the working tree (uncommitted changes included), flashes, fires the actions and decides.
    Done when it exits: 0 PASS, 1 FAIL, 2 TIMEOUT, 3 invalid scenario.

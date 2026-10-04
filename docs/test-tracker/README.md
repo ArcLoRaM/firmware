@@ -62,6 +62,7 @@ A record's state is read, not declared: no Runs row means planned; Runs but unti
 - **Baseline and performance**: measured values with their counts and confidence intervals. A threshold exists only where a requirement defines it, and is never set after the data is seen.
 - **Invalid run** (a host sleep, a dead radio, a wrong expectation): stays in Runs with its cause, gets no GitHub comment, and is run again.
 - **A finding** becomes an issue; a spontaneous record links it.
+- **A node that stops logging** while its capture is up is counted in `node-silences.md`; the fourth is investigated.
 
 ## Scenario rules
 
