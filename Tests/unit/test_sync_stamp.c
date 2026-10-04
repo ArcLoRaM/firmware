@@ -53,6 +53,28 @@ void test_the_stamp_wraps_to_the_day_before(void)
     TEST_ASSERT_EQUAL_UINT32(RTC_DAY_TICKS - 4058u, SyncStamp_FromRxDone(2u, 991232u, 0u));
 }
 
+/* The 32-bit form, for the radio interrupt: the time on air and the latency
+ * already in ticks (computed once), no 64-bit division per packet (a probe on
+ * the CM0+ at 4 MHz measured 550 us for the 64-bit form against 133 us for the
+ * driver's own ToA). It must give the same stamp as the us form. */
+void test_the_tick_form_equals_the_us_form(void)
+{
+    const uint32_t toa_us = 991232u;
+    const uint32_t back = SyncStamp_UsToTicks(toa_us) + SyncStamp_UsToTicks(977u);
+    const uint32_t rxds[] = { 0u, 1u, back - 1u, back, back + 1u, 100000u, RTC_DAY_TICKS / 2u,
+                              RTC_DAY_TICKS - 1u };
+    for (unsigned i = 0; i < sizeof rxds / sizeof rxds[0]; i++) {
+        TEST_ASSERT_EQUAL_UINT32(SyncStamp_FromRxDone(rxds[i], toa_us, 977u),
+                                 SyncStamp_FromRxDoneTicks(rxds[i], back));
+    }
+}
+
+void test_the_tick_form_wraps_to_the_day_before(void)
+{
+    TEST_ASSERT_EQUAL_UINT32(RTC_DAY_TICKS - 4058u, SyncStamp_FromRxDoneTicks(2u, 4060u));
+    TEST_ASSERT_EQUAL_UINT32(0u, SyncStamp_FromRxDoneTicks(4060u, 4060u));
+}
+
 void test_the_error_of_a_stamp_on_time_is_zero(void)
 {
     TEST_ASSERT_EQUAL_INT32(0, SyncStamp_ErrorUs(12288u, 3000u));
@@ -109,6 +131,8 @@ int main(void)
     RUN_TEST(test_the_stamp_is_the_packet_start_rxdone_minus_the_air_time);
     RUN_TEST(test_the_rx_latency_is_subtracted_too);
     RUN_TEST(test_the_stamp_wraps_to_the_day_before);
+    RUN_TEST(test_the_tick_form_equals_the_us_form);
+    RUN_TEST(test_the_tick_form_wraps_to_the_day_before);
     RUN_TEST(test_the_error_of_a_stamp_on_time_is_zero);
     RUN_TEST(test_the_error_is_in_us_to_the_tick);
     RUN_TEST(test_a_non_tick_expected_arrival_is_not_rounded);

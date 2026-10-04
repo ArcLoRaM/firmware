@@ -60,6 +60,23 @@ static inline uint32_t SyncStamp_FromRxDone(uint32_t rxd_ticks, uint32_t toa_us,
 }
 
 /*!
+ * \brief   The same stamp with the time on air and the Rx latency already in
+ *          ticks (both under a day): 32-bit adds only, for the radio
+ *          interrupt, where the 64-bit form cost 550 us on the CM0+ at 4 MHz
+ *          (bench, 2026-10-04) against 133 us for the driver's whole-ms ToA.
+ *          The modem configuration does not change, so the caller converts
+ *          the air time once.
+ *
+ * \param   rxd_ticks   RTC at the RxDone interrupt entry, day ticks.
+ * \param   back_ticks  Time on air plus Rx latency, in ticks.
+ */
+static inline uint32_t SyncStamp_FromRxDoneTicks(uint32_t rxd_ticks, uint32_t back_ticks)
+{
+    return (rxd_ticks >= back_ticks) ? (rxd_ticks - back_ticks)
+                                     : (rxd_ticks + RTC_DAY_TICKS - back_ticks);
+}
+
+/*!
  * \brief   Stamp minus expected arrival, in us (positive: the stamp is late,
  *          the local clock is ahead), the short way round the day.
  *

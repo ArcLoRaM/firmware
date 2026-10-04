@@ -100,6 +100,7 @@ static uint8_t           s_last_tx_len;
 
 static uint32_t plat_radio_toa(uint8_t len);
 static uint32_t plat_radio_toa_us(uint8_t len);
+static uint32_t plat_rx_back_ticks(uint8_t len);
 
 void SubGhzPhyTask_OnRadioIrq(void)
 {
@@ -155,8 +156,7 @@ static void on_rx_done(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr
      * the time on air in microseconds (991 232 us for a Sync packet, not the
      * driver's whole 991 ms) minus the Rx latency (issue #82). `stamp` is its
      * floor in ms, for the log. */
-    uint32_t stamp_ticks = SyncStamp_FromRxDone(rxd_ticks, plat_radio_toa_us((uint8_t)size),
-                                                RX_DONE_LATENCY_MS * 1000u);
+    uint32_t stamp_ticks = SyncStamp_FromRxDoneTicks(rxd_ticks, plat_rx_back_ticks((uint8_t)size));
     uint32_t stamp = RtcTicks_ToMs(stamp_ticks);
     PROBE_MARK(probe, "stamp_ticks");
     PROBE_LOG(probe, "rx_stamp");
@@ -341,6 +341,22 @@ static void     plat_radio_sleep(void)                         { Radio.Sleep(); 
 static uint32_t plat_radio_toa_us(uint8_t len)
 {
     return LoraToa_Us(len, 12u, 125000u, 1u, 8u, true, false);
+}
+
+/* Time on air plus the Rx latency, in ticks, for the length received. The
+ * modem configuration is fixed, so it is computed once per length: the
+ * 64-bit formula and conversions cost 550 us per packet at 4 MHz when done
+ * in the interrupt (bench probe, 2026-10-04, issue #82). */
+static uint32_t plat_rx_back_ticks(uint8_t len)
+{
+    static uint8_t  s_len;
+    static uint32_t s_back;
+    if (s_back == 0u || s_len != len) {
+        s_back = SyncStamp_UsToTicks(plat_radio_toa_us(len))
+               + SyncStamp_UsToTicks(RX_DONE_LATENCY_MS * 1000u);
+        s_len  = len;
+    }
+    return s_back;
 }
 
 static uint32_t plat_radio_toa(uint8_t len)
