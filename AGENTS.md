@@ -8,6 +8,14 @@ Bench refuses anything irreversible (option bytes, OTP, protection, mass erase);
 
 Host-side unit tests (`Tests/`, CMake + host GCC) are not firmware builds and may be run.
 
+## Naming issues
+
+Name an issue by its number and a condensed title, never by the number alone: "#73 bench builds alternate ok/fail (missing HAL link errors)", not "#73".
+This holds wherever Simon reads it: chat replies, questions, recaps, the paste-ready message for a new session, and comments and Test Record text.
+A bare number tells him nothing, and he cannot tell which issue it is.
+Condense the GitHub title to a few words and drop its phase tag and area (`[1] [Bench]`).
+The `(#73)` at the end of a commit subject stays as it is: it is a link, and the subject already says what changed.
+
 ## Closing out an issue
 
 Simon cannot easily tell whether the issue in hand is finished, what is left and whether it is saved.
