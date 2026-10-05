@@ -169,6 +169,29 @@ bench boards --json           # the same data as JSON
 One self-contained page (it follows the viewer's light or dark theme) of what is connected: the probes on this PC and the Pi Nodes on the tailnet, each board with its Node ID, UID, last build and whether it is free, held by another session (with the command and since when), a new board, or not answering.
 A board recorded by another worktree's capture is marked as possibly in use, because a session on code from before leases takes none.
 It is a snapshot of the moment it was made; `bench map` makes a new one.
+`bench map --open` also opens the page in the browser (under WSL, the Windows one).
+
+### Choosing a deployment
+
+```sh
+bench choose --propose 1=C3 --propose 2=C2 -D TX_RAMP_MS=5u
+```
+
+Asks the user which board runs as which class, and with which Build Overrides, in a page that opens by itself, and brings the answer back:
+
+1. It surveys the boards (as `bench boards`), starts a server on `127.0.0.1` and opens the page in the user's browser.
+2. The page shows the boards as the map does. Each free board has a class menu (not in the run, C3, C2, C1, watch only) with the recommendation preselected, and there is a field for overrides and one for a note.
+3. The user presses **Send to the agent**. The command prints `choice: --node 1=C3 --node 2=C2 -D TX_RAMP_MS=5u`, then the answer as JSON, and exits 0; the options go straight to `bench run` or `bench flash`.
+4. No answer in `--timeout` (default 15 minutes) exits 2; a recommendation that is not possible exits 3 (a board held by another session, or not connected).
+
+Without `--propose` the recommendation is the C3 on the lowest free local board and C2 on every free Pi Node.
+A board held by another session, a new board without a Node ID and a Pi Node that does not answer are shown but cannot be picked.
+A board another session's capture records can be picked, with a warning.
+`--no-open` only prints the address.
+
+The server accepts only the Host names of loopback, answers under a secret path, takes one valid answer and stops; the answer is checked against the boards that were shown before it is accepted.
+The strategy is that of the Lavish editor (a page opens, the user answers in it, the answer comes back to the agent); nothing here needs npm or the network.
+
 
 ## Several sessions at once
 
@@ -229,7 +252,8 @@ Commands:
 | `bench run <scenario>` | Build, flash, arm, fire the scheduled actions, check the expectations, report |
 | `bench reset <node>` | Resets or halts/resumes a board without flashing |
 | `bench capture up` / `status` | Starts or checks the always-on capture of every board |
-| `bench map` | Draws the connected boards, local and on Pi Nodes, and whether each is free |
+| `bench map` | Draws the connected boards, local and on Pi Nodes, and whether each is free (`--open` opens the page) |
+| `bench choose` | Opens a page where the user picks the class of each board and the overrides, and prints the answer as options for `run` |
 
 A quick run without a scenario file uses the same machinery:
 
