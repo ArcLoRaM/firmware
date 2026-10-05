@@ -70,6 +70,7 @@ Protected sync: the fix, commit "fix(bench): the sync keeps the folders CubeIDE 
 | 2026-10-05 12:59 | run 8: three Build Trees, `bench build` of C2, 8 rounds started together and 8 rounds one after another | `df5bd6e` | 48 of 48 pass | none, numbers here | no failure of either kind. |
 | 2026-10-05 13:16 | run 9: six pairs of fresh Build Trees, `bench build` of C2 twice in each, both worktrees at the same time (D's failing situation) | `df5bd6e` | 24 of 24 pass | none, numbers here | no failure of either kind. |
 
+The branch was rebased before it landed, so the commit in a Build ID is not the one on `main`: `b1759a2` is `da3c9ec` (the logs), `df5bd6e` is `992d5da` (the sync fix), and `a419c9b` is unchanged.
 Runs 1 to 6 used a harness (not committed) that calls bench's own `rsync_command` and `headless_command`, with the protect filters stripped or added by hand; its trees and logs were deleted.
 An earlier attempt at runs 2 and 3 was discarded: the code under test had been edited while the harness imported it, so its later builds already used the protected sync.
 
