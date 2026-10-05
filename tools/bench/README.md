@@ -31,6 +31,7 @@ bench build --class C3 --clean              # rebuild everything
 
 1. Rsyncs the repo (uncommitted changes included) into the Build Tree, `C:\Users\Simon\arcfw-bench\tree` (a worktree has its own, `arcfw-bench-<worktree>`), without `.git`, `tools`, `Tests`, `docs`.
    Build outputs (`Debug_*`) and the override header in the tree are kept, so builds are incremental.
+   So are the folders CubeIDE creates for the projects' linked files (`CM4/Drivers`, `CM4/Utilities`, `CM0PLUS/Middlewares/...`, read from each `.project`): the repo has none of them, and a sync that deleted them made the next build lose the HAL and Utilities sources (issue #73).
 2. Computes the Build ID (`a1b2c3d`, `-d<hash>` for uncommitted firmware changes, `-o<hash>` for overrides) and writes it with the overrides to `Common/Bench/bench_overrides.h` in the tree, only when it changed.
 3. Builds both cores of each configuration with `stm32cubeidec.exe` headless, in its own workspace (`arcfw-bench\workspace`): the developer's CubeIDE can stay open.
 4. Maps every compiler diagnostic back to a repo path, and checks that each ELF contains the Build ID.

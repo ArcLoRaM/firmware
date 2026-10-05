@@ -9,7 +9,7 @@ from bench import build as build_mod
 from bench.build import (build, config_of, headless_command, new_log_path, parse_log, repo_path)
 from bench.buildid import (build_id, check_overrides, render_overrides_h, write_if_changed)
 from bench.cli import main
-from bench.tree import BuildTree, rsync_command
+from bench.tree import BuildTree, linked_file_parents, rsync_command
 from bench.winpath import to_windows, to_wsl
 
 DATA = Path(__file__).parent / "data"
@@ -145,6 +145,52 @@ def test_sync_really_preserves_tree_outputs(tmp_path):
     assert (tree / "Common" / "Bench" / "bench_overrides.h").exists()
     assert not (tree / "stale.c").exists()
     assert not (tree / "tools").exists()
+
+
+PROJECT_WITH_LINKS = """<?xml version="1.0" encoding="UTF-8"?>
+<projectDescription>
+	<name>ArcLoRaM_Base_CM4</name>
+	<linkedResources>
+		<link><name>Common</name><type>2</type><locationURI>PARENT-1-PROJECT_LOC/Common</locationURI></link>
+		<link><name>Utilities/stm32_seq.c</name><type>1</type><locationURI>PARENT-1-PROJECT_LOC/Utilities/sequencer/stm32_seq.c</locationURI></link>
+		<link><name>Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal.c</name><type>1</type><locationURI>PARENT-1-PROJECT_LOC/Drivers/STM32WLxx_HAL_Driver/Src/stm32wlxx_hal.c</locationURI></link>
+	</linkedResources>
+</projectDescription>
+"""
+
+
+def test_the_parents_of_linked_files_are_found_in_the_project_files(tmp_path):
+    (tmp_path / "CM4").mkdir()
+    (tmp_path / "CM4" / ".project").write_text(PROJECT_WITH_LINKS)
+    (tmp_path / "CM0PLUS").mkdir()
+    (tmp_path / "CM0PLUS" / ".project").write_text(PROJECT_WITH_LINKS.replace("Utilities/stm32_seq.c", "Middlewares/Third_Party/x/y.c"))
+    (tmp_path / "docs").mkdir()
+    assert linked_file_parents(tmp_path) == [
+        "CM0PLUS/Drivers", "CM0PLUS/Drivers/STM32WLxx_HAL_Driver", "CM0PLUS/Middlewares",
+        "CM0PLUS/Middlewares/Third_Party", "CM0PLUS/Middlewares/Third_Party/x",
+        "CM4/Drivers", "CM4/Drivers/STM32WLxx_HAL_Driver", "CM4/Utilities"]
+
+
+def test_no_project_files_means_no_linked_parents(tmp_path):
+    assert linked_file_parents(tmp_path / "missing") == []
+    assert linked_file_parents(tmp_path) == []
+
+
+def test_sync_keeps_the_folders_cubeide_makes_for_linked_files(tmp_path):
+    """Issue #73: CubeIDE creates the parent folders of a project's linked files in the Build Tree.
+    The repo has none of them, so a plain --delete removed them, and the next CubeIDE session
+    dropped the linked HAL and Utilities sources from the project: a link error, every other build."""
+    repo, tree = tmp_path / "repo", tmp_path / "tree"
+    (repo / "CM4").mkdir(parents=True)
+    (repo / "CM4" / ".project").write_text(PROJECT_WITH_LINKS)
+    (repo / "CM4" / "main.c").write_text("x")
+    for folder in ("Drivers/STM32WLxx_HAL_Driver", "Utilities", "Old"):
+        (tree / "CM4" / folder).mkdir(parents=True)
+    subprocess.run(rsync_command(repo, tree), check=True)
+    assert (tree / "CM4" / "Drivers" / "STM32WLxx_HAL_Driver").is_dir()
+    assert (tree / "CM4" / "Utilities").is_dir()
+    assert not (tree / "CM4" / "Old").exists()      # what the repo dropped still goes
+    assert (tree / "CM4" / "main.c").exists()
 
 
 def test_headless_command_builds_both_cores_of_each_configuration():
