@@ -66,20 +66,23 @@ Protected sync: the fix, commit "fix(bench): the sync keeps the folders CubeIDE 
 | 2026-10-05 11:35 | run 4: C2 + C3, `-cleanBuild`, fresh tree, legacy sync | `b1759a2` | pass, FAIL, pass | none, numbers here | the multi-configuration clean build fails after a pass (373 undefined references over both configurations) like any build. |
 | 2026-10-05 11:45 | run 5: run 4's tree, two `-cleanBuild` of C2 and C3 with the protected sync | `b1759a2` | pass, pass | none, numbers here | after a pass, twice. |
 | 2026-10-05 11:47 | run 6: run 3's tree, three builds with the protect filters added to the sync command | `b1759a2` | pass, pass, pass | none, numbers here | three builds in a row after a pass, each of which fails under the legacy sync. |
-| 2026-10-05 12:38 | run 7: `bench build` of the fix in two worktrees at the same time, fresh Build Trees, 10 builds each: no change, touched source, same again, changed header, C2+C3, no change, override, multi-configuration clean, no change | `df5bd6e` and its dirty variants | A: 10 of 10 pass. B: 9 of 10 pass | none, numbers here | B's second build failed with 0 errors and a different cause, see below. |
+| 2026-10-05 12:38 | run 7: `bench build` of the fix in two worktrees at the same time, fresh Build Trees, 10 builds each: no change, touched source, same again, changed header, C2+C3, no change, override, multi-configuration clean, no change | `df5bd6e` and its dirty variants | A: 10 of 10 pass. B: 9 of 10 pass | none, numbers here | B's second build failed with 0 errors and a different cause (CubeIDE did not find the CM4 configuration, host sleep suspected): invalid, see below. |
 | 2026-10-05 12:59 | run 8: three Build Trees, `bench build` of C2, 8 rounds started together and 8 rounds one after another | `df5bd6e` | 48 of 48 pass | none, numbers here | no failure of either kind. |
 | 2026-10-05 13:16 | run 9: six pairs of fresh Build Trees, `bench build` of C2 twice in each, both worktrees at the same time (D's failing situation) | `df5bd6e` | 24 of 24 pass | none, numbers here | no failure of either kind. |
 
 Runs 1 to 6 used a harness (not committed) that calls bench's own `rsync_command` and `headless_command`, with the protect filters stripped or added by hand; its trees and logs were deleted.
 An earlier attempt at runs 2 and 3 was discarded: the code under test had been edited while the harness imported it, so its later builds already used the protected sync.
 
-## Not explained: one build that did not find the CM4 configuration
+## One build that did not find the CM4 configuration (host sleep suspected)
 
 In run 7, worktree B's second build (a build right after the first, no change) failed with `WARNING: No Config matched "ArcLoRaM_Base_CM4/Debug_C2". Skipping...` and no error line.
 The workspace log shows `required build system is not installed` four times (`CProjectDescriptionManager.getProvider`, from the headless builder's `matchConfigurations`), then `the project does not contain valid configurations`.
 It is not the #73 mechanism: the nine folders existed, `.project` and `.cproject` were identical to the repo's, and CM0+ built.
 Worktree A started the same step within a second and passed.
 Runs 8 and 9 tried to reproduce it: 72 builds, 24 of them with three CubeIDE instances started together and 24 as the second build of a fresh tree beside another, and none failed.
-So it happened once in 92 builds, and its cause is not known.
-The stack points at CubeIDE loading the project description at start-up, and the files of the Build Tree were intact.
+So it happened once in 92 builds.
+Simon's reading is that the laptop had just come out of sleep, and the timestamps agree: run 6's last-but-one build shows a 44 minute stall (started 13:49, CubeIDE working at 14:33, local time), and run 7 started at 14:38, the failing build at 14:39.
+That is consistent, not proven: both worktrees ran at that moment and only one failed.
+If it is a host sleep, it is an invalid run in the sense of `README.md`: no verdict on bench or firmware, run again.
 Bench reported `FAILED, 0 error(s)`; the next build of that tree passed.
+Tracked in #88 as a start-up condition of CubeIDE's project loading, to be closed if it does not come back.
