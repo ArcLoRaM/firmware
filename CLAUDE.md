@@ -9,6 +9,11 @@ We use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
 optional but encouraged when the change is focused (`fix(tdma):`,
 `docs(context):`).
 
+### Closing out an issue
+
+When an issue is solved, follow "Closing out an issue" and "Keeping the repo clean" in `AGENTS.md`.
+In Claude Code, put the proposal of the next issue to Simon with AskUserQuestion (the recommended issue first), and write the paste-ready message only after he picks one.
+
 ### Issue tracker
 
 Issues live in GitHub Issues (`github.com/ArcLoRaM/firmware`). See `docs/agents/issue-tracker.md`.
