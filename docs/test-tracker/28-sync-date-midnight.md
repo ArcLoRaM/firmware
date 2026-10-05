@@ -44,4 +44,8 @@ Three earlier attempts on 2026-10-01 never reached the boards: the build failed 
 
 ## Bench build alternation (issue #73)
 
-Builds of the Build Tree on `C:` alternated: any build right after a successful one failed with 146 (CM4) and 393-417 (CM0+) link errors, undefined `HAL_*`; any build right after a failed one succeeded. Ten builds in a row followed it (2026-10-01 and 2026-10-02), whether run by `bench build` or `bench run`, and across a Build ID change. A throwaway `bench build` that fails, then `bench run`, gets the run's build through. Not caused by this issue's change (CM4 is untouched).
+Builds of the Build Tree on `C:` alternated: any build right after a successful one failed with 146 (CM4) and 393-417 (CM0+) link errors, undefined `HAL_*`; any build right after a failed one succeeded.
+Ten builds in a row followed it (2026-10-01 and 2026-10-02), whether run by `bench build` or `bench run`, and across a Build ID change.
+It was not caused by this issue's change (CM4 is untouched).
+Cause and fix: the sync deleted folders CubeIDE makes for linked files, see `spot-20261005-build-alternation.md`.
+The throwaway failing build before a run is no longer needed once that fix is on `main`.
