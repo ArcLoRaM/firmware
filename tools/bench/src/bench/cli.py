@@ -66,18 +66,13 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(f"bench build: {exc}", file=sys.stderr)
         return 2
 
-    logs = bt.root / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    log_path = logs / f"build-{result.build_id}.log"
-    log_path.write_text(result.raw_log, encoding="utf-8")
-
     for d in result.log.errors:
         print(d)
     for d in result.log.warnings:
         print(d)
     print(f"build {result.build_id} ({', '.join(result.configs)}): "
           f"{'ok' if result.ok else 'FAILED'}, {len(result.log.errors)} error(s), "
-          f"{len(result.log.warnings)} warning(s); log {log_path}")
+          f"{len(result.log.warnings)} warning(s); log {result.log_path}")
     for problem in result.problems:
         print(f"  {problem}")
     if result.ok:
@@ -306,9 +301,9 @@ def cmd_flash(args: argparse.Namespace) -> int:
             if not result.ok:
                 for d in result.log.errors:
                     print(d)
-                print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}")
+                print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}; log {result.log_path}")
                 return 1
-            print(f"build {result.build_id} ok")
+            print(f"build {result.build_id} ok; log {result.log_path}")
             since, flashed = flash_nodes(prog, boards, table, result, assignments)
         except Held as exc:
             print(f"bench flash: {_held_note(exc)}", file=sys.stderr)
@@ -407,9 +402,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             if not result.ok:
                 for d in result.log.errors:
                     print(d)
-                print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}")
+                print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}; log {result.log_path}")
                 return 1
-            print(f"build {result.build_id} ok")
+            print(f"build {result.build_id} ok; log {result.log_path}")
             since, flashed = flash_nodes(prog, {n: boards[n] for n in s.flashed}, table, result, s.flashed)
             outcome = follow(s, boards, result.build_id, capture_dir, since, reset=prog.reset, flashed=flashed)
         except Held as exc:

@@ -36,7 +36,9 @@ bench build --class C3 --clean              # rebuild everything
 4. Maps every compiler diagnostic back to a repo path, and checks that each ELF contains the Build ID.
    An image without it after an error-free build holds stale objects (make misses a header that appeared after the objects were compiled); that configuration is rebuilt clean once.
 
-Exit code 0 when every image is built and carries the Build ID, 1 otherwise; the full CubeIDE output is kept in `arcfw-bench\logs\build-<id>.log`.
+Exit code 0 when every image is built and carries the Build ID, 1 otherwise.
+Every build, whether from `bench build`, `bench run` or `bench flash`, ok or failed, keeps its CubeIDE command lines and full output in `arcfw-bench\logs\build-<UTC time>-<id>.log` (a worktree: `arcfw-bench-<worktree>\logs`), and prints the path.
+The time is in the name so a rebuild of the same sources never overwrites the log of the build before it.
 A first build takes about a minute, a build with nothing to recompile about 20 s.
 
 ## Boards

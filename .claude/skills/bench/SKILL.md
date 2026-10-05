@@ -43,7 +43,7 @@ Every run, whatever its purpose (acceptance, performance or spontaneous), leaves
 3. **Run.** `bench run <scenario>`: it builds the working tree (uncommitted changes included), flashes, fires the actions and decides.
    Done when it exits: 0 PASS, 1 FAIL, 2 TIMEOUT, 3 invalid scenario.
 4. **Read the verdict**, then fix and go back to 3:
-   - build failure: the diagnostics are printed with repo paths; the full log is in `C:\Users\Simon\arcfw-bench\logs\`.
+   - build failure: the diagnostics are printed with repo paths; the build line prints the path of the full log (`logs\build-<UTC time>-<Build ID>.log` in the worktree's Build Tree, kept for run and flash as well).
    - `FAIL`: the reason names the node, the line and the time (`+12.3s`); read the node's lines around it in the record, `tools/arclog/runs/<start>-<build>/<node>-*.log`.
    - `TIMEOUT`: the reason lists what never happened; check the record for why (a board not booting, a peer silent, a sync never reached).
    - lost lines (`N line(s) lost`) are a firmware trace problem, not noise: find which lines vanished before changing the scenario.

@@ -7,6 +7,7 @@ import posixpath
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -157,6 +158,7 @@ class BuildResult:
     elfs: dict[tuple[str, str], Path]      # (core, config) -> ELF (WSL path)
     problems: list[str] = field(default_factory=list)
     raw_log: str = ""
+    log_path: Path | None = None           # where the full CubeIDE output is kept
 
 
 Runner = Callable[[list[str]], tuple[int, str]]
@@ -166,6 +168,31 @@ def run_process(cmd: list[str]) -> tuple[int, str]:
     # Windows executables need a Windows working directory.
     p = subprocess.run(cmd, capture_output=True, text=True, errors="replace", cwd="/mnt/c")
     return p.returncode, p.stdout + p.stderr
+
+
+def new_log_path(bt: BuildTree, bid: str, now: datetime | None = None) -> Path:
+    """A log name no earlier build of this tree used: `build-<UTC time>-<Build ID>.log`.
+
+    The Build ID alone repeats (a rerun of the same sources), and the build that
+    explains a failure is the one a later build must not overwrite.
+    """
+    logs = bt.root / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+    path, n = logs / f"build-{stamp}-{bid}.log", 1
+    while path.exists():
+        n += 1
+        path = logs / f"build-{stamp}-{bid}-{n}.log"
+    return path
+
+
+def _invoke(runner: Runner, cmd: list[str], log_path: Path) -> tuple[int, str]:
+    """Run one CubeIDE command and keep its command line and output at once, so the log
+    survives whatever the caller does with the result (a failed build included)."""
+    code, out = runner(cmd)
+    with log_path.open("a", encoding="utf-8", newline="\n") as f:
+        f.write(f"$ {' '.join(cmd)}\n{out}\n")
+    return code, out
 
 
 def _check_images(bid: str, elfs: dict[tuple[str, str], Path]) -> tuple[list[str], set[str]]:
@@ -216,17 +243,18 @@ def build(repo: Path, bt: BuildTree, classes: list[str], overrides: dict[str, st
     sync_tree(repo, bt.tree)
     write_if_changed(bt.overrides_h, render_overrides_h(bid, overrides))
     elfs = {(core, cfg): bt.elf(core, cfg) for cfg in configs for core in CORES}
+    log_path = new_log_path(bt, bid)
 
-    code, out = runner(headless_command(ide, bt, configs, windows, clean=clean))
+    code, out = _invoke(runner, headless_command(ide, bt, configs, windows, clean=clean), log_path)
     log = parse_log(out, windows(bt.tree))
     problems = _build_problems(code, log, configs)
     if not problems:
         problems, stale = _check_images(bid, elfs)
         if stale and not clean:
-            code, again = runner(headless_command(ide, bt, sorted(stale), windows, clean=True))
+            code, again = _invoke(runner, headless_command(ide, bt, sorted(stale), windows, clean=True), log_path)
             out += "\n" + again
             relog = parse_log(again, windows(bt.tree))
             log.projects = [p for p in log.projects if p.config not in stale] + relog.projects
             log.diagnostics += relog.diagnostics
             problems = _build_problems(code, relog, sorted(stale)) or _check_images(bid, elfs)[0]
-    return BuildResult(bid, configs, not problems, log, elfs, problems, out)
+    return BuildResult(bid, configs, not problems, log, elfs, problems, out, log_path)

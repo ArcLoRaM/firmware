@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from bench import build as build_mod
-from bench.build import (build, config_of, headless_command, parse_log, repo_path)
+from bench.build import (build, config_of, headless_command, new_log_path, parse_log, repo_path)
 from bench.buildid import (build_id, check_overrides, render_overrides_h, write_if_changed)
 from bench.cli import main
 from bench.tree import BuildTree, rsync_command
@@ -320,3 +320,68 @@ def test_clean_builds_clean_and_does_not_retry(repo, tmp_path):
     r = build(repo, bt, ["C3"], {}, clean=True, runner=ide, cubeide="ide.exe", sync_tree=no_sync, windows=str)
     assert not r.ok
     assert [build_flags(c) for c in ide.cmds] == [["-cleanBuild"] * 2]
+
+
+# --- build logs ------------------------------------------------------------
+
+
+def test_every_build_keeps_its_log_under_a_name_of_its_own(repo, tmp_path):
+    """Issue #73: the log named after the Build ID alone was overwritten by the next build of the same sources."""
+    bt = BuildTree(tmp_path / "bench")
+    first = build(repo, bt, ["C2"], {}, runner=FakeIde(bt, ok_log(["Debug_C2"])), cubeide="ide.exe",
+                  sync_tree=no_sync, windows=str)
+    second = build(repo, bt, ["C2"], {}, runner=FakeIde(bt, "second build\n"), cubeide="ide.exe",
+                   sync_tree=no_sync, windows=str)
+    assert first.build_id == second.build_id
+    assert first.log_path != second.log_path
+    assert first.build_id in first.log_path.name
+    assert "Build Finished" in first.log_path.read_text()
+    assert "second build" in second.log_path.read_text()
+
+
+def test_a_failed_build_keeps_its_full_log_and_command(repo, tmp_path):
+    bt = BuildTree(tmp_path / "bench")
+    text = (DATA / "headless-failed.log").read_text()
+    r = build(repo, bt, ["C2"], {}, runner=FakeIde(bt, text, code=1), cubeide="ide.exe", sync_tree=no_sync, windows=str)
+    assert not r.ok
+    kept = r.log_path.read_text()
+    assert text in kept
+    assert kept.startswith("$ ide.exe ") and "-import" in kept.splitlines()[0]
+
+
+def test_the_clean_rebuild_of_a_stale_image_goes_into_the_same_log(repo, tmp_path):
+    bt = BuildTree(tmp_path / "bench")
+    fresh = FakeIde(bt, ok_log(["Debug_C2"]))
+
+    def ide(cmd):
+        if "-cleanBuild" in cmd:
+            code, _ = fresh(cmd)
+            return code, ok_log(["Debug_C2"]) + "clean rebuild output\n"
+        for core in ("CM4", "CM0PLUS"):
+            bt.elf(core, "Debug_C2").parent.mkdir(parents=True, exist_ok=True)
+            bt.elf(core, "Debug_C2").write_bytes(b"old image, build=dev")
+        return 0, ok_log(["Debug_C2"]) + "incremental output\n"
+
+    r = build(repo, bt, ["C2"], {}, runner=ide, cubeide="ide.exe", sync_tree=no_sync, windows=str)
+    kept = r.log_path.read_text()
+    assert kept.index("incremental output") < kept.index("-cleanBuild") < kept.index("clean rebuild output")
+    assert len(list((bt.root / "logs").iterdir())) == 1
+
+
+def test_a_log_name_is_never_reused_within_a_second(tmp_path):
+    bt = BuildTree(tmp_path / "bench")
+    now = build_mod.datetime(2026, 10, 5, 12, 0, 0, tzinfo=build_mod.timezone.utc)
+    a = new_log_path(bt, "abc1234", now)
+    a.write_text("x")
+    b = new_log_path(bt, "abc1234", now)
+    assert a.name == "build-20261005T120000Z-abc1234.log"
+    assert b != a
+
+
+def test_cli_build_prints_the_log_it_kept(repo, tmp_path, monkeypatch, capsys):
+    bt_root = tmp_path / "bench"
+    monkeypatch.setattr(build_mod, "run_process", FakeIde(BuildTree(bt_root), ok_log(["Debug_C2"])))
+    monkeypatch.setattr(build_mod, "sync", no_sync)
+    main(["--root", str(bt_root), "--repo", str(repo), "build", "--class", "C2"])
+    [log] = (bt_root / "logs").iterdir()
+    assert f"log {log}" in capsys.readouterr().out
