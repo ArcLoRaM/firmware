@@ -8,6 +8,12 @@ Bench refuses anything irreversible (option bytes, OTP, protection, mass erase);
 
 Host-side unit tests (`Tests/`, CMake + host GCC) are not firmware builds and may be run.
 
+## Development board compatibility
+
+Every design must keep running on the NUCLEO development boards of the bench, whatever it targets on the production hardware.
+A feature that only works with the Production Clock or the production board is not done.
+Every Regime is built in both Sync Profiles, `DEV` and `PROD`: a Regime with no `DEV` variant cannot be tested on the bench.
+
 ## Naming issues
 
 Name an issue by its number and a condensed title, never by the number alone: "#73 bench builds alternate ok/fail (missing HAL link errors)", not "#73".

@@ -362,6 +362,29 @@ Cells 1+) which violates the uniform-role contract. Sync has been moved to
 shared memory field are retained for future use if a phase requiring truly
 uniform per-phase direction is introduced.
 
+### Regime
+A named way of running the whole network, chosen among a set compiled into every node: its own TDMA Table, MAC strategy and frequency plan.
+Every node runs the same Regime; only the C3 decides which one, and a newly booted network starts in the Deployment Regime.
+Each Regime exists in both Sync Profiles (`DEV` and `PROD`).
+Phase 2 Regimes: **Deployment** (installing nodes in the field), **Low Power** (the default once installed), **Throughput** (a temporary push of uplink data).
+_Avoid_: system, mode, network mode, profile, Pairing Regime (Pairing is the MAC's `Paired` step)
+
+### Survey Node
+A handheld device with a screen, outside the network, that an installer carries offline in the field to read the link quality (RSSI, SNR, loss) of the placed nodes during the Deployment Regime.
+It has its own code; the network only guarantees what it can hear.
+_Avoid_: sniffer, tester
+
+### Regime Transition
+The network-wide change from one Regime to another, decided by the C3.
+The C3 puts the new Regime in its next Sync phase, and every node that receives that phase switches at its end; a node that missed it switches at the next Common Sync Phase.
+Nothing else changes with it: routes, queues, duty-cycle credit and clock state carry over.
+_Avoid_: mode switch, table switch
+
+### Common Sync Phase
+A Sync Phase that every Regime holds at the same instant and with the same structure (cells, slot duration, discovery channel, Sync MAC): the Sync phases of the slowest Regime, one grid per Sync Profile.
+Every Regime's Frame starts on one; a faster Regime adds its own Sync phases between them.
+_Avoid_: anchor Sync, shared Sync
+
 ### Participant Mask
 A per-Phase 3-bit field (`participant_mask`) indicating which Node Classes
 participate in this Phase. Non-participant classes set no alarms within the Phase
@@ -766,6 +789,7 @@ Its figures do not transfer to the Production Clock (a calibration residual, a d
 ### Sync Profile
 The compile-time choice of how often the network synchronises: `DEV` (the default; a Sync phase every 200 s, one packet per node per phase, inside the duty-cycle budget, for work that assumes synchronised clocks), `PROD` (the product period derived from the drift bound, provisional) and `BRINGUP` (the former 30 s schedule, host tests only).
 It also fixes the Sync Silence Timeout. A trace names it in the `BOOT` line (`sync=`).
+It is orthogonal to the Regime: every Regime has a `DEV` and a `PROD` variant.
 An option, the **boot burst** (`SYNC_BOOT_BURST`), makes the first Sync phase after the C3 boots send several packets so that boards booted with it lock at once.
 _Avoid_: Sync mode, Sync rate
 
