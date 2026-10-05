@@ -2,38 +2,102 @@
 
 Purpose: acceptance. Issue: #36.
 
+The clock is the NUCLEO Clock (CONTEXT.md): every figure of this record is a NUCLEO result and does not transfer to the Production Clock.
+
 ## Scenarios
 
 | Scenario | Proves or measures |
 |---|---|
-| `tools/bench/scenarios/guard-from-drift.toml` (to write once #34 and the guard are in) | C3 + C2 for several hours: every Sync packet the C3 sent (`TX_DONE`) is received or lost for a radio reason, never because the C2's window was not open on it; the guard of every Rx slot is logged (`g`, `win`); no Tier 3 or `SYNC_LOST` |
+| `tools/bench/scenarios/guard-warm-window.toml` | C3 (Node 5) + C2 (Node 2), DEV profile with the boot burst: a C2 in `CLOCK_WARM` closes an empty Rx window one guard after nominal. The estimate is not valid yet, so the guard is the cap: `RX_WIN g=100` with `win` in 150..200 ms, against about 1700 ms while acquiring; no `RX_LATE`, `SLOT_SUSPECT`, `TX_LATE`, `TX_DENIED` |
+| `tools/bench/scenarios/guard-from-drift.toml` (to write once the Rx start latency is measured) | C3 + C2 for several hours: every Sync packet the C3 sent (`TX_DONE`) is received or lost for a radio reason, never because the C2's window was not open on it; the guard of every Rx slot is logged (`g`, `win`) and falls to the floor once the estimate is valid; no Tier 3 or `SYNC_LOST` |
+| flags: `--node 5=C3 --node 2=C2 -D BENCH_PROBE=1 -D SYNC_BOOT_BURST=5u --expect "2 PROBE tag=rx_open seg=setrx count=4 within=5m"` | The Rx start latency (the part of it from the slot task to a radio that listens), measured with `timing-probe`; the wake part is the `wake` of `SLOT`. The probes stay in `tdma_machine.c` (`rx_slot`, `rx_open`) and compile to nothing without `BENCH_PROBE` |
 
 ## Hardware
 
-Checked against `bench boards` on 2026-10-02: no probe connected.
+Checked against `bench boards` on 2026-10-05: 2 boards connected, with known Node IDs.
 
-| Item | Needed |
-|---|---|
-| Node ? flashed as C3 | yes |
-| Node ? flashed as C2 | yes |
-| Host on AC power, Windows sleep off, for the several-hour run | yes |
+| Item | Needed | Today |
+|---|---|---|
+| Node 5 flashed as C3 (Pi Node) | yes | connected |
+| Node 2 flashed as C2 (Pi Node) | yes | connected |
+| Host on AC power, Windows sleep off, for the several-hour run | yes | per session |
 
-Hands on the bench: plugging the two boards in.
+Hands on the bench: none while the two Pi Nodes stay connected.
 No CubeMX regeneration.
 The Rx start latency measurement (`timing-probe`) needs the same two boards.
 
+## Host level (branch `feat/36-rx-guard`)
+
+- `test_guard_policy` (8 tests, built with the Rx start latency pinned to 0 so that its values do not move with the measured one), `test_guard_policy_latency` (a 2 ms latency), `test_guard_policy_default` (the constants as they ship): the guard from a struct literal as the estimate, every expected value worked by hand from the inputs.
+  The shipped guard of the NUCLEO pair on DEV is 10 ms (3 x 1635 us + the 5000 us of latency).
+  With the latency at 0: an invalid estimate gives 100; the NUCLEO case (0.36 ppm, 200 s, 106 us) is worth 5 ms by the formula, so the 8 ms floor of the Tier 1 band sets it; 5 ppm over 540 s gives 13 ms; the sign of the residual does not matter; noise 0 uses the 400 us design floor (16 ms); the cap at 100; an exact guard of 2^32 + 10 ms cannot wrap into 10 ms (a 32-bit result did, red before the fix); a peer link doubles the uncertainty (26 ms); a 2 ms latency is added after the ratio (15 ms, not 19).
+- `test_tdma_machine_c2`: with the estimate stubbed at the link (`stub_drift_estimator.c`), the early wake is one guard before nominal, the `CLOCK_WARM` window ends at nominal + guard with the cap unchanged, while acquiring the guard stays the cap whatever the estimate says, the guard grows with the time since the last Sync (13 ms at 540 s), and `RX_WIN` / `RX_LATE` carry `g` and `win`.
+- `test_tdma_machine_c2_phases` (a Mesh_Beacon phase with a CONTENTION footer): outside Sync the guard is the doubled one (44 ms against 22 ms), and a contention slot keeps the geometric window end.
+- `test_mac_state_machine_c2`, `test_mac_fine_stamp_c1` / `_c2`: a 5 ms error is corrected and still relays; the correction starts between 4 ticks (977 us) and 5 ticks (1221 us), both signs; the shift hook receives the error in microseconds (50 049 us for a packet 50 ms late, after midnight).
+- `tools/arclog` `test_schema`: `RX_WIN` and `RX_LATE` agree with the firmware.
+- The build: C1, C2 and C3 compile (Build ID `a419c9b-dc1bd27`, no warning in a file of this change); the first build of each pair tripped the #73 alternation (link errors on the utilities, none on a symbol of this change) and passed on retry.
+
+## Result (2026-10-05, Node 5 as C3 and Node 2 as C2, NUCLEO Clock)
+
+**The window end on hardware** (`guard-warm-window.toml`, build `a419c9b-dc1bd27-o954ffd`).
+The estimate is not valid yet in a run this short, so the guard is the cap (100 ms): the test is of the closing instant, not of the guard value.
+
+| | Before (builds up to `1aba9a2`) | After (this build) |
+|---|---|---|
+| Empty window, from `RX_WIN` to `RX_TIMEOUT`, device clock | median **1939 ms** (p10 1937, p90 1967, max 1985), n = 214 | **466 ms** and **458 ms**, n = 2 (predicted 2 x 100 + 262 = 462) |
+| Window while acquiring | `win` about 1708 (geometric end) | `RX_WIN g=100 win=1708`, unchanged |
+| First window in `CLOCK_WARM` | geometric | `RX_WIN g=100 win=200`; its packet was received (`SYNC_RX act=t1 erru=-18`, preamble detected at nominal + 74 ms, inside `nominal + 100`) |
+
+The "before" windows are every `RX_WIN` to `RX_TIMEOUT` pair of this C2 in the always-on capture before this run, timed on the device clock: the capture's own timestamps carry the transport delay of a Pi Node (they read 57 to 3704 ms for the same pairs).
+No `RTC_SHIFT` in the run: the errors were under the 1 ms correction threshold (`erru` -18 us after the set).
+At the floor (g = 8 ms) the window is predicted at 2 x 8 + 262 = 278 ms: to be measured once the estimate is valid, in the several-hour run.
+
+## Measurement: the Rx start latency (2026-10-05, `timing-probe`, Node 2 as C2, NUCLEO Clock)
+
+CM0+ at 4 MHz (`hz=4000000`), a C2 in the first minutes after a lock (the Rx slots of the DEV burst), build `a419c9b-db764f8-o9bf158` (`BENCH_PROBE=1`), run record `tools/arclog/runs/20261005T175430Z-a419c9b-db764f8-o9bf158/`, n = 4 Rx slots.
+The path from the slot task to a radio armed in Rx, one `PROBE` segment each (microseconds since the previous stamp):
+
+| Segment | Probe | us (4 slots) | What it is |
+|---|---|---|---|
+| channel | `rx_slot chan` | 934 to 1305 | steps 2 to 6 of the slot task, up to and including `RadioSetChannel` |
+| MAC | `rx_slot dec` | 76 to 91 | `MAC_OnSlotOpportunity` |
+| log | `rx_slot slotlog` | 4948 to 5009 | the `SLOT` line alone |
+| guard | `rx_open guard` | 265 to 413 | the resolver and the window end (the new code) |
+| log | `rx_open log` | 5320 to 5398 | the `RX_WIN` line alone |
+| radio | `rx_open setrx` | 2686 to 2704 | `RadioSetRx`: the radio wake, the command, the timer |
+
+- **Without the two log lines** (a node that logs less): 1305 + 76 + 265 + 2704 = 4350, 4332, 4495 and 934 + 89 + 413 + 2704 = 4140 us: **4.14 to 4.50 ms**.
+- **With them** (a bench build, every level on): 14.5 to 14.8 ms (the first probe of the same day: 14 459 to 14 766 us).
+- **The wake before it**, alarm to slot task, is the `wake` of `SLOT`: 0 ms in 2039 of 2091 Rx slots of this C2 on 2026-10-04 and 05 (under 1 ms), 1 ms in 4, 2 ms in 48, never more.
+- **Not visible to a CPU probe:** what the radio does after `RadioSetRx` returns (TCXO, PLL).
+- `GUARD_RX_START_LATENCY_US` is set to **5000 us**, the maximum without the log lines, rounded up. With it the guard of the NUCLEO pair on DEV is 10 ms (4905 + 5000 us), and the formula's minimum is 9 ms, so the 8 ms floor of the Tier 1 band does not bind.
+
+**What the preamble does for the window** (160 received packets of this C2 in the always-on capture, 2026-10-04 and 05): the preamble is detected **67 to 103 ms** after the packet start (median 72, p90 75).
+The radio's timer stops on that detection and runs to `nominal + guard + 262`, so a packet that starts at nominal + e is caught when `e + 103 ms` is under `guard + 262 ms`: up to about guard + 159 ms late.
+The reach on the late side is therefore far wider than the guard; a packet that starts before the window opens is a packet whose preamble is partly over, and the same detection time applies (not tested: it needs a C3 that sends early on purpose).
+The guard is the margin of the design (the Tier 1 band, the concurrent-transmission budget), not the limit of what the radio catches.
+
 ## Criteria
 
-- [ ] Host: guard from a stub estimator (valid and not valid, several residual rates, time since the last Sync), the cap, the ratio, and the fixed terms.
-- [ ] Host: the threshold bands, including a 5 ms error that is corrected and still relays, and the unchanged 8 ms and resync behaviour.
-- [ ] Host: the window end in `CLOCK_WARM` and while acquiring.
-- [ ] Rx start latency measured with `timing-probe` and recorded here.
-- [ ] `g` and `win` in the trace and the schema; schema test passes.
-- [ ] Existing MAC and TDMA tests unchanged and passing.
+- [x] Host: guard from a stub estimator (valid and not valid, several residual rates, time since the last Sync), the cap, the ratio, and the fixed terms. (`test_guard_policy`, `test_guard_policy_latency`, `test_tdma_machine_c2`)
+- [x] Host: the threshold bands, including a 5 ms error that is corrected and still relays, and the unchanged 8 ms and resync behaviour. (`test_mac_state_machine_c2`, `test_mac_fine_stamp_c1` / `_c2`, with the Tier 1 and Tier 3 edges unchanged)
+- [x] Host: the window end in `CLOCK_WARM` and while acquiring. (`test_tdma_machine_c2`, `test_tdma_machine_c2_phases`)
+- [x] Rx start latency measured with `timing-probe` and recorded here. (4.14 to 4.50 ms without the log lines, 14.5 to 14.8 ms with them; the constant is 5000 us; see Measurement)
+- [x] `g` and `win` in the trace and the schema; schema test passes. (`test_tdma_machine_c2`, `test_schema`; on the bench: see Runs)
+- [x] Existing MAC and TDMA tests unchanged and passing. (unchanged in meaning: the three stubs of the shift hook changed signature, and the one test that checked its arguments now checks the error in us)
 - [ ] Bench, C3 + C2 for several hours, after #34: no mistiming loss; guard distribution and empty-window Rx time (before and after) reported.
-- [ ] ADR: the guard strategy, the ratio, the thresholds; supersedes the "Version 2" section of ADR-0012.
+- [x] ADR: the guard strategy, the ratio, the thresholds; supersedes the "Version 2" section of ADR-0012. (ADR-0021; the ratio stays provisional until the several-hour run)
 
 ## Runs
 
 | Date (UTC) | Scenario | Build ID | Verdict | Record | Notes |
 |---|---|---|---|---|---|
+| 2026-10-05 17:33 | `guard-warm-window.toml` | `a419c9b-dc1bd27-o954ffd` | invalid | none (the build failed, nothing was flashed) | #73: link errors on the utilities (146 on CM4, 384 on CM0+), none on a symbol of this change; run again |
+| 2026-10-05 17:37 | `guard-warm-window.toml` | `a419c9b-dc1bd27-o954ffd` | PASS | `tools/arclog/runs/20261005T173731Z-a419c9b-dc1bd27-o954ffd/` | 151 s: C2 `CLOCK_WARM` at +71.5 s, three `RX_WIN g=100 win=200` (1708 while acquiring), the empty ones timed out after 466 and 458 ms (1939 ms before, median of 214); the packet of the first WARM window was received; no `RTC_SHIFT` |
+| 2026-10-05 17:4x (2 attempts) | flags: `--node 5=C3 --node 2=C2 -D BENCH_PROBE=1 -D SYNC_BOOT_BURST=5u --expect "2 PROBE tag=rx_slot seg=rx count=4 within=5m"` | `a419c9b-d384a39-o9bf158` | invalid | none (the build failed twice, nothing was flashed) | #73 alternation: the same build ID compiled when built alone, so not a compile error of the probe |
+| 2026-10-05 17:48 | same flags | `a419c9b-d384a39-o9bf158` | measurement | `tools/arclog/runs/20261005T174822Z-a419c9b-d384a39-o9bf158/` | The first probe, one segment `rx` for the whole window open: 14.5 to 14.8 ms from the slot task to the radio armed, log lines included; too coarse to say how much is the radio, so the probe was split |
+| 2026-10-05 17:5x | flags: as above with `tag=rx_open seg=setrx` | `a419c9b-db764f8-o9bf158` | invalid | none (the build failed; the first attempt at it never reached `bench`, run from the wrong directory) | #73 alternation, no firmware verdict |
+| 2026-10-05 17:54 | flags: as above with `tag=rx_open seg=setrx` | `a419c9b-db764f8-o9bf158` | measurement | `tools/arclog/runs/20261005T175430Z-a419c9b-db764f8-o9bf158/` | The split probe: channel 0.9 to 1.3 ms, MAC 0.09, `SLOT` line 5.0, guard 0.3 to 0.4, `RX_WIN` line 5.3 to 5.4, `RadioSetRx` 2.7; 4.14 to 4.50 ms without the two log lines |
+
+The runs of 2026-10-05 ran on the uncommitted tree: the `-d` hash of their Build ID names that state, not a commit.
+The commits of 2026-10-06 add to it the timing probes `rx_slot` and `rx_open` (the split probe run already had them) and the measured 5 ms Rx start latency; the runs from the long run on carry the commit.
