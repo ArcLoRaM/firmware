@@ -96,10 +96,16 @@ The path from the slot task to a radio armed in Rx, one `PROBE` segment each (mi
 - **Not visible to a CPU probe:** what the radio does after `RadioSetRx` returns (TCXO, PLL).
 - `GUARD_RX_START_LATENCY_US` is set to **5000 us**, the maximum without the log lines, rounded up. With it the guard of the NUCLEO pair on DEV is 10 ms (4905 + 5000 us), and the formula's minimum is 9 ms, so the 8 ms floor of the Tier 1 band does not bind.
 
-**What the preamble does for the window** (160 received packets of this C2 in the always-on capture, 2026-10-04 and 05): the preamble is detected **67 to 103 ms** after the packet start (median 72, p90 75).
-The radio's timer stops on that detection and runs to `nominal + guard + 262`, so a packet that starts at nominal + e is caught when `e + 103 ms` is under `guard + 262 ms`: up to about guard + 159 ms late.
-The reach on the late side is therefore far wider than the guard; a packet that starts before the window opens is a packet whose preamble is partly over, and the same detection time applies (not tested: it needs a C3 that sends early on purpose).
-The guard is the margin of the design (the Tier 1 band, the concurrent-transmission budget), not the limit of what the radio catches.
+**What the preamble does for the window** (252 received packets of this C2 in the always-on capture, 2026-10-04 to 06): the preamble is detected after the packet start in two groups.
+
+- The radio was already listening (the cap guard, or an older build; 183 packets): **67 to 105 ms**, median 72.
+- The radio started listening after the packet had begun (the adaptive guard of a bench build, 69 packets; the window opens at nominal - g and the two log lines delay the radio by 10 ms, so it listens from about nominal + 5 ms): mostly **129 to 134 ms**, median 131 (minimum 90). By guard: g = 10, 131 to 132 ms (18 packets); g = 11, 129 to 132 ms (41).
+
+Joining a preamble in progress therefore costs about 57 ms of detection, and the packet is still received.
+The radio's timer stops on detection and runs to `nominal + guard + 262`, so a packet that starts at nominal + e is caught when `e` plus the detection time is under `guard + 262 ms`: up to about guard + 128 ms late at the slowest detection seen.
+On this bench the reach is far wider than the guard; the guard is the margin of the design (the Tier 1 band, the concurrent-transmission budget).
+Only strong signals were measured (RSSI -33 to -11 dBm, SNR 5 to 10 dB): a weaker link detects later and its reach shrinks toward the guard itself (not measured).
+A packet that starts well before the window opens is not tested (the radio joined by about 5 ms).
 
 ## Criteria
 
