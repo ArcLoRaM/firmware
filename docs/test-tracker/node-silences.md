@@ -21,7 +21,7 @@ The fourth event gets a proper investigation: an issue, the rows below as its ev
 | # | Last line (UTC) | Found | Node | Build | Silent | Recovery |
 |---|---|---|---|---|---|---|
 | 1 | 2026-10-04 20:37:31 | 21:11 | `nuna-node-02`, a C2 on a Pi Node | `32a8d25` (main) | 43 min | `bench reset 2` at about 21:21; `BOOT cls=C2 id=2` at 21:21:18, logging again |
-| 2 | 2026-10-06 02:26:16 | 04:40 (end of a 6 h run) | `nuna-node-02`, a C2 on a Pi Node | `dcfaeba-o954ffd` (`feat/36-rx-guard`) | still silent at 04:40, 2 h 14 min | not reset yet: the CM0+ is still stalled and a reset destroys its state |
+| 2 | 2026-10-06 02:26:16 | 04:40 (end of a 6 h run) | `nuna-node-02`, a C2 on a Pi Node | `dcfaeba-o954ffd` (`feat/36-rx-guard`) | at least 3 h 54 min (02:26 to 06:20), until both nodes were unplugged | both nodes were unplugged at the lab at 06:20 UTC; the stalled state was not read |
 
 ## Event 1: what the trace shows
 
@@ -59,4 +59,4 @@ Found at the end of the 6 h run `guard-from-drift.toml` (Test Record of #36), wh
 3. **Specific to this board, its Pi Node or the C2 role.** The only silences of three days are on Node 2, and it is the only C2 role board of the two. A pair with the roles swapped (the C3 on Node 2, the C2 on Node 5) would tell the board from the role.
 4. **The guard code of this change.** It cannot be excluded by one event, and it is on the path where the core stopped; against it, event 1 happened on main before it existed, and the path ran 608 times.
 
-The state of the stalled CM0+ is the best evidence there is, and a reset destroys it: the node is left as it is until the user says whether to read it first.
+The state of the stalled CM0+ was the best evidence there was, and it is gone: both nodes were unplugged at the lab at 06:20 UTC on 2026-10-06 before anyone read it. #101 makes the next stall leave that evidence (a crash record, checkpoints, the reset cause), and #100 restarts the stalled core.
