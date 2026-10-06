@@ -66,18 +66,13 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(f"bench build: {exc}", file=sys.stderr)
         return 2
 
-    logs = bt.root / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    log_path = logs / f"build-{result.build_id}.log"
-    log_path.write_text(result.raw_log, encoding="utf-8")
-
     for d in result.log.errors:
         print(d)
     for d in result.log.warnings:
         print(d)
     print(f"build {result.build_id} ({', '.join(result.configs)}): "
           f"{'ok' if result.ok else 'FAILED'}, {len(result.log.errors)} error(s), "
-          f"{len(result.log.warnings)} warning(s); log {log_path}")
+          f"{len(result.log.warnings)} warning(s); log {result.log_path}")
     for problem in result.problems:
         print(f"  {problem}")
     if result.ok:
@@ -91,6 +86,14 @@ def parse_assignment(text: str) -> tuple[int, str]:
     nid, sep, cls = text.partition("=")
     if not sep or not nid.isdigit() or cls not in ("C1", "C2", "C3"):
         raise argparse.ArgumentTypeError(f"--node {text}: expected <Node ID>=C1|C2|C3, e.g. 2=C2")
+    return int(nid), cls
+
+
+def parse_proposal(text: str) -> tuple[int, str]:
+    """'2=C2' or '4=watch' -> (2, 'C2'): a Node ID and the class, or watch only, recommended in `bench choose`."""
+    nid, sep, cls = text.partition("=")
+    if not sep or not nid.isdigit() or cls not in ("C1", "C2", "C3", "watch"):
+        raise argparse.ArgumentTypeError(f"--propose {text}: expected <Node ID>=C1|C2|C3|watch, e.g. 2=C2")
     return int(nid), cls
 
 
@@ -195,6 +198,53 @@ def cmd_map(args: argparse.Namespace) -> int:
     n = snap["boards"]
     print(f"bench map: {len(n)} board(s) connected ({sum(b['kind'] == 'st-link' for b in n)} local, "
           f"{sum(b['kind'] == 'pi-node' for b in n)} on Pi Nodes), {len(snap['not_answering'])} not answering -> {out}")
+    if args.open:
+        import platform
+
+        from bench.capture import wsl_to_windows
+        from bench.choose import open_in_browser
+
+        target = wsl_to_windows(out.resolve()) if "microsoft" in platform.uname().release.lower() else str(out.resolve())
+        if not open_in_browser(target):
+            print(f"bench map: could not open a browser; open {target} yourself", file=sys.stderr)
+            return 1
+    return 0
+
+
+def cmd_choose(args: argparse.Namespace) -> int:
+    import json
+
+    from arclog.expect import parse_duration
+
+    from bench.choose import AnswerError, ask, command_line, default_proposal, open_in_browser, validate_answer
+
+    try:
+        timeout = parse_duration(args.timeout or "15m").total_seconds()
+    except ValueError as exc:
+        print(f"bench choose: {exc}", file=sys.stderr)
+        return 3
+    snap, _ = _snapshot(args)
+    if not snap["boards"]:
+        print("bench choose: no board is connected", file=sys.stderr)
+        return 1
+    proposal = dict(args.propose) if args.propose else default_proposal(snap)
+    overrides = dict(args.define or [])
+    try:
+        if proposal:
+            validate_answer(snap, {"nodes": {str(n): c for n, c in proposal.items()}, "overrides": overrides})
+    except AnswerError as exc:
+        print(f"bench choose: that recommendation is not possible: {exc}", file=sys.stderr)
+        return 3
+    try:
+        answer = ask(snap, proposal, overrides, timeout, opener=(lambda url: False) if args.no_open else open_in_browser)
+    except KeyboardInterrupt:
+        print("bench choose: stopped", file=sys.stderr)
+        return 130
+    if answer is None:
+        print(f"bench choose: no answer within {args.timeout or '15m'}", file=sys.stderr)
+        return 2
+    print(f"choice: {command_line(answer)}")
+    print(json.dumps(answer))
     return 0
 
 
@@ -251,9 +301,9 @@ def cmd_flash(args: argparse.Namespace) -> int:
             if not result.ok:
                 for d in result.log.errors:
                     print(d)
-                print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}")
+                print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}; log {result.log_path}")
                 return 1
-            print(f"build {result.build_id} ok")
+            print(f"build {result.build_id} ok; log {result.log_path}")
             since, flashed = flash_nodes(prog, boards, table, result, assignments)
         except Held as exc:
             print(f"bench flash: {_held_note(exc)}", file=sys.stderr)
@@ -352,9 +402,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             if not result.ok:
                 for d in result.log.errors:
                     print(d)
-                print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}")
+                print(f"build {result.build_id} FAILED: {'; '.join(result.problems)}; log {result.log_path}")
                 return 1
-            print(f"build {result.build_id} ok")
+            print(f"build {result.build_id} ok; log {result.log_path}")
             since, flashed = flash_nodes(prog, {n: boards[n] for n in s.flashed}, table, result, s.flashed)
             outcome = follow(s, boards, result.build_id, capture_dir, since, reset=prog.reset, flashed=flashed)
         except Held as exc:
@@ -410,7 +460,21 @@ def build_parser() -> argparse.ArgumentParser:
     mp.add_argument("--out", metavar="FILE", help="where to write the page (default: tools/arclog/runs/bench-map.html)")
     mp.add_argument("--probe-uid", action="append", metavar="ID", help="read this board's UID first (see `boards`)")
     mp.add_argument("--probe-uids", action="store_true", help="read unknown UIDs over SWD (reboots those boards)")
+    mp.add_argument("--open", action="store_true", help="open the page in the browser when it is written")
     mp.set_defaults(func=cmd_map)
+
+    ch = sub.add_parser("choose", help="ask the user, in a page that opens by itself, which board runs as which class "
+                                       "and with which overrides; prints the answer as options for `run`")
+    ch.add_argument("--propose", action="append", type=parse_proposal, metavar="ID=CLASS",
+                    help="the recommendation shown preselected, e.g. 1=C3 or 4=watch "
+                         "(default: the C3 on the local board, C2 on the Pi Nodes)")
+    ch.add_argument("-D", dest="define", action="append", type=parse_define, metavar="NAME=VALUE",
+                    help="a Build Override offered in the page")
+    ch.add_argument("--timeout", help="how long to wait for the answer, e.g. 5m (default 15m)")
+    ch.add_argument("--no-open", action="store_true", help="do not open a browser, only print the address")
+    ch.add_argument("--probe-uid", action="append", metavar="ID", help="read this board's UID first (see `boards`)")
+    ch.add_argument("--probe-uids", action="store_true", help="read unknown UIDs over SWD (reboots those boards)")
+    ch.set_defaults(func=cmd_choose)
 
     c = sub.add_parser("capture", help="the always-on capture of every board's trace")
     c.add_argument("action", choices=["up", "status"])

@@ -6,10 +6,10 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from bench import build as build_mod
-from bench.build import (build, config_of, headless_command, parse_log, repo_path)
+from bench.build import (build, config_of, headless_command, new_log_path, parse_log, repo_path)
 from bench.buildid import (build_id, check_overrides, render_overrides_h, write_if_changed)
 from bench.cli import main
-from bench.tree import BuildTree, rsync_command
+from bench.tree import BuildTree, linked_file_parents, rsync_command
 from bench.winpath import to_windows, to_wsl
 
 DATA = Path(__file__).parent / "data"
@@ -145,6 +145,52 @@ def test_sync_really_preserves_tree_outputs(tmp_path):
     assert (tree / "Common" / "Bench" / "bench_overrides.h").exists()
     assert not (tree / "stale.c").exists()
     assert not (tree / "tools").exists()
+
+
+PROJECT_WITH_LINKS = """<?xml version="1.0" encoding="UTF-8"?>
+<projectDescription>
+	<name>ArcLoRaM_Base_CM4</name>
+	<linkedResources>
+		<link><name>Common</name><type>2</type><locationURI>PARENT-1-PROJECT_LOC/Common</locationURI></link>
+		<link><name>Utilities/stm32_seq.c</name><type>1</type><locationURI>PARENT-1-PROJECT_LOC/Utilities/sequencer/stm32_seq.c</locationURI></link>
+		<link><name>Drivers/STM32WLxx_HAL_Driver/stm32wlxx_hal.c</name><type>1</type><locationURI>PARENT-1-PROJECT_LOC/Drivers/STM32WLxx_HAL_Driver/Src/stm32wlxx_hal.c</locationURI></link>
+	</linkedResources>
+</projectDescription>
+"""
+
+
+def test_the_parents_of_linked_files_are_found_in_the_project_files(tmp_path):
+    (tmp_path / "CM4").mkdir()
+    (tmp_path / "CM4" / ".project").write_text(PROJECT_WITH_LINKS)
+    (tmp_path / "CM0PLUS").mkdir()
+    (tmp_path / "CM0PLUS" / ".project").write_text(PROJECT_WITH_LINKS.replace("Utilities/stm32_seq.c", "Middlewares/Third_Party/x/y.c"))
+    (tmp_path / "docs").mkdir()
+    assert linked_file_parents(tmp_path) == [
+        "CM0PLUS/Drivers", "CM0PLUS/Drivers/STM32WLxx_HAL_Driver", "CM0PLUS/Middlewares",
+        "CM0PLUS/Middlewares/Third_Party", "CM0PLUS/Middlewares/Third_Party/x",
+        "CM4/Drivers", "CM4/Drivers/STM32WLxx_HAL_Driver", "CM4/Utilities"]
+
+
+def test_no_project_files_means_no_linked_parents(tmp_path):
+    assert linked_file_parents(tmp_path / "missing") == []
+    assert linked_file_parents(tmp_path) == []
+
+
+def test_sync_keeps_the_folders_cubeide_makes_for_linked_files(tmp_path):
+    """Issue #73: CubeIDE creates the parent folders of a project's linked files in the Build Tree.
+    The repo has none of them, so a plain --delete removed them, and the next CubeIDE session
+    dropped the linked HAL and Utilities sources from the project: a link error, every other build."""
+    repo, tree = tmp_path / "repo", tmp_path / "tree"
+    (repo / "CM4").mkdir(parents=True)
+    (repo / "CM4" / ".project").write_text(PROJECT_WITH_LINKS)
+    (repo / "CM4" / "main.c").write_text("x")
+    for folder in ("Drivers/STM32WLxx_HAL_Driver", "Utilities", "Old"):
+        (tree / "CM4" / folder).mkdir(parents=True)
+    subprocess.run(rsync_command(repo, tree), check=True)
+    assert (tree / "CM4" / "Drivers" / "STM32WLxx_HAL_Driver").is_dir()
+    assert (tree / "CM4" / "Utilities").is_dir()
+    assert not (tree / "CM4" / "Old").exists()      # what the repo dropped still goes
+    assert (tree / "CM4" / "main.c").exists()
 
 
 def test_headless_command_builds_both_cores_of_each_configuration():
@@ -320,3 +366,68 @@ def test_clean_builds_clean_and_does_not_retry(repo, tmp_path):
     r = build(repo, bt, ["C3"], {}, clean=True, runner=ide, cubeide="ide.exe", sync_tree=no_sync, windows=str)
     assert not r.ok
     assert [build_flags(c) for c in ide.cmds] == [["-cleanBuild"] * 2]
+
+
+# --- build logs ------------------------------------------------------------
+
+
+def test_every_build_keeps_its_log_under_a_name_of_its_own(repo, tmp_path):
+    """Issue #73: the log named after the Build ID alone was overwritten by the next build of the same sources."""
+    bt = BuildTree(tmp_path / "bench")
+    first = build(repo, bt, ["C2"], {}, runner=FakeIde(bt, ok_log(["Debug_C2"])), cubeide="ide.exe",
+                  sync_tree=no_sync, windows=str)
+    second = build(repo, bt, ["C2"], {}, runner=FakeIde(bt, "second build\n"), cubeide="ide.exe",
+                   sync_tree=no_sync, windows=str)
+    assert first.build_id == second.build_id
+    assert first.log_path != second.log_path
+    assert first.build_id in first.log_path.name
+    assert "Build Finished" in first.log_path.read_text()
+    assert "second build" in second.log_path.read_text()
+
+
+def test_a_failed_build_keeps_its_full_log_and_command(repo, tmp_path):
+    bt = BuildTree(tmp_path / "bench")
+    text = (DATA / "headless-failed.log").read_text()
+    r = build(repo, bt, ["C2"], {}, runner=FakeIde(bt, text, code=1), cubeide="ide.exe", sync_tree=no_sync, windows=str)
+    assert not r.ok
+    kept = r.log_path.read_text()
+    assert text in kept
+    assert kept.startswith("$ ide.exe ") and "-import" in kept.splitlines()[0]
+
+
+def test_the_clean_rebuild_of_a_stale_image_goes_into_the_same_log(repo, tmp_path):
+    bt = BuildTree(tmp_path / "bench")
+    fresh = FakeIde(bt, ok_log(["Debug_C2"]))
+
+    def ide(cmd):
+        if "-cleanBuild" in cmd:
+            code, _ = fresh(cmd)
+            return code, ok_log(["Debug_C2"]) + "clean rebuild output\n"
+        for core in ("CM4", "CM0PLUS"):
+            bt.elf(core, "Debug_C2").parent.mkdir(parents=True, exist_ok=True)
+            bt.elf(core, "Debug_C2").write_bytes(b"old image, build=dev")
+        return 0, ok_log(["Debug_C2"]) + "incremental output\n"
+
+    r = build(repo, bt, ["C2"], {}, runner=ide, cubeide="ide.exe", sync_tree=no_sync, windows=str)
+    kept = r.log_path.read_text()
+    assert kept.index("incremental output") < kept.index("-cleanBuild") < kept.index("clean rebuild output")
+    assert len(list((bt.root / "logs").iterdir())) == 1
+
+
+def test_a_log_name_is_never_reused_within_a_second(tmp_path):
+    bt = BuildTree(tmp_path / "bench")
+    now = build_mod.datetime(2026, 10, 5, 12, 0, 0, tzinfo=build_mod.timezone.utc)
+    a = new_log_path(bt, "abc1234", now)
+    a.write_text("x")
+    b = new_log_path(bt, "abc1234", now)
+    assert a.name == "build-20261005T120000Z-abc1234.log"
+    assert b != a
+
+
+def test_cli_build_prints_the_log_it_kept(repo, tmp_path, monkeypatch, capsys):
+    bt_root = tmp_path / "bench"
+    monkeypatch.setattr(build_mod, "run_process", FakeIde(BuildTree(bt_root), ok_log(["Debug_C2"])))
+    monkeypatch.setattr(build_mod, "sync", no_sync)
+    main(["--root", str(bt_root), "--repo", str(repo), "build", "--class", "C2"])
+    [log] = (bt_root / "logs").iterdir()
+    assert f"log {log}" in capsys.readouterr().out

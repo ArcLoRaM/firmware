@@ -16,9 +16,11 @@ A run takes minutes: start it with `run_in_background`, and read its output file
 
 ## Start with the map
 
-`bench map` draws the boards connected on this PC and on Pi Nodes and says which are free, held or recorded by another session (a page the user can open; `bench boards` is the text form).
+`bench map --open` shows the boards connected on this PC and on Pi Nodes, and which are free, held or recorded by another session, in the user's browser (`bench boards` is the text form).
 Choose the boards, the class of each and the Build Overrides yourself when the test is simple: a smoke check, a reset, reading a trace, a rerun of a scenario that already names them.
-Ask the user (AskUserQuestion, your recommendation first) only for an opinionated choice: which board is the C3, or sits at which hop of a line; an override value that changes what the test measures; a run that holds boards for hours.
+Ask the user only for an opinionated choice: which board is the C3, or sits at which hop of a line; an override value that changes what the test measures; a run that holds boards for hours.
+Ask with `bench choose --propose ID=CLASS ... -D NAME=VALUE ...`, your recommendation first: it opens a page where the user picks the class of each free board and the overrides, and prints `choice: --node ... -D ...` for you to pass to `bench run`.
+If it exits 2 (no answer in time), ask in chat instead.
 The C3 is the board connected to this PC unless the user says otherwise; the other classes go to Pi Nodes, or to other local boards when there are no Pi Nodes.
 Say in the report which choices you made.
 A Pi Node has one operator at a time, as a local board has: the lease is the only coordination `bench` needs.
@@ -41,7 +43,7 @@ Every run, whatever its purpose (acceptance, performance or spontaneous), leaves
 3. **Run.** `bench run <scenario>`: it builds the working tree (uncommitted changes included), flashes, fires the actions and decides.
    Done when it exits: 0 PASS, 1 FAIL, 2 TIMEOUT, 3 invalid scenario.
 4. **Read the verdict**, then fix and go back to 3:
-   - build failure: the diagnostics are printed with repo paths; the full log is in `C:\Users\Simon\arcfw-bench\logs\`.
+   - build failure: the diagnostics are printed with repo paths; the build line prints the path of the full log (`logs\build-<UTC time>-<Build ID>.log` in the worktree's Build Tree, kept for run and flash as well).
    - `FAIL`: the reason names the node, the line and the time (`+12.3s`); read the node's lines around it in the record, `tools/arclog/runs/<start>-<build>/<node>-*.log`.
    - `TIMEOUT`: the reason lists what never happened; check the record for why (a board not booting, a peer silent, a sync never reached).
    - lost lines (`N line(s) lost`) are a firmware trace problem, not noise: find which lines vanished before changing the scenario.

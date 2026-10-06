@@ -40,6 +40,8 @@ A board whose UID is not in the table boots with `id=0`.
 The copy of the working tree (uncommitted changes included) that `bench` builds from, on the Windows disk (`C:\Users\Simon\arcfw-bench\`, and `arcfw-bench-<worktree>` for each worktree), with its own CubeIDE workspace.
 It keeps agent builds away from the developer's IDE, workspace and `Debug_C*` folders, and the Windows compiler reads it at native speed.
 It is synced from the repo before every build and is never edited by hand.
+The sync deletes what the repo does not have, except what the build creates there: `Debug_*` outputs, the override header, and the folders CubeIDE makes as parents of a project's linked files (`CM4/Drivers`: empty on disk, the files live elsewhere in the tree).
+CubeIDE drops a linked file whose parent folder is gone, so deleting those folders makes the next build link without the HAL sources.
 
 ## Build Override
 
