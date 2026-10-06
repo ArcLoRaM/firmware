@@ -66,3 +66,24 @@ Option bytes, OTP, readout protection, security and mass erase are out of reach 
 
 The bench capture writes every board's trace to `tools/arclog/runs/bench/<node>-YYYYMMDD.log` (UTC days; `<node>` is the COM port or a Pi Node's name; in a worktree that path leads to the main checkout's shared folder).
 Read those files directly, by polling (`tail`, `grep`, `arclog view`), or check a live condition with `uv run --project tools/arclog arclog expect <file> --dir tools/arclog/runs/bench --since <UTC time> --follow`.
+
+## Pi Node login (TEMPORARY, plaintext)
+
+This file is tracked in the public repo: Simon chose on 2026-10-06 to commit and push the login anyway, and will secure it later.
+When it is secured, change the password on the Pi: removing it here does not remove it from the git history.
+
+`nuna-node-03` (verified 2026-10-06; its tailnet address is in `~/.config/bench/bench.toml`): user `user`, password `arcloram`, SSH password login (no key installed).
+`sshpass` is not installed here: pass the password through an askpass helper written in the scratchpad, and delete it after the call.
+
+```sh
+printf '#!/bin/sh\necho arcloram\n' > "$S/askpass.sh"; chmod 700 "$S/askpass.sh"
+SSH_ASKPASS="$S/askpass.sh" SSH_ASKPASS_REQUIRE=force ssh -o PubkeyAuthentication=no \
+  -o PreferredAuthentications=password,keyboard-interactive user@<tailnet address> '<read-only command>'
+rm -f "$S/askpass.sh"
+```
+
+The Pi runs two systemd units: `openocd.service` (GDB 3333, the M0+ on 3334, config `/etc/openocd/rpi-swd.cfg`) and `uart-log.service` (the UART log on TCP 4000).
+Look first (`systemctl status`, `journalctl -u openocd`); change nothing on the Pi unless Simon asks.
+A raw TCP connect to port 3333 is a GDB connection for OpenOCD (one at a time): probe with `bench boards`, not with `/dev/tcp`.
+After a Pi power-up the board is held in reset (#103 "A Pi Node board stays held in reset"): a zero UID, a silent trace and a dead LED, with GPIO18 low on the Pi.
+Run `bench reset <Node ID>` first; it releases the board, and the next `bench flash` passes.
