@@ -9,7 +9,8 @@ The clock is the NUCLEO Clock (CONTEXT.md): every figure of this record is a NUC
 | Scenario | Proves or measures |
 |---|---|
 | `tools/bench/scenarios/guard-warm-window.toml` | C3 (Node 5) + C2 (Node 2), DEV profile with the boot burst: a C2 in `CLOCK_WARM` closes an empty Rx window one guard after nominal. The estimate is not valid yet, so the guard is the cap: `RX_WIN g=100` with `win` in 150..200 ms, against about 1700 ms while acquiring; no `RX_LATE`, `SLOT_SUSPECT`, `TX_LATE`, `TX_DENIED` |
-| `tools/bench/scenarios/guard-from-drift.toml` (to write once the Rx start latency is measured) | C3 + C2 for several hours: every Sync packet the C3 sent (`TX_DONE`) is received or lost for a radio reason, never because the C2's window was not open on it; the guard of every Rx slot is logged (`g`, `win`) and falls to the floor once the estimate is valid; no Tier 3 or `SYNC_LOST` |
+| `tools/bench/scenarios/guard-from-drift.toml` | C3 (Node 5) + C2 (Node 2) for 6 h: every Sync packet the C3 sent (`TX_DONE`) is received or lost for a radio reason, never because the C2's window was not open on it; the guard of every Rx slot is logged (`g`, `win`) and falls to about 10 ms once the estimate is valid; no Tier 3 or `SYNC_LOST`. Counts of locked packets are staged every 10 so that a silent node ends the run within one stage |
+| `tools/bench/scenarios/guard-from-drift-swapped.toml` | The same 6 h with the roles swapped (the C3 on Node 2, the C2 on Node 5), run after the first one stopped on a node silence of Node 2 as a C2 (`node-silences.md`, event 2): it tells the board from the role |
 | flags: `--node 5=C3 --node 2=C2 -D BENCH_PROBE=1 -D SYNC_BOOT_BURST=5u --expect "2 PROBE tag=rx_open seg=setrx count=4 within=5m"` | The Rx start latency (the part of it from the slot task to a radio that listens), measured with `timing-probe`; the wake part is the `wake` of `SLOT`. The probes stay in `tdma_machine.c` (`rx_slot`, `rx_open`) and compile to nothing without `BENCH_PROBE` |
 
 ## Hardware
@@ -22,6 +23,7 @@ Checked against `bench boards` on 2026-10-05: 2 boards connected, with known Nod
 | Node 2 flashed as C2 (Pi Node) | yes | connected |
 | Host on AC power, Windows sleep off, for the several-hour run | yes | per session |
 
+The swapped variant flashes the same two boards the other way round: Node 2 as C3, Node 5 as C2.
 Hands on the bench: none while the two Pi Nodes stay connected.
 No CubeMX regeneration.
 The Rx start latency measurement (`timing-probe`) needs the same two boards.
