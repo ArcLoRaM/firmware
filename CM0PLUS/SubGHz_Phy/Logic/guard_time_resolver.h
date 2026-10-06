@@ -47,7 +47,7 @@
  *          \ref AnchorSlot_t.gap_after_ms) must be >= 2 * MAX_GUARD_TIME_MS
  *          to prevent Rx window overlap between adjacent slots.
  *
- *          Version 2 of the resolver (ADR-0021) computes the guard from the
+ *          Version 2 of the resolver (ADR-0022) computes the guard from the
  *          estimated clock drift (\ref GuardPolicy_Ms), capped at this value.
  *          If the drift would require a guard beyond this cap, the node
  *          degrades instead.

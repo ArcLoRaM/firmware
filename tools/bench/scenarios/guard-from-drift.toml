@@ -2,7 +2,7 @@
 # C3 (Node 5) + C2 (Node 2), NUCLEO Clock, nothing injected, the DEV profile (a Sync
 # phase every 200 s, one packet per node per phase) with the boot burst of 5 so
 # that a cold C2 locks in about a minute (ADR-0020). The Rx guard follows the
-# drift estimate (ADR-0021): the cap (100 ms) until the estimate is valid, about
+# drift estimate (ADR-0022): the cap (100 ms) until the estimate is valid, about
 # 33 min of packets, then about 10 ms on this pair (3 x the 1.6 ms of D(t), plus
 # the 5 ms of measured Rx start latency).
 # Every Sync packet the C3 sent is to be received or lost for a radio reason,

@@ -233,7 +233,7 @@ Tx side applies no guard, only its Tx lead, which receivers never see. The Rx
 guard must therefore absorb bilateral drift — both the local and the peer's
 RTC divergence from true time.
 
-**Version 2** (issue #36, ADR-0021) replaces the constant with `ratio × D(t) + latency`, from the drift estimate.
+**Version 2** (issue #36, ADR-0022) replaces the constant with `ratio × D(t) + latency`, from the drift estimate.
 `D(t)` is the clock uncertainty seen from the Sync sender: the Residual times the time since the last Sync, plus 3 sigma of the stamp noise, plus one RTC tick, plus the offset a Sync error under the Correction Threshold leaves in the clock.
 The ratio is 3, and the Rx start latency (radio wake, TCXO, PLL) is added after it, being a delay and not an uncertainty.
 The guard is never below `SYNC_PARTICIPATE_THRESHOLD_MS` (a packet that is still Tier 1 must be inside the window) and never above `MAX_GUARD_TIME_MS`.
@@ -676,7 +676,7 @@ All sync timing thresholds are derived from this symbol duration:
 If the sync modulation parameters change, all three values must be recomputed
 from the new T_S. They are provisioned constants, not hardcoded magic numbers.
 
-`SYNC_CORRECT_THRESHOLD_MS` (1 ms, ADR-0021) is not derived from T_S: it is the Correction Threshold, set from the noise of the stamp (see Correction Threshold) and the concurrent-transmission budget.
+`SYNC_CORRECT_THRESHOLD_MS` (1 ms, ADR-0022) is not derived from T_S: it is the Correction Threshold, set from the noise of the stamp (see Correction Threshold) and the concurrent-transmission budget.
 
 **Pure CT model (deferred):** the design in which every eligible C2 transmits
 the sync packet simultaneously from Cell 0 using its locally-stored epoch from

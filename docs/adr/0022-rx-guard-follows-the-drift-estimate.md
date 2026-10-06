@@ -1,4 +1,4 @@
-# ADR-0021: The Rx guard follows the drift estimate
+# ADR-0022: The Rx guard follows the drift estimate
 
 ## Status
 Accepted for the mechanism (issue #36).

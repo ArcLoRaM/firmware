@@ -108,7 +108,7 @@ The guard is the margin of the design (the Tier 1 band, the concurrent-transmiss
 - [x] `g` and `win` in the trace and the schema; schema test passes. (`test_tdma_machine_c2`, `test_schema`; on the bench: see Runs)
 - [x] Existing MAC and TDMA tests unchanged and passing. (unchanged in meaning: the three stubs of the shift hook changed signature, and the one test that checked its arguments now checks the error in us)
 - [ ] Bench, C3 + C2 for several hours, after #34: no mistiming loss; guard distribution and empty-window Rx time (before and after) reported.
-- [x] ADR: the guard strategy, the ratio, the thresholds; supersedes the "Version 2" section of ADR-0012. (ADR-0021; the ratio stays provisional until the several-hour run)
+- [x] ADR: the guard strategy, the ratio, the thresholds; supersedes the "Version 2" section of ADR-0012. (ADR-0022; the ratio stays provisional until the several-hour run)
 
 ## Runs
 
