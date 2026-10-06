@@ -52,6 +52,28 @@ The "before" windows are every `RX_WIN` to `RX_TIMEOUT` pair of this C2 in the a
 No `RTC_SHIFT` in the run: the errors were under the 1 ms correction threshold (`erru` -18 us after the set).
 At the floor (g = 8 ms) the window is predicted at 2 x 8 + 262 = 278 ms: to be measured once the estimate is valid, in the several-hour run.
 
+## Result: the 6 h run (2026-10-05 22:40 to 2026-10-06 04:40 UTC), failed on a node silence after 3 h 46 min
+
+`guard-from-drift.toml`, build `dcfaeba-o954ffd` (a commit), Node 5 as C3 and Node 2 as C2, DEV profile with the boot burst, NUCLEO Clock.
+The run failed on its count of locked packets (68 of 100), because the CM0+ of Node 2 stopped at 3 h 46 min (`node-silences.md`, event 2) and a scenario cannot see a silent node until #86; it held the boards 2 h 14 min more.
+The 3 h 46 min before the stop are data:
+
+| | |
+|---|---|
+| Lock | `CLK to=WARM` at +71.9 s |
+| Estimate valid | `DRIFT ok=1` at +1412 s, 23.5 min (n = 10, baseline 1361 s), earlier than the 33 min of ADR-0020 |
+| Guard (`RX_WIN g`), 608 windows | 100 ms in 62 (acquiring, and until the estimate was valid); **10 ms in 168, 11 ms in 375, 12 ms in 3**: every window with a valid estimate under the 15 ms target of #46 |
+| Empty window at the real guard, open to `RX_TIMEOUT`, device clock | g = 10: median **286 ms** (284 to 292, n = 150); g = 11: median **288 ms** (286 to 295, n = 331); g = 12: 290 ms (n = 2). Before: median 1939 ms (n = 214): **85 % less** |
+| Packets of the C3 received by the C2 | 72 sent after the C2 booted, **71 received**, matched by (phase, cell, epoch); the one not received is the first of the run (`ph=0 ce=0 ep=86100032`), which leaves before the C2 is up (#70), so it is no mistiming loss |
+| Locked packets | 68 `act=t1`; `erru` -750 to +1447 us, median +227 us |
+| The 1 to 8 ms band | 2 `RTC_SHIFT`: packets at `erru` 1447 us (6 ticks) and 1203 us (5 ticks), each corrected and each followed by the C2's own relay at cell 1 (`SYNC_TX ph=1 ce=1`) |
+| Wake, `wake` of `SLOT` | 0 ms in 593 of 609 Rx slots, 2 ms in 16, never more |
+| Estimator at the end | `DRIFT n=48 base=9400 rate=-9355 resid=182 noise=111 ok=1 trim=0` |
+| Never seen | `RX_LATE`, `SLOT_SUSPECT`, `TX_LATE`, `TX_DENIED`, `SYNC_SILENCE`, `CLK to=COLD`, a Tier 3 packet |
+
+The window shows g = 10 or 11 ms where this record said "10 ms for the NUCLEO pair": the noise of this pair is 250 to 111 us, against the 106 us of the first pair, and the formula gives 11 ms at 250 us.
+The criterion of the several-hour bench run stays open: it needs a PASS run.
+
 ## Measurement: the Rx start latency (2026-10-05, `timing-probe`, Node 2 as C2, NUCLEO Clock)
 
 CM0+ at 4 MHz (`hz=4000000`), a C2 in the first minutes after a lock (the Rx slots of the DEV burst), build `a419c9b-db764f8-o9bf158` (`BENCH_PROBE=1`), run record `tools/arclog/runs/20261005T175430Z-a419c9b-db764f8-o9bf158/`, n = 4 Rx slots.
@@ -98,6 +120,8 @@ The guard is the margin of the design (the Tier 1 band, the concurrent-transmiss
 | 2026-10-05 17:48 | same flags | `a419c9b-d384a39-o9bf158` | measurement | `tools/arclog/runs/20261005T174822Z-a419c9b-d384a39-o9bf158/` | The first probe, one segment `rx` for the whole window open: 14.5 to 14.8 ms from the slot task to the radio armed, log lines included; too coarse to say how much is the radio, so the probe was split |
 | 2026-10-05 17:5x | flags: as above with `tag=rx_open seg=setrx` | `a419c9b-db764f8-o9bf158` | invalid | none (the build failed; the first attempt at it never reached `bench`, run from the wrong directory) | #73 alternation, no firmware verdict |
 | 2026-10-05 17:54 | flags: as above with `tag=rx_open seg=setrx` | `a419c9b-db764f8-o9bf158` | measurement | `tools/arclog/runs/20261005T175430Z-a419c9b-db764f8-o9bf158/` | The split probe: channel 0.9 to 1.3 ms, MAC 0.09, `SLOT` line 5.0, guard 0.3 to 0.4, `RX_WIN` line 5.3 to 5.4, `RadioSetRx` 2.7; 4.14 to 4.50 ms without the two log lines |
+| 2026-10-05 22:3x | `guard-from-drift.toml` | `dcfaeba-o954ffd` | invalid | none (the build failed, nothing was flashed) | #73 alternation, no firmware verdict |
+| 2026-10-05 22:40 | `guard-from-drift.toml` | `dcfaeba-o954ffd` | FAIL | `tools/arclog/runs/20261005T224004Z-dcfaeba-o954ffd/` | `SYNC_RX act=t1` count 68 of 100 at 6 h: node silence (event 2): the CM0+ of Node 2 stopped after `SLOT ph=1 ce=8` at 3 h 46 min, the CM4 kept logging; before it, 71 of 71 packets received, guard 10 to 12 ms, empty window median 288 ms (Result) |
 
 The runs of 2026-10-05 ran on the uncommitted tree: the `-d` hash of their Build ID names that state, not a commit.
 The commits of 2026-10-06 add to it the timing probes `rx_slot` and `rx_open` (the split probe run already had them) and the measured 5 ms Rx start latency; the runs from the long run on carry the commit.

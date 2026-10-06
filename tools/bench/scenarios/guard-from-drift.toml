@@ -10,7 +10,11 @@
 # guard distribution (RX_WIN g) and the empty-window Rx time are read from the
 # run record (docs/test-tracker/36-guard-from-drift.md). The scenario stages its
 # expectations so that a bad run ends within the first hour, and holds the
-# duration with a count of locked packets (one per 200 s: 6 h is about 108).
+# duration with a count of locked packets (one per 200 s: 6 h is about 108),
+# staged every 10 packets (about 33 min) so that a silent node, which nothing
+# else in a scenario sees until #86, ends the run within one stage: the run of
+# 2026-10-05 held the boards 2 h 14 min after the C2 stopped (node-silences.md).
+# The deadlines are the measured pacing of that run, 4 % and 8 min of slack.
 # The Rx start latency (GUARD_RX_START_LATENCY_US) was measured before this run
 # (the Test Record).
 description = "Guard from the drift estimate: 6 h of a locked NUCLEO pair, no mistiming loss"
@@ -49,8 +53,71 @@ within = "55m"
 node = 2
 event = "SYNC_RX"
 where = { act = "t1" }
+count = 10
+within = "40m"
+
+[[expect]]
+node = 2
+event = "SYNC_RX"
+where = { act = "t1" }
+count = 20
+within = "75m"
+
+[[expect]]
+node = 2
+event = "SYNC_RX"
+where = { act = "t1" }
+count = 30
+within = "109m"
+
+[[expect]]
+node = 2
+event = "SYNC_RX"
+where = { act = "t1" }
+count = 40
+within = "144m"
+
+[[expect]]
+node = 2
+event = "SYNC_RX"
+where = { act = "t1" }
+count = 50
+within = "179m"
+
+[[expect]]
+node = 2
+event = "SYNC_RX"
+where = { act = "t1" }
+count = 60
+within = "213m"
+
+[[expect]]
+node = 2
+event = "SYNC_RX"
+where = { act = "t1" }
+count = 70
+within = "248m"
+
+[[expect]]
+node = 2
+event = "SYNC_RX"
+where = { act = "t1" }
+count = 80
+within = "283m"
+
+[[expect]]
+node = 2
+event = "SYNC_RX"
+where = { act = "t1" }
+count = 90
+within = "317m"
+
+[[expect]]
+node = 2
+event = "SYNC_RX"
+where = { act = "t1" }
 count = 100
-within = "360m"
+within = "352m"
 
 [[forbid]]
 event = "TX_DENIED"
