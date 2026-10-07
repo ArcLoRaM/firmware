@@ -89,17 +89,19 @@ The verdict is decided later, at any time and any number of times, by `tools/ben
 
 ```sh
 BENCH_COLLECTOR_URL=<base URL of the collector> uv run --project tools/bench python -I -m bench.collector \
-  tools/bench/scenarios/sync-dev-soak-swapped.toml --build 16ee4e5-o954ffd --since 2026-10-07T08:42:08Z \
-  --node 2=nuna-node-03 --node 5=nuna-node-01 --dir tools/arclog/runs/20261007T084208Z-16ee4e5-o954ffd-collector
+  tools/bench/scenarios/sync-dev-soak-swapped.toml --build e34092f-o954ffd --since 2026-10-07T14:06:55Z \
+  --node 2=nuna-node-03 --node 5=nuna-node-01 --dir tools/arclog/runs/20261007T140655Z-e34092f-o954ffd-collector
 ```
 
 - Exit 0 is a PASS, 1 a FAIL, 2 no verdict yet (nothing failed so far). It prints, per node, the lines, the last line and its age, the `BOOT`s and the `SLOT` count per hour.
-- The collector's times are the Pi's local time (CEST); the tool converts them (`--pi-tz`) and flags a Pi clock more than 5 s away from the collector's receive time.
+- The collector writes each line's time in ISO 8601 with its offset (its first version wrote the Pi's local time, which `--pi-tz` still converts). The tool flags a Pi whose clock is not NTP-synchronised or lags the collector's by more than 5 s, and a node the collector has not heard from for over 10 min.
+- Since 2026-10-07 13:51Z the Pi buffers its lines and replays them to a collector that reconnects, so a collector restart is no longer invalid by itself: a FAIL on lost lines says whether the buffer was enough.
 - A FAIL on a `SLOT` stage is a node that stopped: read its Pi's `journalctl -u openocd` around the last line before anything resets it (criterion 2), then `bench reset <Node ID>`.
-- The run is invalid, and is run again, when the output carries a `WARN` that the collector reconnected after the start or lost a node, or a FAIL names lost lines (a gap in the stream) or a `BOOT` nobody planned (someone reset or flashed a node).
+- The run is invalid, and is run again, when a FAIL names lost lines (a gap in the stream) or a `BOOT` nobody planned (someone reset or flashed a node), or a `WARN` says the collector lost a node.
   Those say nothing about the firmware.
 - A node that stops is caught by the first stage after its last line, at most an hour later.
-  The last stage is due 12 h 5 min after arming (20:49 UTC); a first answer is expected within about 4 h.
+  The last stage is due 12 h 5 min after arming (02:13 UTC on 2026-10-08, armed at 14:08:37Z); a first answer is expected within about 4 h (around 18:10Z).
+- While the host is on, a shell loop (no agent turn) runs the command every 30 min and appends to `<dir>/checks.log`; it stops itself at 02:20Z. It dies with the host, and the command above can be run at any time.
 - The tool was checked on event 3's real lines (a C2 scenario over `nuna-node-03` from its reset): FAIL `SLOT not within 11100s of arming (331/450)`, with the collector's reconnect at 06:33 UTC flagged.
 
 ## Criteria
@@ -112,4 +114,5 @@ BENCH_COLLECTOR_URL=<base URL of the collector> uv run --project tools/bench pyt
 
 | Date (UTC) | Scenario | Build ID | Verdict | Record | Notes |
 |---|---|---|---|---|---|
-| 2026-10-07 08:42 | `sync-dev-soak-swapped.toml` | `16ee4e5-o954ffd` | running, decided from the collector | `tools/arclog/runs/20261007T084208Z-16ee4e5-o954ffd-collector/` | `bench flash --node 2=C3 --node 5=C2 -D SYNC_BOOT_BURST=5u`: both cores of both boards booted the build, Smoke Check PASS (+19 s). Armed 08:43:55Z (Node 2 `BOOT` as C3 at 08:43:47Z, Node 5 as C2 at 08:43:55Z). The burst sent `SYNC_TX` in cells 0 to 3 within the first minute; Node 5 `CLK to=WARM` 53 s after arming. Due: 20:49Z for the full 12 h, an answer expected within about 4 h; the host is off after the flash. Node 2 had been halted by event 3 since 04:21Z: the flash recovered it |
+| 2026-10-07 08:42 | `sync-dev-soak-swapped.toml` | `16ee4e5-o954ffd` | invalid | `tools/arclog/runs/20261007T084208Z-16ee4e5-o954ffd-collector/` | `bench flash --node 2=C3 --node 5=C2 -D SYNC_BOOT_BURST=5u`: both cores of both boards booted the build, Smoke Check PASS (+19 s). Armed 08:43:55Z (Node 2 `BOOT` as C3 at 08:43:47Z, Node 5 as C2 at 08:43:55Z). The burst sent `SYNC_TX` in cells 0 to 3 within the first minute; Node 5 `CLK to=WARM` 53 s after arming. Due: 20:49Z for the full 12 h, an answer expected within about 4 h; the host is off after the flash. Node 2 had been halted by event 3 since 04:21Z: the flash recovered it. **Invalid, for two reasons that say nothing about the firmware:** the collector was disconnected from 08:44:49Z to 08:46:07Z (78 s on both nodes, 13 lines lost: the Pi did not buffer then), and both nodes were reset at 13:49:59Z and 13:56:18Z, to the same second (the collaborator, deploying the collector and Pi changes). What it did show: 5 h 06 min from the arming to 13:49:59Z without a stop, both nodes at 180 `SLOT` an hour (173 and 176 in the first), so neither Node 2 as C3 nor Node 5 as C2 stopped. Interim evidence only: at the rate seen as a C2, Node 2 would stay up 5.1 h with probability about 26 % if the board alone carried the cause |
+| 2026-10-07 14:06 | `sync-dev-soak-swapped.toml` | `e34092f-o954ffd` | running, decided from the collector | `tools/arclog/runs/20261007T140655Z-e34092f-o954ffd-collector/` | Second try, same boards, roles, scenario and override (the Build ID differs only because the branch was committed: the firmware sources are those of `16ee4e5`). `bench flash`: both cores of both boards booted the build, Smoke Check PASS. Armed 14:08:37Z (Node 2 `BOOT` as C3 at 14:08:29Z, Node 5 as C2 at 14:08:37Z). Due 02:13Z on 2026-10-08. The collector now writes ISO times with the offset and the Pi replays after a restart (deployed by the collaborator at 13:51Z), so the judge reads both formats |
