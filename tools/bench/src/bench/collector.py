@@ -101,6 +101,20 @@ def http_get(url: str, timeout: float = 120.0) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
+def pi_clock_states(base: str | None, names: list[str]) -> dict[str, dict]:
+    """The collector's view of the clock of each named Pi Node (`pi_ntp`, `clock_lag_s`), for a manifest.
+
+    Nothing when there is no collector or it cannot be asked: the manifest then has no Pi clock to compare."""
+    if not base:
+        return {}
+    try:
+        status = json.loads(http_get(f"{base.rstrip('/')}/nodes", timeout=15.0))
+    except (OSError, ValueError):
+        return {}
+    return {name: {k: status[name][k] for k in ("pi_ntp", "clock_lag_s") if k in status[name]}
+            for name in names if name in status}
+
+
 def quiet_notes(names: list[str], status: dict) -> list[str]:
     """A heads-up for a node the collector is connected to and has heard nothing from for a while. Not a cause:
     only a scenario's `max_silence` makes silence fail a run."""

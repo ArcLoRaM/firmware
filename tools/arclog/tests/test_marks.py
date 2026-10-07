@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from arclog.marks import Marks, read_marks
+from arclog.marks import Marks, format_mark, read_marks
 
 T0 = datetime(2026, 10, 7, 14, 0, 0, tzinfo=timezone.utc)
 
@@ -148,3 +148,17 @@ def test_a_mark_torn_by_a_killed_capture_is_not_read(tmp_path):
     path.write_text(complete + "2026-10-07T14:00:10.000000Z\tmono=10", encoding="utf-8")
 
     assert [m.mono for m in read_marks(path)] == [1000.0]
+
+
+def test_a_mark_formats_as_the_writer_wrote_it(tmp_path):
+    clock = FakeClock()
+    marks = marks_for(tmp_path, clock)
+    marks.port_up("c3")
+    marks.tick()
+    clock.advance(10)
+    marks.port_down("c3")
+    marks.tick()
+    marks.close()
+
+    path = tmp_path / "marks-20261007.log"
+    assert [format_mark(m) for m in read_marks(path)] == path.read_text(encoding="utf-8").splitlines()

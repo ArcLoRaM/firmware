@@ -36,6 +36,13 @@ class Mark:
     ports: dict[str, PortMark]
 
 
+def format_mark(mark: Mark) -> str:
+    """One line of a marks file, without its newline."""
+    ports = "\t".join(f"{node}={'up' if p.up else 'down'}@{format_host_time(p.since)}"
+                      for node, p in mark.ports.items())
+    return f"{format_host_time(mark.utc)}\tmono={mark.mono:.3f}\t{ports}"
+
+
 class Marks:
     """Writes the marks of one capture process."""
 
@@ -75,9 +82,7 @@ class Marks:
             self.close()
             self._file = (self.out_dir / f"marks-{date}.log").open("a", encoding="utf-8", newline="\n")
             self._date = date
-        ports = "\t".join(f"{node}={'up' if p.up else 'down'}@{format_host_time(p.since)}"
-                          for node, p in self._ports.items())
-        self._file.write(f"{format_host_time(t)}\tmono={mono:.3f}\t{ports}\n")
+        self._file.write(format_mark(Mark(t, mono, dict(self._ports))) + "\n")
         self._file.flush()
 
     def close(self) -> None:

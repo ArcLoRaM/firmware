@@ -8,7 +8,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from bench import collector
-from bench.collector import collector_causes, convert_line, judge, node_number, quiet_notes, write_capture
+from bench.collector import (collector_causes, convert_line, judge, node_number, pi_clock_states, quiet_notes,
+                             write_capture)
 from bench.scenario import from_dict
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -250,3 +251,21 @@ def test_a_firmware_event_invalidates_a_dataset_session_and_only_fails_an_accept
     code, said = run_judge(tmp_path / "dataset", now, gapped, scenario={**SCENARIO, "dataset": True})
     assert code == 4
     assert any(m.startswith("INVALID") for m in said)
+
+
+def test_the_pi_clock_states_are_the_collector_s_view_of_the_run_s_pi_nodes(monkeypatch):
+    status = {"nuna-node-03": {"connected": True, "pi_ntp": "synced", "clock_lag_s": 0.07, "silent_for_s": 3},
+              "nuna-node-01": {"connected": True, "pi_ntp": "unsynced"}, "nuna-node-09": {"pi_ntp": "synced"}}
+    collector_serving(monkeypatch, "", status)
+
+    assert pi_clock_states("http://collector", ["nuna-node-03", "nuna-node-01", "com8"]) == {
+        "nuna-node-03": {"pi_ntp": "synced", "clock_lag_s": 0.07}, "nuna-node-01": {"pi_ntp": "unsynced"}}
+
+
+def test_a_collector_that_cannot_be_asked_gives_no_pi_clock_states(monkeypatch):
+    def refuse(url: str, timeout: float = 120.0) -> str:
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(collector, "http_get", refuse)
+    assert pi_clock_states("http://collector", ["nuna-node-03"]) == {}
+    assert pi_clock_states(None, ["nuna-node-03"]) == {}
