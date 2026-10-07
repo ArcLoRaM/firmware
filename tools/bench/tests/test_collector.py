@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from bench import collector
-from bench.collector import collector_causes, convert_line, judge, node_number, write_capture
+from bench.collector import collector_causes, convert_line, judge, node_number, quiet_notes, write_capture
 from bench.scenario import from_dict
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -184,15 +184,14 @@ def test_a_reconnect_after_the_start_invalidates_only_when_lines_were_lost():
     assert collector_causes([NODE], steady, SINCE, {NODE: 13}) == []  # lost with no reconnect: the trace's own verdict
 
 
-def test_a_node_quiet_for_over_ten_minutes_while_the_collector_is_connected_is_a_node_fault():
-    [quiet] = collector_causes([NODE], {NODE: {"connected": True, "silent_for_s": 3600}}, SINCE, {})
+def test_a_node_quiet_for_over_ten_minutes_is_a_heads_up_and_not_a_cause():
+    quiet = {NODE: {"connected": True, "silent_for_s": 3600}}
 
-    assert (quiet.kind, quiet.fault, quiet.node) == ("node_silent", "node", NODE)
-    assert "3600 s" in quiet.text
-    assert collector_causes([NODE], {NODE: {"connected": True, "silent_for_s": 15}}, SINCE, {}) == []
-    # Not connected: the silence is the collector's, not the node's.
-    cut = collector_causes([NODE], {NODE: {"connected": False, "silent_for_s": 3600}}, SINCE, {})
-    assert [c.kind for c in cut] == ["collector_node"]
+    assert collector_causes([NODE], quiet, SINCE, {}) == []
+    assert "3600 s" in quiet_notes([NODE], quiet)[0]
+    assert quiet_notes([NODE], {NODE: {"connected": True, "silent_for_s": 15}}) == []
+    # Not connected: the silence is the collector's, and collector_causes says so.
+    assert quiet_notes([NODE], {NODE: {"connected": False, "silent_for_s": 3600}}) == []
 
 
 def status_with(**fields) -> dict:
@@ -209,12 +208,23 @@ def test_a_passing_run_on_a_pi_with_an_unsynchronised_clock_is_invalid(monkeypat
     assert any(m.startswith("INVALID") for m in said)
 
 
-def test_a_quiet_node_is_a_warning_and_does_not_invalidate_the_run(monkeypatch, tmp_path):
+def test_a_quiet_node_is_a_warning_when_the_scenario_does_not_watch_its_silence(monkeypatch, tmp_path):
     collector_serving(monkeypatch, LOG, status_with(silent_for_s=3600))
     code, said = run_judge(tmp_path, SINCE + timedelta(minutes=16))
 
     assert code == 0
     assert any(m.startswith("WARN ") and "no line from it" in m for m in said)
+
+
+def test_a_node_silent_longer_than_max_silence_fails_a_run_that_met_its_expectations(monkeypatch, tmp_path):
+    collector_serving(monkeypatch, LOG)
+    now = SINCE + timedelta(minutes=16)  # the log ends 10 min 44.5 s before
+
+    assert run_judge(tmp_path / "off", now)[0] == 0
+    code, said = run_judge(tmp_path / "on", now, scenario={**SCENARIO, "max_silence": "10m"})
+    assert code == 1
+    assert any(m.startswith("WARN ") and "no line for 644 s" in m for m in said)
+    assert run_judge(tmp_path / "long", now, scenario={**SCENARIO, "max_silence": "20m"})[0] == 0
 
 
 def test_lines_lost_across_a_reconnect_invalidate_the_run_that_lost_them_alone_fail_it(monkeypatch, tmp_path):

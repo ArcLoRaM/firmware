@@ -46,6 +46,7 @@ def test_a_minimal_scenario_has_defaults():
     ({"nodes": {"2": "C2"}, "action": [{"halt": 2, "at": "10s"}]}, "unknown key 'halt'"),
     ({"nodes": {"2": "C2"}, "overrides": {"BENCH_BUILD_ID": "x"}}, "set by bench"),
     ({"nodes": {"2": "C2"}, "dataset": "yes"}, "dataset must be true or false"),
+    ({"nodes": {"2": "C2"}, "max_silence": "soon"}, "max_silence"),
 ])
 def test_invalid_scenarios_say_what_is_wrong(d, problem):
     with pytest.raises(ValueError) as exc:
@@ -62,6 +63,17 @@ def test_a_scenario_is_not_a_dataset_session_unless_it_says_so(tmp_path):
     assert load(path).dataset is True
     assert "dataset session" in plan(from_dict(d))
     assert "dataset session" not in plan(from_dict({"nodes": {"2": "C2"}}))
+
+
+def test_max_silence_is_off_unless_the_scenario_sets_it(tmp_path):
+    assert from_dict({"nodes": {"2": "C2"}}).max_silence is None
+    d = {"nodes": {"2": "C2"}, "max_silence": "5m"}
+    assert from_dict(d).max_silence == timedelta(minutes=5)
+    path = tmp_path / "s.toml"
+    path.write_text(to_toml(d), encoding="utf-8")
+    assert load(path).max_silence == timedelta(minutes=5)
+    assert "silent for more than 5m" in plan(from_dict(d))
+    assert "silent for more than" not in plan(from_dict({"nodes": {"2": "C2"}}))
 
 
 def test_expect_shorthand():

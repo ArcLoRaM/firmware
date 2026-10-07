@@ -8,7 +8,7 @@ Other evidence (the log collector) produces causes of the same shape; the caller
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from arclog.expect import Run, Spec
 from arclog.marks import Mark
@@ -47,7 +47,7 @@ def check_marks(marks: list[Mark], start: datetime, end: datetime) -> list[Cause
     if not marks:
         return _uncovered(start, end)
     causes = _uncovered(start, marks[0].utc) + _uncovered(marks[-1].utc, end)
-    for node, down_from, down_to in _down_intervals(marks):
+    for node, down_from, down_to in port_outages(marks):
         down_from = max(down_from, start)
         seconds = (down_to - down_from).total_seconds()
         if seconds > PORT_DOWN_S:
@@ -64,6 +64,16 @@ def check_marks(marks: list[Mark], start: datetime, end: datetime) -> list[Cause
             causes.append(Cause("utc_step", f"the host's UTC was stepped {step:+.1f} s "
                                 f"({before.utc:%H:%M:%S} - {after.utc:%H:%M:%S} UTC)", None, before.utc, after.utc))
     return causes
+
+
+def exit_code(code: int, causes: list[Cause], dataset: bool) -> int:
+    """The exit code of a run: invalid (4) if a cause invalidates it, else fail (1) if a node stopped while the
+    engine saw nothing wrong yet or at its timeout, else the verdict's own code (0 pass, 1 fail, 2 timeout)."""
+    if invalidating(causes, dataset):
+        return EXIT_INVALID
+    if code in (0, 2) and any(c.fault == "node" for c in causes):
+        return 1
+    return code
 
 
 def _uncovered(before: datetime, after: datetime) -> list[Cause]:
@@ -83,7 +93,7 @@ def _no_marks(before: datetime, after: datetime, seconds: float) -> Cause:
                  f"({before:%H:%M:%S} - {after:%H:%M:%S} UTC)", None, before, after)
 
 
-def _down_intervals(marks: list[Mark]) -> list[tuple[str, datetime, datetime]]:
+def port_outages(marks: list[Mark]) -> list[tuple[str, datetime, datetime]]:
     """(node, down since, up again) for every outage the marks show; one still on at the last mark ends there."""
     down: dict[str, datetime] = {}
     outages = []
@@ -129,4 +139,26 @@ def _never_booted(spec: Spec, since: datetime, lines: list[Line]) -> list[Cause]
         last = f"last booted build={boots[-1].get('build') or '(none)'}" if boots else "no BOOT line"
         causes.append(Cause("wrong_build", f"{name} never booted build={spec.build} ({last})", name,
                             fault="firmware"))
+    return causes
+
+
+def silence_causes(lines: list[Line], nodes: list[str], max_silence: timedelta, start: datetime, end: datetime,
+                   outages: list[tuple[str, datetime, datetime]] = ()) -> list[Cause]:
+    """A node that logged nothing for longer than `max_silence` with no capture gap in it has stopped: a node fault.
+
+    Gaps are read between a node's lines, from its last line to `end`, and over the whole window for a node that
+    never logged. `outages` (node, from, to) are the capture's own (`port_outages`): a gap they touch is not the
+    node's.
+    """
+    causes = []
+    for node in nodes:
+        times = sorted(ln.host_time for ln in lines
+                       if ln.node == node and ln.host_time is not None and start <= ln.host_time <= end)
+        gaps = list(zip(times, times[1:])) + [(times[-1], end)] if times else [(start, end)]
+        for before, after in gaps:
+            if after - before > max_silence and not any(
+                    n == node and down_from < after and down_to > before for n, down_from, down_to in outages):
+                causes.append(Cause("node_silent", f"{node}: no line for {(after - before).total_seconds():.0f} s "
+                                    f"({before:%H:%M:%S} - {after:%H:%M:%S} UTC) with no capture gap in it",
+                                    node, before, after, fault="node"))
     return causes

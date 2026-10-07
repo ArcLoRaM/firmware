@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo
 from arclog.expect import DirFollower, Run, parse_since, replay, spec_from_dict
 from arclog.model import Line, format_host_time
 from arclog.health import check
-from arclog.validity import EXIT_INVALID, Cause, invalidating, trace_causes
+from arclog.validity import Cause, exit_code, invalidating, silence_causes, trace_causes
 
 from bench.run import expect_spec
 from bench.scenario import Scenario, load
@@ -101,8 +101,18 @@ def http_get(url: str, timeout: float = 120.0) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
+def quiet_notes(names: list[str], status: dict) -> list[str]:
+    """A heads-up for a node the collector is connected to and has heard nothing from for a while. Not a cause:
+    only a scenario's `max_silence` makes silence fail a run."""
+    return [f"{name}: the collector has seen no line from it for {n['silent_for_s']:.0f} s while connected to its Pi"
+            f" (set max_silence in the scenario to fail the run on it)"
+            for name in names
+            for n in [status.get(name) or {}]
+            if n.get("connected") and n.get("silent_for_s") is not None and n["silent_for_s"] > SILENT_WARN_S]
+
+
 def collector_causes(names: list[str], status: dict, since: datetime, lost: dict[str, int]) -> list[Cause]:
-    """What makes the collector's record of the run unfit to use, or a node's silence, as causes (`Cause.fault`).
+    """What makes the collector's record of the run unfit to use, as causes (`Cause.fault`).
 
     `status` is the collector's /nodes; `lost` is the lines each node lost, by the trace's sequence numbers.
     """
@@ -115,10 +125,6 @@ def collector_causes(names: list[str], status: dict, since: datetime, lost: dict
         if not n.get("connected"):
             causes.append(Cause("collector_node", f"{name}: the collector is not connected to it now "
                                 f"({n.get('last_error')})", name))
-        silent = n.get("silent_for_s")
-        if n.get("connected") and silent is not None and silent > SILENT_WARN_S:
-            causes.append(Cause("node_silent", f"{name}: the collector has seen no line from it for {silent:.0f} s "
-                                "while connected to its Pi", name, fault="node"))
         started = n.get("connected_since")
         if started and datetime.fromisoformat(started) > since and lost.get(name):
             causes.append(Cause("collector_gap", f"{name}: the collector reconnected at {started}, after the run "
@@ -196,17 +202,20 @@ def judge(s: Scenario, build: str, names: dict[int, str], since: datetime, base:
     ordered = sorted(lines, key=lambda ln: ln.host_time)
     lost = {name: sum(check([ln for ln in ordered if ln.node == name]).lost.values()) for name in names_list}
     causes = collector_causes(names_list, status, since, lost) + trace_causes(spec, since, lines)
+    if s.max_silence is not None:
+        causes += silence_causes(lines, names_list, s.max_silence, since, now)
+    else:
+        for note in quiet_notes(names_list, status):
+            report(f"WARN {note}")
     for cause in causes:
         report(f"WARN {cause.text}")
-    invalid = invalidating(causes, s.dataset)
-    if invalid:
-        report(f"INVALID {len(invalid)} cause(s) make the data unfit to use: a bench fault, or a firmware event in "
-               f"a dataset session (verdict: {verdict.label if verdict else 'none yet'})")
-        return EXIT_INVALID
-    if verdict is None:
+    code = exit_code(verdict.code if verdict else 2, causes, s.dataset)
+    if invalidating(causes, s.dataset):
+        report(f"INVALID {len(invalidating(causes, s.dataset))} cause(s) make the data unfit to use: a bench fault, "
+               f"or a firmware event in a dataset session (verdict: {verdict.label if verdict else 'none yet'})")
+    elif verdict is None and code == 2:
         report(f"NO VERDICT YET at {format_host_time(now)}: nothing has failed so far")
-        return 2
-    return verdict.code
+    return code
 
 
 def _pairs(values: list[str], what: str) -> dict[int, str]:

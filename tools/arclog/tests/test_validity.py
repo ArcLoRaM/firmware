@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 from arclog.marks import Mark, PortMark
-from arclog.validity import Cause, check_marks, invalidating
+from arclog.validity import Cause, check_marks, exit_code, invalidating
 
 T0 = datetime(2026, 10, 7, 14, 0, 0, tzinfo=timezone.utc)
 
@@ -127,3 +127,19 @@ def test_bench_faults_always_invalidate_firmware_faults_only_in_a_dataset_and_no
     assert invalidating([bench, firmware, node], dataset=False) == [bench]
     assert invalidating([bench, firmware, node], dataset=True) == [bench, firmware]
     assert invalidating([firmware, node], dataset=False) == []
+
+
+def test_the_exit_code_of_a_run_keeps_pass_fail_and_timeout_apart_from_invalid():
+    bench = Cause("port_down", "c3: port down", fault="bench")
+    firmware = Cause("lost_lines", "c3 3 line(s) lost", fault="firmware")
+    node = Cause("node_silent", "c3 silent", fault="node")
+    PASS, FAIL, TIMEOUT = 0, 1, 2
+
+    assert exit_code(PASS, [], dataset=False) == 0
+    assert exit_code(TIMEOUT, [], dataset=False) == 2
+    assert exit_code(PASS, [bench], dataset=False) == 4       # an invalid run has no verdict, whatever the engine said
+    assert exit_code(FAIL, [bench], dataset=False) == 4
+    assert exit_code(FAIL, [firmware], dataset=False) == 1    # an acceptance run fails on a firmware event
+    assert exit_code(PASS, [firmware], dataset=True) == 4
+    assert exit_code(PASS, [node], dataset=True) == 1         # a stopped node is a verdict on the firmware
+    assert exit_code(TIMEOUT, [node], dataset=False) == 1

@@ -112,6 +112,7 @@ A fuller one ([`scenarios/`](scenarios/) has examples to copy):
 description = "C2 rejoins after a reset"
 timeout = "20m"                  # default 10m
 dataset = false                  # true for a session whose data is kept: see below
+max_silence = "5m"               # optional: a node quiet this long (its port up) fails the run; default off
 
 [nodes]
 1 = "C3"                         # flash as C3
@@ -140,6 +141,8 @@ event = "TX_LATE"
 
 - The Smoke Check is always on: every flashed board boots the run's Build ID on both cores, as its class, linked, with no lost line.
 - Every reset must reboot its node (the run cannot pass before it), and no other reboot is allowed.
+- `max_silence` is off unless the scenario sets it, because schedules differ.
+  A node that logged nothing for longer than it, with no capture gap in that interval, has stopped: the run fails (a verdict on the firmware, exit 1) even if every expectation was met, and the data stays valid.
 - `dataset = true` marks a session whose data is kept (a phase baseline).
   Lost lines, an unplanned reboot and a board that never booted the run's Build ID then invalidate the run instead of only failing it; without the key they fail the run and its data stays valid.
   A fault of the bench itself (the capture, the host, a clock, the collector) invalidates every run.
@@ -186,9 +189,11 @@ A bench fault makes the run invalid, exit 4 whatever the verdict, because the re
 
 A firmware event is listed as a `WARN` too: lost lines, a reboot nobody planned, a board that never booted the Build ID.
 It fails the run as the engine says; it invalidates the run (exit 4) only when the scenario says `dataset = true`.
-A node fault does not invalidate the run, the verdict stands: a node the collector has seen no line from for over 10 min while it is connected to its Pi.
+A node fault does not invalidate the run.
+With `max_silence` in the scenario, a node with no line for longer than it fails the run (exit 1) even when every expectation was met.
+Without it the tool only warns when the collector has seen no line from a connected node for over 10 min.
 The collector writes the Pi's local time without a zone and matches `since=` against it: the tool converts through `--pi-tz` (default `Europe/Paris`) and flags a Pi clock that differs from the collector's receive time.
-A node that stops logging is caught by a staged `[[expect]]` on a count of its `SLOT` events, for want of a silence check in the scenario format (#86).
+A node that stops logging is caught by `max_silence`, or by a staged `[[expect]]` on a count of its `SLOT` events.
 
 ## Map
 
