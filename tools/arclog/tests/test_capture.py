@@ -12,6 +12,7 @@ import pytest
 
 import arclog.capture as capture_mod
 from arclog.capture import capture, serial_lines, tcp_lines
+from arclog.marks import Marks, read_marks
 from arclog.cli import main
 
 T0 = datetime(2026, 9, 29, 23, 59, 59, tzinfo=timezone.utc)
@@ -305,3 +306,22 @@ def test_a_serial_reader_reports_when_its_port_is_up_and_down(monkeypatch):
 
     assert lines == [BOOT, SYNC]
     assert states == [False, True, False, True]
+
+
+def test_capture_writes_its_marks_next_to_the_daily_files(tmp_path):
+    src = fake_ports({"COM6": [(0, BOOT)], "COM8": []})
+    capture([("COM6", "c3"), ("COM8", "c2")], tmp_path, source=src)
+
+    [path] = tmp_path.glob("marks-*.log")
+    [mark] = read_marks(path)
+    assert sorted(mark.ports) == ["c2", "c3"]
+
+
+def test_capture_marks_a_connected_tcp_port_up(tmp_path):
+    with log_server((BOOT.encode() + b"\n", False)) as url:
+        # A mark is due at every tick: the monotonic clock the marks read moves 10 s per reading.
+        marks = Marks(tmp_path, ["c3"], monotonic=itertools.count(0, 10).__next__)
+        capture([(url, "c3")], tmp_path, duration_s=1.2, marks=marks)
+
+    [path] = tmp_path.glob("marks-*.log")
+    assert any(mark.ports["c3"].up for mark in read_marks(path))

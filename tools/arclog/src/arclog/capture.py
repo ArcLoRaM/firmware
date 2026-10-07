@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable, Iterator, TextIO
 from urllib.parse import urlsplit
 
+from arclog.marks import Marks
 from arclog.model import Line, format_host_time, parse_line
 
 DEFAULT_BAUD = 9600
@@ -205,8 +206,13 @@ def _reader(port: str, node: str, source: LineSource, out: queue.Queue) -> None:
 def capture(ports: list[tuple[str, str]], out_dir: Path, baud: int = DEFAULT_BAUD,
             on_line: Callable[[Line], None] | None = None,
             duration_s: float | None = None,
-            source: LineSource | None = None) -> None:
-    """Capture (port, node) pairs until interrupted (Ctrl+C) or for duration_s seconds."""
+            source: LineSource | None = None,
+            marks: Marks | None = None) -> None:
+    """Capture (port, node) pairs until interrupted (Ctrl+C) or for duration_s seconds.
+
+    Marks (marks-YYYYMMDD.log) are written next to the daily files. A custom `source` does not report its
+    ports' state, so the marks show them down.
+    """
     ports_seen = [p for p, _ in ports]
     nodes_seen = [n for _, n in ports]
     if not ports:
@@ -215,11 +221,16 @@ def capture(ports: list[tuple[str, str]], out_dir: Path, baud: int = DEFAULT_BAU
         raise ValueError(f"port given twice: {ports_seen}")
     if len(set(nodes_seen)) != len(nodes_seen):
         raise ValueError(f"node name given twice (would share a file): {nodes_seen}")
+    marks = marks or Marks(out_dir, nodes_seen)
     if source is None:
+        node_of = dict(ports)
+
         def source(port: str) -> Iterator[tuple[datetime, str]]:
+            def on_state(up: bool) -> None:
+                (marks.port_up if up else marks.port_down)(node_of[port])
             if port.startswith("tcp://"):
-                return tcp_lines(port, duration_s=duration_s)
-            return serial_lines(port, baud, duration_s=duration_s)
+                return tcp_lines(port, duration_s=duration_s, on_state=on_state)
+            return serial_lines(port, baud, duration_s=duration_s, on_state=on_state)
 
     lines: queue.Queue = queue.Queue()
     writers = {node: DailyWriter(out_dir, node) for _, node in ports}
@@ -229,6 +240,7 @@ def capture(ports: list[tuple[str, str]], out_dir: Path, baud: int = DEFAULT_BAU
     running = len(ports)
     try:
         while running:
+            marks.tick()
             try:
                 # A timeout keeps Ctrl+C responsive on Windows.
                 node, t, item = lines.get(timeout=0.5)
@@ -247,3 +259,4 @@ def capture(ports: list[tuple[str, str]], out_dir: Path, baud: int = DEFAULT_BAU
     finally:
         for w in writers.values():
             w.close()
+        marks.close()
