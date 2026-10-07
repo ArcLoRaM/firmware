@@ -173,8 +173,14 @@ BENCH_COLLECTOR_URL=<base URL of the collector> uv run --project tools/bench pyt
   --node 2=nuna-node-03 --node 5=nuna-node-01 --dir tools/arclog/runs/<start>-<build>-collector
 ```
 
-Exit code 0 pass, 1 fail, 2 no verdict yet; it can be run at any time, as often as wanted.
-It prints per node the lines, the last line and its age, the `BOOT`s and the `SLOT` count per hour, and warns when the collector reconnected after the start or lost a node (the run is then invalid, not a verdict on the firmware).
+Exit code 0 pass, 1 fail, 2 no verdict yet, 3 an invalid scenario or argument, 4 the record is invalid; it can be run at any time, as often as wanted.
+It prints per node the lines, the last line and its age, the `BOOT`s and the `SLOT` count per hour, and a `WARN` line for every cause it finds.
+A bench fault makes the run invalid, exit 4 whatever the verdict, because the record says nothing about the firmware:
+- a Pi clock not NTP-synchronised, or more than 5 s from the collector's;
+- a Pi Node the collector does not know, or is not connected to;
+- lines lost across a collector reconnect after the start (a reconnect alone is not one: the Pi replays what it buffered, and the trace's sequence numbers say whether that was enough).
+
+A node fault does not invalidate the run, the verdict stands: a node the collector has seen no line from for over 10 min while it is connected to its Pi.
 The collector writes the Pi's local time without a zone and matches `since=` against it: the tool converts through `--pi-tz` (default `Europe/Paris`) and flags a Pi clock that differs from the collector's receive time.
 A node that stops logging is caught by a staged `[[expect]]` on a count of its `SLOT` events, for want of a silence check in the scenario format (#86).
 

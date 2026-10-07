@@ -12,6 +12,10 @@ from datetime import datetime
 
 from arclog.marks import Mark
 
+#: Exit code of a run whose data cannot be used (`bench run`, `bench validate`, the collector judge), apart from
+#: pass (0), fail (1), timeout or no verdict yet (2) and an invalid scenario or argument (3).
+EXIT_INVALID = 4
+
 #: A port down for longer than this is a capture gap: a running node logs a line every few seconds.
 PORT_DOWN_S = 10.0
 
@@ -29,6 +33,10 @@ class Cause:
     node: str | None = None
     start: datetime | None = None
     end: datetime | None = None
+    #: Whose fault it is: `bench` (the capture, the host, a clock, the collector: invalidates the run), `node` (a
+    #: node silent while its port is up: a verdict on the firmware, it fails the run and does not invalidate it)
+    #: or `firmware` (an unplanned reboot, lost lines: fails an acceptance run, invalidates a dataset session).
+    fault: str = "bench"
 
 
 def check_marks(marks: list[Mark], start: datetime, end: datetime) -> list[Cause]:

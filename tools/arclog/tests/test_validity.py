@@ -109,3 +109,11 @@ def test_an_outage_that_began_before_the_window_counts_from_its_start():
              mark(60, c3=(True, 52)), mark(70, c3=(True, 52))]
 
     assert causes(marks, start=40, end=70) == [("port_down", "c3", at(40), at(52))]
+
+
+def test_every_cause_the_marks_show_is_a_bench_fault():
+    marks = [mark(0), mark(10, c3=(False, 5)), mark(20, c3=(False, 5)), mark(30, c3=(True, 25)),
+             mark(40, step=5), mark(400)]
+
+    faults = {c.kind: c.fault for c in check_marks(marks, at(0), at(400))}
+    assert faults == {"port_down": "bench", "utc_step": "bench", "no_marks": "bench"}

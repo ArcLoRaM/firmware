@@ -8,8 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from bench import collector
-from bench.collector import (clock_warnings, convert_line, judge, node_number, validity_warnings,
-                             write_capture)
+from bench.collector import collector_causes, convert_line, judge, node_number, write_capture
 from bench.scenario import from_dict
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -143,25 +142,87 @@ def test_a_run_not_yet_due_has_no_verdict(monkeypatch, tmp_path):
     assert any(m.startswith("NO VERDICT YET") for m in said)
 
 
-def test_a_collector_that_reconnected_after_the_start_is_flagged():
-    nodes = {"nuna-node-03": {"connected": True, "connected_since": "2026-10-07T03:00:00+00:00"}}
-    assert "FAIL on lost lines" in validity_warnings(["nuna-node-03"], nodes, SINCE)[0]
-    assert validity_warnings(["nuna-node-03"], STATUS, SINCE) == []
+NODE = "nuna-node-01"
 
 
-def test_a_node_quiet_for_over_ten_minutes_is_flagged():
-    nodes = {"nuna-node-03": {"connected": True, "silent_for_s": 3600}}
-    assert "no line from it for 3600 s" in validity_warnings(["nuna-node-03"], nodes, SINCE)[0]
-    assert validity_warnings(["nuna-node-03"], {"nuna-node-03": {"connected": True, "silent_for_s": 15}}, SINCE) == []
+def test_a_pi_clock_that_is_not_synchronised_or_lags_is_a_bench_fault():
+    ok = {NODE: {"connected": True, "pi_ntp": "synced", "clock_lag_s": 0.07}}
+    assert collector_causes([NODE], ok, SINCE, {}) == []
+    [unsynced] = collector_causes([NODE], {NODE: {"connected": True, "pi_ntp": "unsynced"}}, SINCE, {})
+    [lagging] = collector_causes([NODE], {NODE: {"connected": True, "clock_lag_s": 42.0}}, SINCE, {})
+
+    assert (unsynced.kind, unsynced.fault, unsynced.node) == ("pi_clock", "bench", NODE)
+    assert (lagging.kind, lagging.fault) == ("pi_clock", "bench")
+    assert "+42.0 s" in lagging.text
 
 
-def test_a_node_the_collector_cannot_reach_is_flagged():
-    nodes = {"nuna-node-03": {"connected": False, "last_error": "TimeoutError"}}
-    assert "not connected" in validity_warnings(["nuna-node-03"], nodes, SINCE)[0]
-    assert "does not know" in validity_warnings(["nuna-node-09"], nodes, SINCE)[0]
+def test_the_clock_of_a_pi_the_run_does_not_use_is_not_its_cause():
+    status = {NODE: {"connected": True}, "nuna-node-09": {"connected": True, "pi_ntp": "unsynced"}}
+    assert collector_causes([NODE], status, SINCE, {}) == []
 
 
-def test_a_pi_clock_that_is_not_synchronised_or_lags_is_flagged():
-    assert clock_warnings({"nuna-node-01": {"pi_ntp": "synced", "clock_lag_s": 0.07}}) == []
-    assert "not synchronised" in clock_warnings({"nuna-node-01": {"pi_ntp": "unsynced"}})[0]
-    assert "lags the collector's by +42.0 s" in clock_warnings({"nuna-node-01": {"clock_lag_s": 42.0}})[0]
+def test_a_pi_node_the_collector_does_not_know_or_cannot_reach_is_a_bench_fault():
+    [unreachable] = collector_causes([NODE], {NODE: {"connected": False, "last_error": "TimeoutError"}}, SINCE, {})
+    [unknown] = collector_causes(["nuna-node-09"], {NODE: {"connected": True}}, SINCE, {})
+
+    assert (unreachable.kind, unreachable.fault, unreachable.node) == ("collector_node", "bench", NODE)
+    assert "not connected" in unreachable.text and "TimeoutError" in unreachable.text
+    assert (unknown.kind, unknown.fault, unknown.node) == ("collector_node", "bench", "nuna-node-09")
+    assert "does not know" in unknown.text
+
+
+def test_a_reconnect_after_the_start_invalidates_only_when_lines_were_lost():
+    reconnected = {NODE: {"connected": True, "connected_since": "2026-10-07T03:00:00+00:00",
+                          "recovered_from_replay": 1}}
+    [gap] = collector_causes([NODE], reconnected, SINCE, {NODE: 13})
+
+    assert (gap.kind, gap.fault, gap.node) == ("collector_gap", "bench", NODE)
+    assert "13 lines lost" in gap.text and "2026-10-07T03:00:00+00:00" in gap.text
+    assert collector_causes([NODE], reconnected, SINCE, {NODE: 0}) == []  # the Pi's buffer was enough
+    assert collector_causes([NODE], reconnected, SINCE, {}) == []
+    steady = {NODE: {"connected": True, "connected_since": "2026-10-07T02:16:42+00:00"}}
+    assert collector_causes([NODE], steady, SINCE, {NODE: 13}) == []  # lost with no reconnect: the trace's own verdict
+
+
+def test_a_node_quiet_for_over_ten_minutes_while_the_collector_is_connected_is_a_node_fault():
+    [quiet] = collector_causes([NODE], {NODE: {"connected": True, "silent_for_s": 3600}}, SINCE, {})
+
+    assert (quiet.kind, quiet.fault, quiet.node) == ("node_silent", "node", NODE)
+    assert "3600 s" in quiet.text
+    assert collector_causes([NODE], {NODE: {"connected": True, "silent_for_s": 15}}, SINCE, {}) == []
+    # Not connected: the silence is the collector's, not the node's.
+    cut = collector_causes([NODE], {NODE: {"connected": False, "silent_for_s": 3600}}, SINCE, {})
+    assert [c.kind for c in cut] == ["collector_node"]
+
+
+def status_with(**fields) -> dict:
+    return {"nuna-node-03": {**STATUS["nuna-node-03"], **fields}}
+
+
+def test_a_passing_run_on_a_pi_with_an_unsynchronised_clock_is_invalid(monkeypatch, tmp_path):
+    collector_serving(monkeypatch, LOG, status_with(pi_ntp="unsynced"))
+    code, said = run_judge(tmp_path, SINCE + timedelta(minutes=16))
+
+    assert code == 4
+    assert any(m.startswith("WARN ") and "not synchronised" in m for m in said)
+    assert any("SLOT (3/3)" in m for m in said)  # the verdict is still reached and said
+    assert any(m.startswith("INVALID") for m in said)
+
+
+def test_a_quiet_node_is_a_warning_and_does_not_invalidate_the_run(monkeypatch, tmp_path):
+    collector_serving(monkeypatch, LOG, status_with(silent_for_s=3600))
+    code, said = run_judge(tmp_path, SINCE + timedelta(minutes=16))
+
+    assert code == 0
+    assert any(m.startswith("WARN ") and "no line from it" in m for m in said)
+
+
+def test_lines_lost_across_a_reconnect_invalidate_the_run_that_lost_them_alone_fail_it(monkeypatch, tmp_path):
+    gapped = "\n".join(ln for ln in LOG.splitlines() if " #0c " not in ln)
+    collector_serving(monkeypatch, gapped)
+    assert run_judge(tmp_path / "alone", SINCE + timedelta(minutes=16), gapped)[0] == 1
+
+    collector_serving(monkeypatch, gapped, status_with(connected_since="2026-10-07T03:00:00+00:00"))
+    code, said = run_judge(tmp_path / "reconnected", SINCE + timedelta(minutes=16), gapped)
+    assert code == 4
+    assert any(m.startswith("WARN ") and "1 lines lost" in m for m in said)

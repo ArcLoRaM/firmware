@@ -8,12 +8,13 @@ engine and the same expect file as `bench run` (`expect_spec`, arclog's `Run`).
     python -m bench.collector scenarios/x.toml --collector http://HOST:PORT --build ID \\
         --since 2026-10-07T08:40:00Z --node 2=nuna-node-03 --node 5=nuna-node-01
 
-Exit code: 0 pass, 1 fail, 2 no verdict yet (nothing failed so far, or the run timed out undecided).
+Exit code: 0 pass, 1 fail, 2 no verdict yet (nothing failed so far, or the run timed out undecided),
+3 an invalid scenario or argument, 4 the record is invalid (a bench fault: see `collector_causes`).
 
 The collector writes each line's time in ISO 8601 with its offset; its first version wrote the Pi's local time
 without a zone (`2026-10-07 04:28:49.615240`), which `--pi-tz` still converts.
 A gap in the collector's stream (a restart, a dropped connection, more than the Pi buffered) shows as lost
-lines and fails the run: such a run is invalid, not a verdict on the firmware.
+lines; with a reconnect after the start the run is invalid (exit 4), not a verdict on the firmware.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ from zoneinfo import ZoneInfo
 
 from arclog.expect import DirFollower, Run, parse_since, replay, spec_from_dict
 from arclog.model import Line, format_host_time
+from arclog.health import check
+from arclog.validity import EXIT_INVALID, Cause
 
 from bench.run import expect_spec
 from bench.scenario import Scenario, load
@@ -98,37 +101,37 @@ def http_get(url: str, timeout: float = 120.0) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
-def clock_warnings(nodes: dict) -> list[str]:
-    """A Pi whose clock is not synchronised, or lags the collector's, shifts every time of the run."""
-    out = []
-    for name, n in sorted(nodes.items()):
-        if n.get("pi_ntp") not in (None, "synced"):
-            out.append(f"{name}: the Pi's clock is not synchronised ({n['pi_ntp']}): times are shifted")
-        lag = n.get("clock_lag_s")
-        if lag is not None and abs(lag) > CLOCK_SKEW_S:
-            out.append(f"{name}: its clock lags the collector's by {lag:+.1f} s: times are shifted")
-    return out
+def collector_causes(names: list[str], status: dict, since: datetime, lost: dict[str, int]) -> list[Cause]:
+    """What makes the collector's record of the run unfit to use, or a node's silence, as causes (`Cause.fault`).
 
-
-def validity_warnings(names: list[str], nodes: dict, since: datetime) -> list[str]:
-    """What makes the collector's record unfit to decide the run, whatever the firmware did."""
-    out = []
+    `status` is the collector's /nodes; `lost` is the lines each node lost, by the trace's sequence numbers.
+    """
+    causes = []
     for name in names:
-        n = nodes.get(name)
+        n = status.get(name)
         if n is None:
-            out.append(f"{name}: the collector does not know this node")
+            causes.append(Cause("collector_node", f"{name}: the collector does not know this node", name))
             continue
         if not n.get("connected"):
-            out.append(f"{name}: the collector is not connected to it now ({n.get('last_error')})")
-        started = n.get("connected_since")
-        if started and datetime.fromisoformat(started) > since:
-            out.append(f"{name}: the collector (re)connected at {started}, after the run started "
-                       f"(the Pi replayed {n.get('recovered_from_replay', 0)} time(s) what it had buffered); "
-                       "a FAIL on lost lines says whether that was enough")
+            causes.append(Cause("collector_node", f"{name}: the collector is not connected to it now "
+                                f"({n.get('last_error')})", name))
         silent = n.get("silent_for_s")
-        if silent is not None and silent > SILENT_WARN_S:
-            out.append(f"{name}: the collector has seen no line from it for {silent:.0f} s")
-    return out
+        if n.get("connected") and silent is not None and silent > SILENT_WARN_S:
+            causes.append(Cause("node_silent", f"{name}: the collector has seen no line from it for {silent:.0f} s "
+                                "while connected to its Pi", name, fault="node"))
+        started = n.get("connected_since")
+        if started and datetime.fromisoformat(started) > since and lost.get(name):
+            causes.append(Cause("collector_gap", f"{name}: the collector reconnected at {started}, after the run "
+                                f"started, and {lost[name]} lines lost (the Pi replayed "
+                                f"{n.get('recovered_from_replay', 0)} time(s) what it had buffered)", name))
+        if n.get("pi_ntp") not in (None, "synced"):
+            causes.append(Cause("pi_clock", f"{name}: the Pi's clock is not synchronised ({n['pi_ntp']}): "
+                                "times are shifted", name))
+        lag = n.get("clock_lag_s")
+        if lag is not None and abs(lag) > CLOCK_SKEW_S:
+            causes.append(Cause("pi_clock", f"{name}: its clock lags the collector's by {lag:+.1f} s: "
+                                "times are shifted", name))
+    return causes
 
 
 def _per_hour(lines: list[Line], event: str, since: datetime) -> list[int]:
@@ -190,8 +193,16 @@ def judge(s: Scenario, build: str, names: dict[int, str], since: datetime, base:
     names_list = list(nodes.values())
     for line in describe_nodes(names_list, lines, since, now):
         report(line)
-    for warning in clock_warnings(status) + validity_warnings(names_list, status, since):
-        report(f"WARN {warning}")
+    ordered = sorted(lines, key=lambda ln: ln.host_time)
+    lost = {name: sum(check([ln for ln in ordered if ln.node == name]).lost.values()) for name in names_list}
+    causes = collector_causes(names_list, status, since, lost)
+    for cause in causes:
+        report(f"WARN {cause.text}")
+    bench_faults = [c for c in causes if c.fault == "bench"]
+    if bench_faults:
+        report(f"INVALID {len(bench_faults)} bench fault(s) make the record unfit to decide the run, whatever the "
+               f"firmware did (verdict: {verdict.label if verdict else 'none yet'})")
+        return EXIT_INVALID
     if verdict is None:
         report(f"NO VERDICT YET at {format_host_time(now)}: nothing has failed so far")
         return 2
