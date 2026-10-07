@@ -155,6 +155,9 @@ def test_a_pi_clock_that_is_not_synchronised_or_lags_is_a_bench_fault():
     assert (unsynced.kind, unsynced.fault, unsynced.node) == ("pi_clock", "bench", NODE)
     assert (lagging.kind, lagging.fault) == ("pi_clock", "bench")
     assert "+42.0 s" in lagging.text
+    [six] = collector_causes([NODE], {NODE: {"connected": True, "clock_lag_s": 6.0}}, SINCE, {})
+    assert (six.kind, six.node) == ("pi_clock", NODE) and "+6.0 s" in six.text
+    assert collector_causes([NODE], {NODE: {"connected": True, "clock_lag_s": -4.9}}, SINCE, {}) == []
 
 
 def test_the_clock_of_a_pi_the_run_does_not_use_is_not_its_cause():
