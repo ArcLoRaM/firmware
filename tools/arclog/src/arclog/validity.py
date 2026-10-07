@@ -10,7 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from arclog.expect import Run, Spec
 from arclog.marks import Mark
+from arclog.model import Kind, Line
 
 #: Exit code of a run whose data cannot be used (`bench run`, `bench validate`, the collector judge), apart from
 #: pass (0), fail (1), timeout or no verdict yet (2) and an invalid scenario or argument (3).
@@ -70,6 +72,12 @@ def _uncovered(before: datetime, after: datetime) -> list[Cause]:
     return [_no_marks(before, after, seconds)] if seconds > NO_MARKS_S else []
 
 
+def invalidating(causes: list[Cause], dataset: bool) -> list[Cause]:
+    """The causes that make the data unfit: a bench fault always, a firmware event only in a dataset session
+    (an acceptance run fails on it instead), and a node fault never (it is a verdict on the firmware)."""
+    return [c for c in causes if c.fault == "bench" or (dataset and c.fault == "firmware")]
+
+
 def _no_marks(before: datetime, after: datetime, seconds: float) -> Cause:
     return Cause("no_marks", f"no marks for {seconds:.0f} s: the capture or the host was not running "
                  f"({before:%H:%M:%S} - {after:%H:%M:%S} UTC)", None, before, after)
@@ -87,3 +95,38 @@ def _down_intervals(marks: list[Mark]) -> list[tuple[str, datetime, datetime]]:
                 outages.append((node, down.pop(node), port.since))
     outages += [(node, since, marks[-1].utc) for node, since in down.items()]
     return outages
+
+
+#: The failures of the engine that are events of the firmware, not of the scenario: they are listed as causes.
+_FIRMWARE_EVENTS = ("lost_lines", "unplanned_reboot", "wrong_build")
+
+
+def trace_causes(spec: Spec, since: datetime, lines: list[Line]) -> list[Cause]:
+    """Every firmware event that would fail the run (a reboot nobody planned, lost lines, a wrong Build ID), not
+    only the first: the engine's own rules, read to the end."""
+    run = Run(spec, since, keep_going=True)
+    for line in sorted(lines, key=lambda ln: ln.host_time):
+        run.feed(line)
+    causes = [Cause(f.kind, f.reason, f.node, f.at, f.at, fault="firmware")
+              for f in run.failures if f.kind in _FIRMWARE_EVENTS]
+    return causes + _never_booted(spec, since, lines)
+
+
+def _never_booted(spec: Spec, since: datetime, lines: list[Line]) -> list[Cause]:
+    """A flashed board that never logged a BOOT of the expected build on both cores: the flash did not take."""
+    if spec.build is None:
+        return []
+    causes = []
+    for name, node in spec.nodes.items():
+        if not node.flashed:
+            continue
+        start = max(since, node.since or since)
+        boots = [ln for ln in sorted(lines, key=lambda ln: ln.host_time)
+                 if ln.node == name and ln.kind is Kind.ARCLOG and ln.event == "BOOT"
+                 and ln.host_time is not None and ln.host_time >= start]
+        if {ln.core for ln in boots if ln.get("build") == spec.build} >= {"0", "4"}:
+            continue
+        last = f"last booted build={boots[-1].get('build') or '(none)'}" if boots else "no BOOT line"
+        causes.append(Cause("wrong_build", f"{name} never booted build={spec.build} ({last})", name,
+                            fault="firmware"))
+    return causes

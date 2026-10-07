@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 from arclog.marks import Mark, PortMark
-from arclog.validity import check_marks
+from arclog.validity import Cause, check_marks, invalidating
 
 T0 = datetime(2026, 10, 7, 14, 0, 0, tzinfo=timezone.utc)
 
@@ -117,3 +117,13 @@ def test_every_cause_the_marks_show_is_a_bench_fault():
 
     faults = {c.kind: c.fault for c in check_marks(marks, at(0), at(400))}
     assert faults == {"port_down": "bench", "utc_step": "bench", "no_marks": "bench"}
+
+
+def test_bench_faults_always_invalidate_firmware_faults_only_in_a_dataset_and_node_faults_never():
+    bench = Cause("port_down", "c3: port down", fault="bench")
+    firmware = Cause("lost_lines", "c3 3 line(s) lost", fault="firmware")
+    node = Cause("node_silent", "c3 silent", fault="node")
+
+    assert invalidating([bench, firmware, node], dataset=False) == [bench]
+    assert invalidating([bench, firmware, node], dataset=True) == [bench, firmware]
+    assert invalidating([firmware, node], dataset=False) == []
