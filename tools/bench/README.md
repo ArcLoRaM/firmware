@@ -111,6 +111,7 @@ A fuller one ([`scenarios/`](scenarios/) has examples to copy):
 ```toml
 description = "C2 rejoins after a reset"
 timeout = "20m"                  # default 10m
+dataset = false                  # true for a session whose data is kept: see below
 
 [nodes]
 1 = "C3"                         # flash as C3
@@ -139,6 +140,9 @@ event = "TX_LATE"
 
 - The Smoke Check is always on: every flashed board boots the run's Build ID on both cores, as its class, linked, with no lost line.
 - Every reset must reboot its node (the run cannot pass before it), and no other reboot is allowed.
+- `dataset = true` marks a session whose data is kept (a phase baseline).
+  Lost lines, an unplanned reboot and a board that never booted the run's Build ID then invalidate the run instead of only failing it; without the key they fail the run and its data stays valid.
+  A fault of the bench itself (the capture, the host, a clock, the collector) invalidates every run.
 - Event and field names are checked against arclog's event table, with a suggestion for a typo (`unknown event 'SYNC_RXX' (did you mean SYNC_RX?)`).
 - A range never matches a field that is not a number; `{ min = 2 }` or `{ max = -2 }` alone bound one side.
 - On the command line, `--expect "<ID|any> <EVENT> [field=value ...] [within=8m] [count=2]"`, a range as `err=-1..1`, `err=..-2` or `err=2..`, `--watch ID`, `--forbid EVENT`, `-D NAME=VALUE`, `--timeout`; `--save FILE` writes them as a scenario file.
@@ -180,6 +184,8 @@ A bench fault makes the run invalid, exit 4 whatever the verdict, because the re
 - a Pi Node the collector does not know, or is not connected to;
 - lines lost across a collector reconnect after the start (a reconnect alone is not one: the Pi replays what it buffered, and the trace's sequence numbers say whether that was enough).
 
+A firmware event is listed as a `WARN` too: lost lines, a reboot nobody planned, a board that never booted the Build ID.
+It fails the run as the engine says; it invalidates the run (exit 4) only when the scenario says `dataset = true`.
 A node fault does not invalidate the run, the verdict stands: a node the collector has seen no line from for over 10 min while it is connected to its Pi.
 The collector writes the Pi's local time without a zone and matches `since=` against it: the tool converts through `--pi-tz` (default `Europe/Paris`) and flags a Pi clock that differs from the collector's receive time.
 A node that stops logging is caught by a staged `[[expect]]` on a count of its `SLOT` events, for want of a silence check in the scenario format (#86).

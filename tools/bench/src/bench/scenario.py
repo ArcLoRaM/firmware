@@ -2,6 +2,8 @@
 
     description = "C2 rejoins after a reset"
     timeout = "15m"
+    dataset = true    # a session whose data is kept: a firmware event (lost lines, an unplanned
+                      # reboot, a wrong Build ID) invalidates it instead of only failing it
 
     [nodes]
     1 = "C3"          # flashed as C3
@@ -95,6 +97,7 @@ class Scenario:
     actions: list[Action] = field(default_factory=list)
     expects: list[Expect] = field(default_factory=list)
     forbids: list[Pattern] = field(default_factory=list)
+    dataset: bool = False                    # a firmware event invalidates the run, instead of only failing it
 
     @property
     def flashed(self) -> dict[int, str]:
@@ -151,7 +154,10 @@ def _pattern(where: str, t: dict, nodes: dict[int, str], allowed: set[str]) -> d
 
 
 def from_dict(d: dict) -> Scenario:
-    _check_keys("scenario", d, {"description", "timeout", "nodes", "overrides", "action", "expect", "forbid"})
+    _check_keys("scenario", d, {"description", "timeout", "dataset", "nodes", "overrides", "action", "expect",
+                                "forbid"})
+    if not isinstance(d.get("dataset", False), bool):
+        raise ValueError("scenario: dataset must be true or false")
     raw_nodes = d.get("nodes") or {}
     if not raw_nodes:
         raise ValueError("scenario: [nodes] must name at least one board (e.g. 2 = \"C2\")")
@@ -195,7 +201,7 @@ def from_dict(d: dict) -> Scenario:
     check_overrides(overrides)
     return Scenario(nodes=nodes, timeout=parse_duration(d.get("timeout", "10m")),
                     description=str(d.get("description", "")), overrides=overrides,
-                    actions=actions, expects=expects, forbids=forbids)
+                    actions=actions, expects=expects, forbids=forbids, dataset=d.get("dataset", False))
 
 
 def load(path: str | Path) -> Scenario:
@@ -265,6 +271,8 @@ def to_toml(d: dict) -> str:
     for key in ("description", "timeout"):
         if key in d:
             out.append(f"{key} = {_toml_value(d[key])}")
+    if d.get("dataset"):
+        out.append("dataset = true")
     out += ["", "[nodes]"] + [f"{k} = {_toml_value(v)}" for k, v in d["nodes"].items()]
     if d.get("overrides"):
         out += ["", "[overrides]"] + [f"{k} = {_toml_value(v)}" for k, v in d["overrides"].items()]
@@ -301,5 +309,7 @@ def plan(s: Scenario) -> str:
         if s.reboots(nid):
             lines.append(f"expect: {nid} reboots x{s.reboots(nid)} (one per reset; no other reboot allowed)")
     lines += [f"forbid: {f.describe()}" for f in s.forbids]
+    if s.dataset:
+        lines.append("dataset session: lost lines, an unplanned reboot or a wrong Build ID invalidate the run")
     lines.append(f"timeout: {fmt(s.timeout)}")
     return "\n".join(lines)

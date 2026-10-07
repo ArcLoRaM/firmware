@@ -72,9 +72,9 @@ def collector_serving(monkeypatch, log: str, status: dict = STATUS) -> list[str]
     return asked
 
 
-def run_judge(tmp_path, now: datetime, log: str = LOG) -> tuple[int, list[str]]:
+def run_judge(tmp_path, now: datetime, log: str = LOG, scenario: dict = SCENARIO) -> tuple[int, list[str]]:
     said: list[str] = []
-    code = judge(from_dict(SCENARIO), "474afcb", {2: "nuna-node-03"}, SINCE, "http://collector",
+    code = judge(from_dict(scenario), "474afcb", {2: "nuna-node-03"}, SINCE, "http://collector",
                  tmp_path, PARIS, now=now, report=said.append)
     return code, said
 
@@ -226,3 +226,17 @@ def test_lines_lost_across_a_reconnect_invalidate_the_run_that_lost_them_alone_f
     code, said = run_judge(tmp_path / "reconnected", SINCE + timedelta(minutes=16), gapped)
     assert code == 4
     assert any(m.startswith("WARN ") and "1 lines lost" in m for m in said)
+
+
+def test_a_firmware_event_invalidates_a_dataset_session_and_only_fails_an_acceptance_run(monkeypatch, tmp_path):
+    gapped = "\n".join(ln for ln in LOG.splitlines() if " #0c " not in ln)
+    collector_serving(monkeypatch, gapped)
+    now = SINCE + timedelta(minutes=16)
+
+    code, said = run_judge(tmp_path / "acceptance", now, gapped)
+    assert code == 1
+    assert any(m.startswith("WARN ") and "1 line(s) lost before core 0 #0d" in m for m in said)
+
+    code, said = run_judge(tmp_path / "dataset", now, gapped, scenario={**SCENARIO, "dataset": True})
+    assert code == 4
+    assert any(m.startswith("INVALID") for m in said)

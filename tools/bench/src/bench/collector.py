@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo
 from arclog.expect import DirFollower, Run, parse_since, replay, spec_from_dict
 from arclog.model import Line, format_host_time
 from arclog.health import check
-from arclog.validity import EXIT_INVALID, Cause
+from arclog.validity import EXIT_INVALID, Cause, invalidating, trace_causes
 
 from bench.run import expect_spec
 from bench.scenario import Scenario, load
@@ -195,13 +195,13 @@ def judge(s: Scenario, build: str, names: dict[int, str], since: datetime, base:
         report(line)
     ordered = sorted(lines, key=lambda ln: ln.host_time)
     lost = {name: sum(check([ln for ln in ordered if ln.node == name]).lost.values()) for name in names_list}
-    causes = collector_causes(names_list, status, since, lost)
+    causes = collector_causes(names_list, status, since, lost) + trace_causes(spec, since, lines)
     for cause in causes:
         report(f"WARN {cause.text}")
-    bench_faults = [c for c in causes if c.fault == "bench"]
-    if bench_faults:
-        report(f"INVALID {len(bench_faults)} bench fault(s) make the record unfit to decide the run, whatever the "
-               f"firmware did (verdict: {verdict.label if verdict else 'none yet'})")
+    invalid = invalidating(causes, s.dataset)
+    if invalid:
+        report(f"INVALID {len(invalid)} cause(s) make the data unfit to use: a bench fault, or a firmware event in "
+               f"a dataset session (verdict: {verdict.label if verdict else 'none yet'})")
         return EXIT_INVALID
     if verdict is None:
         report(f"NO VERDICT YET at {format_host_time(now)}: nothing has failed so far")
