@@ -1,6 +1,7 @@
 """bench.collector: the log collector's lines decide a scenario the way a capture does."""
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -52,6 +53,8 @@ LOG = """2026-10-07 04:28:49.349199 | nuna-node-03 | 000000T000000.9997 4S A #00
 2026-10-07 04:32:57.390468 | nuna-node-03 | 000102T000001.9011 0R H #1a RX_TIMEOUT pre=0
 2026-10-07 04:33:15.425573 | nuna-node-03 | 000102T000019.9335 0T H #1b SLOT ph=1 ty=SYNC ce=6 sl=0 pos=CELL dec=RX wake=0 nom=20032
 2026-10-07 04:33:15.508803 | nuna-node-03 | 000102T000019.9382 0T H #1c RX_WIN last=21640 cap=22632"""
+# The same lines as the collector writes them now: ISO 8601 with the offset.
+LOG_ISO = re.sub(r"^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d\.\d+) ", r"\1T\2+02:00 ", LOG, flags=re.M)
 FIRST_SLOT = next(i for i, ln in enumerate(LOG.splitlines()) if " SLOT " in ln)
 SCENARIO = {"nodes": {"2": "C2"}, "timeout": "20m",
             "expect": [{"node": 2, "event": "SLOT", "count": 3, "within": "5m"}]}
@@ -84,6 +87,18 @@ def test_a_collector_line_is_in_utc_with_its_node_and_device_line():
     assert device.startswith("000101T000000.0034 0S A #00 BOOT cls=C2 id=2")
 
 
+def test_a_line_with_its_offset_is_converted_without_the_pi_zone():
+    node, t, device = convert_line(LOG_ISO.splitlines()[5], UTC)
+    assert node == "nuna-node-03"
+    assert t == datetime(2026, 10, 7, 2, 28, 49, 615240, tzinfo=UTC)
+    assert device.startswith("000101T000000.0034 0S A #00 BOOT cls=C2 id=2")
+
+
+def test_the_pi_s_own_lines_are_not_trace_lines():
+    pi = "2026-10-07T16:04:04.856452+02:00 | nuna-node-03 | [pi] uart_idle=6s ntp=synced"
+    assert convert_line(pi, PARIS) is None
+
+
 @pytest.mark.parametrize("text", ["", "# collector: connected", "nuna-node-03 | no time"])
 def test_a_line_of_another_shape_is_skipped(text):
     assert convert_line(text, PARIS) is None
@@ -103,11 +118,12 @@ def test_node_numbers_come_from_the_name():
         node_number("collector")
 
 
-def test_a_run_whose_expectations_are_in_the_collector_passes(monkeypatch, tmp_path):
-    asked = collector_serving(monkeypatch, LOG)
-    code, said = run_judge(tmp_path, SINCE + timedelta(minutes=16))
+@pytest.mark.parametrize("log", [LOG, LOG_ISO], ids=["first format", "iso with offset"])
+def test_a_run_whose_expectations_are_in_the_collector_passes(monkeypatch, tmp_path, log):
+    asked = collector_serving(monkeypatch, log)
+    code, said = run_judge(tmp_path, SINCE + timedelta(minutes=16), log)
     assert code == 0, said
-    assert asked[0] == "http://collector/logs?nodes=3&since=2026-10-07T04:23:00"
+    assert asked[0] == "http://collector/logs?nodes=3&since=2026-10-07T02:23:00Z"
     assert any("SLOT (3/3)" in m for m in said) and not any("SLOT (1/3)" in m for m in said)
 
 
@@ -129,8 +145,14 @@ def test_a_run_not_yet_due_has_no_verdict(monkeypatch, tmp_path):
 
 def test_a_collector_that_reconnected_after_the_start_is_flagged():
     nodes = {"nuna-node-03": {"connected": True, "connected_since": "2026-10-07T03:00:00+00:00"}}
-    assert "lines may be missing" in validity_warnings(["nuna-node-03"], nodes, SINCE)[0]
+    assert "FAIL on lost lines" in validity_warnings(["nuna-node-03"], nodes, SINCE)[0]
     assert validity_warnings(["nuna-node-03"], STATUS, SINCE) == []
+
+
+def test_a_node_quiet_for_over_ten_minutes_is_flagged():
+    nodes = {"nuna-node-03": {"connected": True, "silent_for_s": 3600}}
+    assert "no line from it for 3600 s" in validity_warnings(["nuna-node-03"], nodes, SINCE)[0]
+    assert validity_warnings(["nuna-node-03"], {"nuna-node-03": {"connected": True, "silent_for_s": 15}}, SINCE) == []
 
 
 def test_a_node_the_collector_cannot_reach_is_flagged():
@@ -139,9 +161,7 @@ def test_a_node_the_collector_cannot_reach_is_flagged():
     assert "does not know" in validity_warnings(["nuna-node-09"], nodes, SINCE)[0]
 
 
-def test_a_pi_clock_in_another_zone_than_assumed_is_flagged():
-    nodes = {"nuna-node-01": {"last_pi_timestamp": "2026-10-07 09:18:15.965231",
-                              "last_line_received": "2026-10-07T07:18:16.089289+00:00"}}
-    assert clock_warnings(nodes, PARIS) == []
-    assert "times are shifted" in clock_warnings(nodes, UTC)[0]
-
+def test_a_pi_clock_that_is_not_synchronised_or_lags_is_flagged():
+    assert clock_warnings({"nuna-node-01": {"pi_ntp": "synced", "clock_lag_s": 0.07}}) == []
+    assert "not synchronised" in clock_warnings({"nuna-node-01": {"pi_ntp": "unsynced"}})[0]
+    assert "lags the collector's by +42.0 s" in clock_warnings({"nuna-node-01": {"clock_lag_s": 42.0}})[0]

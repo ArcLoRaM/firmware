@@ -10,10 +10,10 @@ engine and the same expect file as `bench run` (`expect_spec`, arclog's `Run`).
 
 Exit code: 0 pass, 1 fail, 2 no verdict yet (nothing failed so far, or the run timed out undecided).
 
-The collector writes the Pi's local time without a zone (`2026-10-07 04:28:49.615240`) and matches
-`since=<timestamp>` against that text, so every time here goes through `--pi-tz`.
-A gap in the collector's stream (a restart, a dropped connection) shows as lost lines and fails the run:
-such a run is invalid, not a verdict on the firmware.
+The collector writes each line's time in ISO 8601 with its offset; its first version wrote the Pi's local time
+without a zone (`2026-10-07 04:28:49.615240`), which `--pi-tz` still converts.
+A gap in the collector's stream (a restart, a dropped connection, more than the Pi buffered) shows as lost
+lines and fails the run: such a run is invalid, not a verdict on the firmware.
 """
 
 from __future__ import annotations
@@ -36,8 +36,11 @@ from arclog.model import Line, format_host_time
 from bench.run import expect_spec
 from bench.scenario import Scenario, load
 
-# <Pi local time> | <node> | <device line>
-_LINE = re.compile(r"^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d(?:\.\d+)?) \| (\S+) \| (.*)$")
+# <time> | <node> | <device line>; the time is ISO 8601 with its offset (2026-10-07T16:03:58.648+02:00),
+# or, from the first version of the collector, the Pi's local time with no zone (2026-10-07 04:28:49.615).
+_LINE = re.compile(r"^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d:\d\d(?:\.\d+)?)(Z|[+-]\d\d:\d\d)? \| (\S+) \| (.*)$")
+# The Pi's own lines in the stream ("[pi] uart_idle=6s ntp=synced"): not trace lines.
+_PI_LINE = "[pi] "
 
 # "ok   nuna-node-03 SLOT (12/150) +215.4s": an expectation that counts, 12 of 150 so far.
 _PROGRESS = re.compile(r"^ok\s+\S+ \S+ \((\d+)/(\d+)\)")
@@ -46,16 +49,23 @@ _PROGRESS = re.compile(r"^ok\s+\S+ \S+ \((\d+)/(\d+)\)")
 SMOKE_WINDOW = "15m"
 # Clock offsets beyond this between a Pi and the collector shift every time of the run.
 CLOCK_SKEW_S = 5.0
+# A node that logs a slot every 20 s and has been quiet this long has stopped.
+SILENT_WARN_S = 600.0
 
 
 def convert_line(text: str, pi_tz: tzinfo) -> tuple[str, datetime, str] | None:
-    """(node, UTC time, device line) of one collector line, or None for a line of another shape."""
+    """(node, UTC time, device line) of one collector line, or None for a line of another shape
+    or one of the Pi's own."""
     m = _LINE.match(text.rstrip("\r\n"))
     if m is None:
         return None
-    day, clock, node, device = m.groups()
-    local = datetime.fromisoformat(f"{day}T{clock}").replace(tzinfo=pi_tz)
-    return node, local.astimezone(timezone.utc), device
+    day, clock, offset, node, device = m.groups()
+    if device.startswith(_PI_LINE):
+        return None
+    when = datetime.fromisoformat(f"{day}T{clock}{'+00:00' if offset == 'Z' else offset or ''}")
+    if offset is None:
+        when = when.replace(tzinfo=pi_tz)
+    return node, when.astimezone(timezone.utc), device
 
 
 def write_capture(text: str, out_dir: Path, pi_tz: tzinfo) -> dict[str, int]:
@@ -88,16 +98,15 @@ def http_get(url: str, timeout: float = 120.0) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
-def clock_warnings(nodes: dict, pi_tz: tzinfo) -> list[str]:
-    """A Pi whose clock is not the one assumed (wrong zone, not synchronised) shifts every time."""
+def clock_warnings(nodes: dict) -> list[str]:
+    """A Pi whose clock is not synchronised, or lags the collector's, shifts every time of the run."""
     out = []
     for name, n in sorted(nodes.items()):
-        if n.get("last_pi_timestamp") and n.get("last_line_received"):
-            pi = datetime.fromisoformat(n["last_pi_timestamp"]).replace(tzinfo=pi_tz)
-            skew = (pi - datetime.fromisoformat(n["last_line_received"])).total_seconds()
-            if abs(skew) > CLOCK_SKEW_S:
-                out.append(f"{name}: its clock reads {skew:+.0f} s against the collector's receive time "
-                           f"(zone {pi_tz}): times are shifted")
+        if n.get("pi_ntp") not in (None, "synced"):
+            out.append(f"{name}: the Pi's clock is not synchronised ({n['pi_ntp']}): times are shifted")
+        lag = n.get("clock_lag_s")
+        if lag is not None and abs(lag) > CLOCK_SKEW_S:
+            out.append(f"{name}: its clock lags the collector's by {lag:+.1f} s: times are shifted")
     return out
 
 
@@ -113,8 +122,12 @@ def validity_warnings(names: list[str], nodes: dict, since: datetime) -> list[st
             out.append(f"{name}: the collector is not connected to it now ({n.get('last_error')})")
         started = n.get("connected_since")
         if started and datetime.fromisoformat(started) > since:
-            out.append(f"{name}: the collector (re)connected at {started}, after the run started: "
-                       "lines may be missing")
+            out.append(f"{name}: the collector (re)connected at {started}, after the run started "
+                       f"(the Pi replayed {n.get('recovered_from_replay', 0)} time(s) what it had buffered); "
+                       "a FAIL on lost lines says whether that was enough")
+        silent = n.get("silent_for_s")
+        if silent is not None and silent > SILENT_WARN_S:
+            out.append(f"{name}: the collector has seen no line from it for {silent:.0f} s")
     return out
 
 
@@ -155,7 +168,7 @@ def judge(s: Scenario, build: str, names: dict[int, str], since: datetime, base:
     nodes = {n: names[n] for n in s.nodes}
     boards = {nid: SimpleNamespace(node=name) for nid, name in nodes.items()}
     numbers = ",".join(str(node_number(name)) for name in nodes.values())
-    start = (since - timedelta(minutes=5)).astimezone(pi_tz).strftime("%Y-%m-%dT%H:%M:%S")
+    start = (since - timedelta(minutes=5)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     text = http_get(f"{base}/logs?nodes={numbers}&since={start}")
     status = json.loads(http_get(f"{base}/nodes"))
     write_capture(text, out_dir, pi_tz)
@@ -177,7 +190,7 @@ def judge(s: Scenario, build: str, names: dict[int, str], since: datetime, base:
     names_list = list(nodes.values())
     for line in describe_nodes(names_list, lines, since, now):
         report(line)
-    for warning in clock_warnings(status, pi_tz) + validity_warnings(names_list, status, since):
+    for warning in clock_warnings(status) + validity_warnings(names_list, status, since):
         report(f"WARN {warning}")
     if verdict is None:
         report(f"NO VERDICT YET at {format_host_time(now)}: nothing has failed so far")
