@@ -275,3 +275,11 @@ def test_bench_note_adds_a_timestamped_line_to_the_running_session_and_refuses_w
     assert "20261007T140655Z-b1" in capsys.readouterr().out
     [note] = read_notes(session)
     assert note["text"] == "moved Node 2 to the window"
+
+
+def test_the_validity_lines_are_plain_text_that_reads_the_same_in_the_report_and_the_terminal(tmp_path):
+    from bench.validate import format_validity
+
+    _, a, _ = finish_run(tmp_path, {"nodes": {"2": "C2"}, "timeout": "5m"}, marks=marks_every_10s(100, com9=(12, 40)))
+    assert all("**" not in line for line in format_validity(a))
+    assert format_validity(a)[0].startswith("- INVALID (exit 4): ")

@@ -94,7 +94,7 @@ def _pi_clock_causes(entries: list[dict], since) -> list[Cause]:
 def format_validity(a: Assessment) -> list[str]:
     """The lines of a report's Validity section."""
     if invalidating(a.causes, a.dataset):
-        lines = ["- **INVALID** (exit 4): the data of this run cannot be used, whatever its verdict says."]
+        lines = ["- INVALID (exit 4): the data of this run cannot be used, whatever its verdict says."]
     else:
         lines = ["- Valid: nothing the bench did makes the data unfit."]
     lines += [f"- {c.fault} fault, {c.kind}: {c.text}" for c in a.causes]

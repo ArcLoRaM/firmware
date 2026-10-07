@@ -164,3 +164,11 @@ def test_a_time_service_that_cannot_be_asked_is_recorded_as_such_not_as_a_failur
 
     host = read_host(now=lambda: START, mono=lambda: 1.0, query=broken)
     assert host.time_service == {"error": "w32tm.exe not found"}
+
+
+def test_an_empty_table_is_a_header_alone_and_the_file_has_no_stray_blank_lines():
+    d = {"run": {"overrides": {}, "n": 1}, "controller": {"start": {}, "end": {}}, "board": [{"x": 1}, {"x": 2}]}
+    text = dumps(d)
+
+    assert tomllib.loads(text) == d
+    assert "\n\n\n" not in text and not text.startswith("\n")

@@ -47,15 +47,20 @@ def _is_tables(v) -> bool:
     return isinstance(v, list) and bool(v) and all(isinstance(x, dict) for x in v)
 
 
+def _body(d: dict, path: str) -> list[str]:
+    body = dumps(d, path).strip("\n")
+    return [body] if body else []
+
+
 def dumps(d: dict, _path: str = "") -> str:
     """A dict of scalars, lists of scalars, tables and arrays of tables as TOML (nothing else is needed here)."""
     out = [f"{k} = {_scalar(v)}" for k, v in d.items() if not isinstance(v, dict) and not _is_tables(v)]
     for k, v in d.items():
         if isinstance(v, dict):
-            out += ["", f"[{_path}{k}]", dumps(v, f"{_path}{k}.").strip("\n")]
+            out += ["", f"[{_path}{k}]", *_body(v, f"{_path}{k}.")]
         elif _is_tables(v):
             for item in v:
-                out += ["", f"[[{_path}{k}]]", dumps(item, f"{_path}{k}.").strip("\n")]
+                out += ["", f"[[{_path}{k}]]", *_body(item, f"{_path}{k}.")]
     return "\n".join(out).strip("\n") + "\n"
 
 
