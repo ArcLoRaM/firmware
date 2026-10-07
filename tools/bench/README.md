@@ -162,6 +162,22 @@ A `MIS-MATCHED` section fails the flash whatever GDB's exit code says.
 
 Before writing, every loadable segment of each image must fall inside its own core's half of main flash (CM4 `0x08000000`-`0x0801FFFF`, CM0+ `0x08020000`-`0x0803FFFF`); anything else, including a swapped image, is refused.
 
+## Judging from the log collector
+
+A run of many hours does not need the host on: the log collector (a server that stores every Pi Node's UART log) keeps the record while the host is off.
+`bench flash` arms the boards, then the scenario is decided later from the collector's lines, with the same expect file as `bench run` (`expect_spec`) and the same engine (arclog's `expect`):
+
+```sh
+BENCH_COLLECTOR_URL=<base URL of the collector> uv run --project tools/bench python -I -m bench.collector \
+  scenarios/x.toml --build <Build ID> --since <UTC time before the flash> \
+  --node 2=nuna-node-03 --node 5=nuna-node-01 --dir tools/arclog/runs/<start>-<build>-collector
+```
+
+Exit code 0 pass, 1 fail, 2 no verdict yet; it can be run at any time, as often as wanted.
+It prints per node the lines, the last line and its age, the `BOOT`s and the `SLOT` count per hour, and warns when the collector reconnected after the start or lost a node (the run is then invalid, not a verdict on the firmware).
+The collector writes the Pi's local time without a zone and matches `since=` against it: the tool converts through `--pi-tz` (default `Europe/Paris`) and flags a Pi clock that differs from the collector's receive time.
+A node that stops logging is caught by a staged `[[expect]]` on a count of its `SLOT` events, for want of a silence check in the scenario format (#86).
+
 ## Map
 
 ```sh
