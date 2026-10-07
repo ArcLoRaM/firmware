@@ -140,3 +140,11 @@ def test_marks_rotate_at_utc_midnight(tmp_path):
     [before] = read_marks(tmp_path / "marks-20261007.log")
     [after] = read_marks(tmp_path / "marks-20261008.log")
     assert (before.utc.day, after.utc.day) == (7, 8)
+
+
+def test_a_mark_torn_by_a_killed_capture_is_not_read(tmp_path):
+    path = tmp_path / "marks-20261007.log"
+    complete = "2026-10-07T14:00:00.000000Z\tmono=1000.000\tc3=up@2026-10-07T14:00:00.000000Z\n"
+    path.write_text(complete + "2026-10-07T14:00:10.000000Z\tmono=10", encoding="utf-8")
+
+    assert [m.mono for m in read_marks(path)] == [1000.0]

@@ -88,8 +88,12 @@ class Marks:
 
 
 def read_marks(path: Path) -> list[Mark]:
+    """The marks of one file. A last line without its newline was cut by a killed capture: it is not a mark."""
     marks = []
-    for text in path.read_text(encoding="utf-8").splitlines():
+    for text in path.read_text(encoding="utf-8").splitlines(keepends=True):
+        if not text.endswith("\n"):
+            break
+        text = text.rstrip("\n")
         utc, mono, *ports = text.split("\t")
         parsed = {}
         for field in ports:
