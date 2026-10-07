@@ -93,8 +93,8 @@ bench run scenarios/c2-rejoin-after-reset.toml
 bench run --node 1=C3 --node 2=C2 --expect "2 CLK to=WARM within=8m" --save scenarios/mine.toml
 ```
 
-Exit code 0 pass, 1 fail, 2 timeout, 3 invalid scenario.
-Progress is printed as it happens (`ok ...`, `act ...`, `note ...`), and the record goes to `tools/arclog/runs/<start>-<build>/`: `report.md`, `run.log`, `scenario.toml` and each node's capture lines of the run window (readable by `arclog report`).
+Exit code 0 pass, 1 fail, 2 timeout, 3 invalid scenario, 4 invalid run (see [Run record, manifest and validity](#run-record-manifest-and-validity)).
+Progress is printed as it happens (`ok ...`, `act ...`, `note ...`), and the record goes to `tools/arclog/runs/<start>-<build>/`: `report.md`, `manifest.toml`, `run.log`, `scenario.toml`, each node's capture lines of the run window (readable by `arclog report`) and the capture's marks for the run's ports.
 
 ### Scenarios
 
@@ -194,6 +194,43 @@ With `max_silence` in the scenario, a node with no line for longer than it fails
 Without it the tool only warns when the collector has seen no line from a connected node for over 10 min.
 The collector writes the Pi's local time without a zone and matches `since=` against it: the tool converts through `--pi-tz` (default `Europe/Paris`) and flags a Pi clock that differs from the collector's receive time.
 A node that stops logging is caught by `max_silence`, or by a staged `[[expect]]` on a count of its `SLOT` events.
+
+## Run record, manifest and validity
+
+A long session has to say what it was, and whether its data can be used, without anyone reading the capture by hand.
+`report.md` is for a person.
+`manifest.toml`, written when the boards are armed and completed at the end, is the structured copy, to be read a year later.
+It holds no tailnet address: a Pi Node is named, never addressed, because a manifest is committed with its dataset.
+
+| Table | Holds |
+|---|---|
+| `[run]` | the command, the worktree, the bench commit, the Build ID, the firmware commit and whether it was dirty, the Build Overrides, the scenario keys (`dataset`, `max_silence`, `timeout`), the window (`start`, `end`), the verdict and the exit code |
+| `[[board]]` | per board: Node ID, role (`flashed`, `watched` or `not in the scenario`), class, kind (`stlink` or `pinode`), UID, probe (the ST-LINK serial, or the Pi Node's name), COM port (not for a Pi Node), the capture's name for it (`log`), when it was flashed, and the `BOOT` line of each core as logged |
+| `[controller]` | UTC beside the host's monotonic clock at the start and at the end, and the time service's state at both (`w32tm /query /status`: source, last sync, stratum, poll) |
+| `[[pi_clock]]` | per Pi Node, when `BENCH_COLLECTOR_URL` is set: what the collector reports of its clock (`pi_ntp`, `clock_lag_s`) at the start and at the end |
+| `[[note]]` | the notes made by hand during the session (`bench note "text"`), each with its UTC time |
+| `[validity]` | `valid`, the exit code, every cause (`kind`, `fault`, `node`, `text`, `start`, `end`) and what could not be checked |
+
+`bench note "the board was moved to the window"` appends a timestamped line to the running session: the newest record folder whose manifest has no `end` yet and whose timeout has not long passed.
+
+### Validity
+
+`bench validate RUN_DIR` computes the verdict and the causes again from the record alone, with no board, capture or network; the end of `bench run` does the same on the record it has just written, so the two agree.
+It prints whether the run is valid, what the trace alone gives, every cause, and says if the exit code stored in the manifest differs.
+A record from before manifests is refused (exit 3); one from before marks is judged on the rest and says what it could not check.
+
+Every cause has a fault, which decides what it does to the run:
+
+| Fault | Causes | Effect |
+|---|---|---|
+| `bench` | a port down for more than 10 s (`port_down`); no marks for more than 30 s, the capture or the host was not running (`no_marks`); a step of UTC of more than 1 s against the monotonic clock (`utc_step`); a Pi clock not NTP-synchronised or more than 5 s from the collector's, a Pi Node the collector does not know or lost, lines lost across a collector reconnect (`pi_clock`, `collector_node`, `collector_gap`) | always invalidates |
+| `firmware` | lost lines, an unplanned reboot, a board that did not boot the run's Build ID (`lost_lines`, `unplanned_reboot`, `wrong_build`) | fails an acceptance run; invalidates a run whose scenario says `dataset = true` |
+| `node` | a node with no line for longer than the scenario's `max_silence`, with no capture gap in the interval (`node_silent`) | fails the run, even if every expectation was met; never invalidates |
+
+A node silent while its port is up is a node fault: a quiet node cannot be told from a capture outage by its lines, only by the marks.
+
+Exit codes of `bench run`, `bench validate` and the collector judge: 0 pass, 1 fail, 2 timeout (the collector judge: no verdict yet), 3 invalid scenario or not a record, 4 invalid run.
+An invalid run has no verdict on the firmware: it stays in the Test Record's Runs table with its cause and is run again.
 
 ## Map
 
